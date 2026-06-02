@@ -354,6 +354,64 @@
     .lead-del { background: none; border: none; font-size: 14px; color: var(--text2); cursor: pointer; padding: 2px 4px; border-radius: 4px; }
     .lead-del:hover { background: #fee2e2; color: #dc2626; }
 
+    /* ── Cold Call Sheet (scoped to .cc-wrap) ── */
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap');
+
+    .cc-wrap {
+      --cc-ink:#1a1714; --cc-paper:#f4efe7; --cc-card:#fbf8f2;
+      --cc-line:#d8cfc0; --cc-muted:#6b6155;
+      --cc-orange:#c8500f; --cc-amber:#b07908; --cc-teal:#0f6b6b; --cc-green:#3d6b28;
+      background:var(--cc-paper); padding:24px 16px;
+    }
+    .cc-wrap * { box-sizing:border-box; }
+    .cc-sheet {
+      max-width:880px; margin:0 auto; background:var(--cc-card);
+      border:1.5px solid var(--cc-ink); box-shadow:8px 8px 0 rgba(26,23,20,.12);
+      padding:30px 34px 26px;
+    }
+    .cc-head { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:3px solid var(--cc-ink); padding-bottom:10px; margin-bottom:6px; }
+    .cc-head h1 { font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:1.32rem; letter-spacing:-.5px; line-height:1.05; color:var(--cc-ink); }
+    .cc-head .sub { font-family:'IBM Plex Mono',monospace; font-size:.62rem; letter-spacing:1.5px; text-transform:uppercase; color:var(--cc-muted); text-align:right; }
+    .cc-goal { font-family:'IBM Plex Mono',monospace; font-size:.7rem; letter-spacing:.5px; text-transform:uppercase; color:var(--cc-orange); font-weight:600; margin:8px 0 18px; }
+    .cc-goal b { color:var(--cc-ink); }
+    .cc-step { margin-bottom:16px; }
+    .cc-tag { display:inline-block; font-family:'IBM Plex Mono',monospace; font-size:.6rem; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; background:var(--cc-ink); color:var(--cc-paper); padding:3px 8px; margin-bottom:7px; }
+    .cc-step h2 { font-size:.96rem; font-weight:700; margin-bottom:5px; color:var(--cc-ink); font-family:'IBM Plex Sans',sans-serif; }
+    .cc-line { font-size:.84rem; margin-bottom:4px; font-family:'IBM Plex Sans',sans-serif; color:var(--cc-ink); }
+    .cc-say { border-left:3px solid var(--cc-orange); background:rgba(200,80,15,.06); padding:7px 11px; font-size:.86rem; font-style:italic; margin:5px 0; font-family:'IBM Plex Sans',sans-serif; color:var(--cc-ink); }
+    .cc-say::before{content:"\201C";} .cc-say::after{content:"\201D";}
+    .cc-small { font-size:.74rem; color:var(--cc-muted); font-family:'IBM Plex Sans',sans-serif; }
+    .cc-wrap ul { list-style:none; }
+    .cc-wrap ul li { font-size:.84rem; padding-left:16px; position:relative; margin-bottom:3px; font-family:'IBM Plex Sans',sans-serif; color:var(--cc-ink); }
+    .cc-wrap ul li::before { content:"\2192"; position:absolute; left:0; color:var(--cc-orange); font-weight:700; }
+    .cc-branch-head { font-family:'IBM Plex Mono',monospace; font-size:.6rem; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:var(--cc-muted); margin:18px 0 9px; border-top:1px dashed var(--cc-line); padding-top:12px; }
+    .cc-branches { display:grid; grid-template-columns:1fr 1fr 1fr; gap:11px; }
+    @media(max-width:600px){ .cc-branches,.cc-menu,.cc-foot { grid-template-columns:1fr; } }
+    .cc-br { border:1.5px solid var(--cc-ink); padding:10px 12px 11px; background:var(--cc-card); }
+    .cc-br .when { font-family:'IBM Plex Mono',monospace; font-size:.58rem; font-weight:700; letter-spacing:.8px; text-transform:uppercase; color:var(--cc-muted); margin-bottom:3px; }
+    .cc-br .name { font-weight:700; font-size:.9rem; margin-bottom:6px; font-family:'IBM Plex Sans',sans-serif; }
+    .cc-br.control { border-top:5px solid var(--cc-amber); } .cc-br.control .name { color:var(--cc-amber); }
+    .cc-br.cube    { border-top:5px solid var(--cc-teal);  } .cc-br.cube .name    { color:var(--cc-teal); }
+    .cc-br.speed   { border-top:5px solid var(--cc-green); } .cc-br.speed .name   { color:var(--cc-green); }
+    .cc-br .cc-say { font-size:.78rem; border-left-width:2px; }
+    .cc-br.control .cc-say { border-color:var(--cc-amber); background:rgba(176,121,8,.07); }
+    .cc-br.cube    .cc-say { border-color:var(--cc-teal);  background:rgba(15,107,107,.07); }
+    .cc-br.speed   .cc-say { border-color:var(--cc-green); background:rgba(61,107,40,.07); }
+    .cc-menu { display:grid; grid-template-columns:1fr 1fr 1fr; gap:11px; }
+    .cc-opt { border:1.5px solid var(--cc-line); border-top:4px solid var(--cc-orange); padding:9px 11px 10px; background:var(--cc-card); }
+    .cc-otone { font-family:'IBM Plex Mono',monospace; font-size:.58rem; font-weight:700; letter-spacing:.8px; text-transform:uppercase; color:var(--cc-muted); margin-bottom:5px; }
+    .cc-opt.pick { border-color:var(--cc-orange); background:rgba(200,80,15,.05); }
+    .cc-opt.pick .cc-otone { color:var(--cc-orange); }
+    .cc-osay { font-size:.78rem; font-style:italic; border-left:2px solid var(--cc-orange); padding:4px 9px; margin-bottom:5px; font-family:'IBM Plex Sans',sans-serif; color:var(--cc-ink); }
+    .cc-osay::before{content:"\201C";} .cc-osay::after{content:"\201D";}
+    .cc-onote { font-size:.68rem; color:var(--cc-muted); font-family:'IBM Plex Sans',sans-serif; }
+    .cc-foot { display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-top:18px; border-top:1px dashed var(--cc-line); padding-top:13px; }
+    .cc-foot h3 { font-family:'IBM Plex Mono',monospace; font-size:.62rem; font-weight:700; letter-spacing:1.2px; text-transform:uppercase; margin-bottom:7px; color:var(--cc-ink); }
+    .cc-obj { font-size:.8rem; margin-bottom:6px; font-family:'IBM Plex Sans',sans-serif; color:var(--cc-ink); }
+    .cc-obj b { color:var(--cc-ink); } .cc-obj span { color:var(--cc-muted); }
+    .cc-reminder { margin-top:16px; border:1.5px dashed var(--cc-ink); padding:9px 13px; font-size:.8rem; background:rgba(200,80,15,.05); font-family:'IBM Plex Sans',sans-serif; color:var(--cc-ink); }
+    .cc-reminder b { font-family:'IBM Plex Mono',monospace; letter-spacing:.5px; }
+
     /* ── Print ──────────────────────────────── */
     .print-hd { display: none; }
     @media print {
@@ -401,6 +459,7 @@
   <div class="tab-bar">
     <button class="tab-btn active" data-tab="tasks" onclick="switchTab('tasks')">📋 Tasks</button>
     <button class="tab-btn" data-tab="leads" onclick="switchTab('leads')">🎯 Leads</button>
+    <button class="tab-btn" data-tab="playbook" onclick="switchTab('playbook')">📞 Playbook</button>
   </div>
 
   <!-- Tasks view -->
@@ -438,6 +497,111 @@
 
 
   </div><!-- /#tasks-view -->
+
+  <!-- Playbook view -->
+  <div id="playbook-view" style="display:none">
+  <div class="cc-wrap">
+  <div class="cc-sheet">
+    <div class="cc-head">
+      <h1>COLD CALL FLOW</h1>
+      <div class="sub">Cubework Fontana · BD<br>flexible warehouse space</div>
+    </div>
+    <div class="cc-goal">One goal on this call: <b>book a tour.</b> Don't try to close on the phone.</div>
+
+    <div class="cc-step">
+      <span class="cc-tag">01 · 10-sec prep</span>
+      <h2>Before you dial</h2>
+      <div class="cc-line">Who am I calling &amp; what segment (importer / 3PL / local biz / seller)? Have the unit list &amp; sizes in front of you.</div>
+    </div>
+
+    <div class="cc-step">
+      <span class="cc-tag">02 · Opener</span>
+      <h2>Open warm — who you are, a reason, an easy out</h2>
+      <div class="cc-say">Hi [name], this is Justin with Cubework in Fontana. We do flexible warehouse space near the ports, and I'm reaching out to local businesses to see if it's a fit. Can I ask you a couple quick questions?</div>
+      <div class="cc-small">Honest and respectful without putting you on the spot — the easiest one to say a hundred times. Your default while you find your footing.</div>
+      <div class="cc-line" style="margin-top:7px;"><b>Then roll straight in:</b></div>
+      <div class="cc-say">Mind if I ask what you're running for space right now?</div>
+      <div class="cc-small">Benefit-neutral on purpose — you don't know their pain yet. That question hands you into qualifying (step 03).</div>
+    </div>
+
+    <div class="cc-branch-head">Opener menu — pick the tone that fits you</div>
+    <div class="cc-menu">
+      <div class="cc-opt">
+        <div class="cc-otone">Warmest · low pressure</div>
+        <div class="cc-osay">…I'll keep it quick, I know you're busy. We've got flexible space opening up nearby — is now a bad time?</div>
+        <div class="cc-onote">"Is now a bad time?" is easy to answer "no, go ahead" — softer than "got a minute?"</div>
+      </div>
+      <div class="cc-opt pick">
+        <div class="cc-otone">Straightforward · default ✓</div>
+        <div class="cc-osay">…we do flexible warehouse space near the ports, and I'm reaching out locally to see if it's a fit. Can I ask a couple quick questions?</div>
+        <div class="cc-onote">The one shown above. Most foolproof — never feels forced.</div>
+      </div>
+      <div class="cc-opt">
+        <div class="cc-otone">Curiosity · warm / targeted calls</div>
+        <div class="cc-osay">…quick question — are you running your own warehousing now, or outsourcing it? Reason I ask, we've got flexible space opening up close to you.</div>
+        <div class="cc-onote">Gets them talking; doubles as your first qualifying question. Best when you've reason to think they use warehousing.</div>
+      </div>
+    </div>
+
+    <div class="cc-step">
+      <span class="cc-tag">03 · Qualify</span>
+      <h2>Ask, then shut up and listen</h2>
+      <ul>
+        <li>What are you running for space right now — and what's not working about it?</li>
+        <li>Are you bringing in containers / imports, or storing &amp; shipping your own product?</li>
+        <li>What's kept you from locking something in elsewhere?</li>
+      </ul>
+      <div class="cc-small">Their answer tells you which branch to take below.</div>
+    </div>
+
+    <div class="cc-branch-head">04 · Branch — match the wedge to what they said</div>
+    <div class="cc-branches">
+      <div class="cc-br control">
+        <div class="when">If: stuck w/ a 3PL · fussy about handling · "lost control"</div>
+        <div class="name">CONTROL</div>
+        <div class="cc-say">Most flexible space here forces you onto their 3PL to get in the door. We don't. Your product, your people, your process — services optional.</div>
+      </div>
+      <div class="cc-br cube">
+        <div class="when">If: importer · running containers · port freight</div>
+        <div class="name">CUBESHIP</div>
+        <div class="cc-say">We're near LA/Long Beach and we can handle the shipping &amp; customs on your container freight too — land it straight with us.</div>
+      </div>
+      <div class="cc-br speed">
+        <div class="when">If: just needs space · fast · flexible terms</div>
+        <div class="name">SPEED + FLEX</div>
+        <div class="cc-say">We're move-in ready now and terms are flexible — no long lease to get in. You could be operating fast.</div>
+      </div>
+    </div>
+
+    <div class="cc-step" style="margin-top:18px;">
+      <span class="cc-tag">05 · The ask</span>
+      <h2>Book the tour</h2>
+      <div class="cc-say">Easiest thing is to come see it — takes 15 minutes. Does [day] or [day] work better for you?</div>
+      <div class="cc-small">Offer two times, not "are you free." Make saying yes easy.</div>
+    </div>
+
+    <div class="cc-foot">
+      <div>
+        <h3>Quick objection handles</h3>
+        <div class="cc-obj"><b>"Just send info."</b> <span>→ Sure — but the space sells itself in person. Got 15 min this week?</span></div>
+        <div class="cc-obj"><b>"Too expensive."</b> <span>→ What were you quoted? Terms are flexible, let's see if it fits.</span></div>
+        <div class="cc-obj"><b>"Not right now."</b> <span>→ Totally fair. When are you re-looking? I'll check back then.</span></div>
+        <div class="cc-obj"><b>"Already have space."</b> <span>→ Anything you're outgrowing? And know anyone who needs space?</span></div>
+      </div>
+      <div>
+        <h3>No answer / voicemail</h3>
+        <div class="cc-obj"><span>Leave it short: name, Cubework Fontana, flexible space available now, your number — twice. Then follow up by email same day.</span></div>
+        <h3 style="margin-top:11px;">After every call — log it</h3>
+        <div class="cc-obj"><span>Name · segment · what they need · outcome · <b>next action + date.</b> Most deals die from no follow-up, not from "no."</span></div>
+      </div>
+    </div>
+
+    <div class="cc-reminder">
+      <b>REMEMBER:</b> You're building relationships, not running up numbers. Not every call is a fit — that's fine. Listen more than you pitch, be useful, and follow up when you said you would. The space fills when people trust you.
+    </div>
+  </div>
+  </div>
+  </div><!-- /#playbook-view -->
 
   <!-- Leads view -->
   <div id="leads-view" style="display:none">
