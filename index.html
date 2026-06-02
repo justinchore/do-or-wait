@@ -409,7 +409,7 @@
 // ═══════════════════════════════════════════════════════════════
 import { initializeApp }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getAuth, signInWithRedirect, GoogleAuthProvider, onAuthStateChanged, signOut }
+import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 import { initializeFirestore, persistentLocalCache, collection, doc, setDoc, onSnapshot }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
@@ -1015,7 +1015,13 @@ document.getElementById('file-input').addEventListener('change', async e => {
 //  AUTH ACTIONS
 // ═══════════════════════════════════════════════════════════════
 async function handleSignIn() {
-  await signInWithRedirect(auth, gProvider);
+  try {
+    await signInWithPopup(auth, gProvider);
+  } catch (err) {
+    if (err.code !== 'auth/popup-closed-by-user') {
+      alert('Sign-in failed: ' + err.message);
+    }
+  }
 }
 async function handleSignOut() {
   if (unsubTopics) { unsubTopics(); unsubTopics = null; }
