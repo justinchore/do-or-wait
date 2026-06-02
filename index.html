@@ -337,8 +337,14 @@
   </header>
 
   <div class="stats">
-    <div class="stat"><div class="pip do"></div><strong id="do-count">0</strong> to act on</div>
-    <div class="stat"><div class="pip wait"></div><strong id="wait-count">0</strong> waiting on</div>
+    <div class="stat"><div class="pip do"></div><strong id="do-count">0</strong> Do</div>
+    <div class="stat"><div class="pip wait"></div><strong id="wait-count">0</strong> Wait</div>
+  </div>
+
+  <!-- New topics (no entries yet) -->
+  <div id="new-topics-wrap" style="display:none; max-width:1100px; margin:0 auto; padding:16px 20px 0;">
+    <div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--text2); margin-bottom:8px;">New — tap to add first entry</div>
+    <div id="new-topics-list" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
   </div>
 
   <div class="grid">
@@ -346,12 +352,11 @@
       <div class="col-hd">
         <div class="col-hd-left">
           <div class="col-icon do">⚡</div>
-          <div><h2>I Need to Act</h2><sub>Respond · Send · Do</sub></div>
+          <div><h2>Do</h2><sub>Respond · Send · Act</sub></div>
         </div>
         <span class="col-badge" id="do-badge">0</span>
       </div>
       <div class="topic-list" id="do-list"></div>
-      <button class="add-topic-btn" onclick="openNewTopic('do')">＋ New topic</button>
       <button class="archived-tog" id="do-arch-tog" onclick="toggleArchived('do')"></button>
     </div>
 
@@ -359,12 +364,11 @@
       <div class="col-hd">
         <div class="col-hd-left">
           <div class="col-icon wait">⏳</div>
-          <div><h2>Waiting On</h2><sub>Response · Call · Info</sub></div>
+          <div><h2>Wait</h2><sub>Response · Call · Info</sub></div>
         </div>
         <span class="col-badge" id="wait-badge">0</span>
       </div>
       <div class="topic-list" id="wait-list"></div>
-      <button class="add-topic-btn" onclick="openNewTopic('wait')">＋ New topic</button>
       <button class="archived-tog" id="wait-arch-tog" onclick="toggleArchived('wait')"></button>
     </div>
   </div>
@@ -632,6 +636,7 @@ async function populateAudio() {
 //  HELPERS
 // ═══════════════════════════════════════════════════════════════
 function currentStatus(topic) {
+  if (!topic.entries.length) return 'new';
   const last = [...topic.entries].reverse().find(e => !e.done);
   return last?.type || topic.entries.at(-1)?.type || 'do';
 }
@@ -653,8 +658,9 @@ function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').re
 function render() {
   const active   = t => !t.archived;
   const archived = t =>  t.archived;
-  const doActive   = topics.filter(t => active(t)   && currentStatus(t) === 'do');
-  const waitActive = topics.filter(t => active(t)   && currentStatus(t) === 'wait');
+  const newTopics  = topics.filter(t => active(t) && currentStatus(t) === 'new');
+  const doActive   = topics.filter(t => active(t) && currentStatus(t) === 'do');
+  const waitActive = topics.filter(t => active(t) && currentStatus(t) === 'wait');
   const doArch     = topics.filter(t => archived(t) && currentStatus(t) === 'do');
   const waitArch   = topics.filter(t => archived(t) && currentStatus(t) === 'wait');
 
@@ -662,6 +668,32 @@ function render() {
   document.getElementById('wait-count').textContent = waitActive.length;
   document.getElementById('do-badge').textContent   = doActive.length;
   document.getElementById('wait-badge').textContent = waitActive.length;
+
+  // New (empty) topics strip
+  const wrap = document.getElementById('new-topics-wrap');
+  const list = document.getElementById('new-topics-list');
+  if (newTopics.length) {
+    wrap.style.display = 'block';
+    list.innerHTML = newTopics.map(t => `
+      <div class="topic-card open" id="tc-${t.id}" style="min-width:200px;flex:1;max-width:340px;">
+        <div class="card-summary" onclick="toggleCard('${t.id}')">
+          <div class="card-summary-body">
+            <div class="card-title"><span class="badge done">New</span>${esc(t.title)}</div>
+          </div>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="thread">
+          <div class="empty" style="padding:10px 0;">No entries yet</div>
+          <div class="thread-foot">
+            <button class="archive-btn" onclick="toggleArchive('${t.id}')">📁 Archive</button>
+            <button class="btn sm dark" onclick="openAddEntry('${t.id}',event)">＋ Add entry</button>
+          </div>
+        </div>
+      </div>`).join('');
+  } else {
+    wrap.style.display = 'none';
+  }
+
   renderCol('do-list',   doActive,   showArchived.do   ? doArch   : []);
   renderCol('wait-list', waitActive, showArchived.wait ? waitArch : []);
   setArchToggle('do',   doArch.length);
@@ -697,7 +729,7 @@ function renderCard(topic) {
       <div class="card-summary-body">
         <div class="card-title">
           <span class="badge ${topic.archived || allRes ? 'done' : status}">
-            ${topic.archived ? 'ARCHIVED' : allRes ? 'DONE' : status.toUpperCase()}
+            ${topic.archived ? 'Archived' : allRes ? 'Done' : status === 'do' ? 'Do' : 'Wait'}
           </span>
           ${esc(topic.title)}
         </div>
@@ -734,7 +766,7 @@ function renderEntry(topic, entry) {
       <div class="entry-text${entry.done ? ' done' : ''}">${esc(entry.text)}</div>
       ${notes.length ? `<div class="entry-notes">${notes.map(n => renderNote(topic.id, entry.id, n)).join('')}</div>` : ''}
       <div class="entry-footer">
-        <span class="entry-date">${entry.type.toUpperCase()} · ${fmtDate(entry.createdAt)}</span>
+        <span class="entry-date">${entry.type === 'do' ? 'Do' : 'Wait'} · ${fmtDate(entry.createdAt)}</span>
         <span class="note-btns">
           <button class="note-btn${isRec ? ' recording' : ''}" data-rec="${entry.id}"
                   onclick="toggleRecording('${topic.id}','${entry.id}')"
@@ -843,17 +875,15 @@ function _resetModal() {
   document.getElementById('m-ctx-lbl').style.display = 'none';
 }
 
-function openNewTopic(defaultType = 'do') {
-  mMode = 'new_topic'; mTopicId = null; mEntryId = null; mSelType = defaultType;
-  _resetModal();
+function openNewTopic() {
+  mMode = 'new_topic'; mTopicId = null; mEntryId = null;
   document.getElementById('m-title').textContent         = 'New Topic';
-  document.getElementById('m-sub').textContent           = 'Start a thread for something you\'re tracking.';
+  document.getElementById('m-sub').textContent           = '';
   document.getElementById('m-topic-field').style.display = 'block';
-  document.getElementById('m-type-row').style.display    = 'grid';
-  document.getElementById('m-entry-lbl').textContent     = 'First update';
+  document.getElementById('m-type-row').style.display    = 'none';
+  document.getElementById('m-entry-lbl').parentElement.style.display = 'none';
   document.getElementById('f-topic').value               = '';
-  document.getElementById('f-entry').placeholder         = 'What\'s the current status or next action?';
-  syncTypeUI();
+  document.getElementById('f-topic').classList.remove('err');
   document.getElementById('overlay').classList.add('open');
   setTimeout(() => document.getElementById('f-topic').focus(), 180);
 }
@@ -862,16 +892,19 @@ function openAddEntry(topicId, e) {
   e.stopPropagation();
   const topic = topics.find(t => t.id === topicId);
   if (!topic) return;
-  mMode = 'add_entry'; mTopicId = topicId; mEntryId = null; mSelType = currentStatus(topic);
+  const status = currentStatus(topic);
+  mMode = 'add_entry'; mTopicId = topicId; mEntryId = null;
+  mSelType = status === 'new' ? 'do' : status;
   _resetModal();
-  document.getElementById('m-title').textContent         = '+ Update';
+  document.getElementById('m-title').textContent         = topic.title;
   document.getElementById('m-sub').textContent           = '';
   document.getElementById('m-topic-field').style.display = 'none';
   document.getElementById('m-type-row').style.display    = 'grid';
-  document.getElementById('m-entry-lbl').textContent     = 'What happened / what\'s next?';
-  document.getElementById('m-ctx-lbl').textContent       = topic.title;
-  document.getElementById('m-ctx-lbl').style.display     = 'block';
-  document.getElementById('f-entry').placeholder         = 'What\'s the current status or next action?';
+  const entryField = document.getElementById('m-entry-lbl').parentElement;
+  entryField.style.display = 'block';
+  document.getElementById('m-entry-lbl').textContent     = 'What\'s happening?';
+  document.getElementById('m-ctx-lbl').style.display     = 'none';
+  document.getElementById('f-entry').placeholder         = 'Describe the action or what you\'re waiting on…';
   syncTypeUI();
   document.getElementById('overlay').classList.add('open');
   setTimeout(() => document.getElementById('f-entry').focus(), 180);
@@ -888,6 +921,7 @@ function openTextNote(topicId, entryId, e) {
   document.getElementById('m-sub').textContent           = '';
   document.getElementById('m-topic-field').style.display = 'none';
   document.getElementById('m-type-row').style.display    = 'none';
+  document.getElementById('m-entry-lbl').parentElement.style.display = 'block';
   document.getElementById('m-entry-lbl').textContent     = 'Note';
   document.getElementById('m-ctx-lbl').textContent       = `${topic.title} — ${entry.text.slice(0,60)}${entry.text.length > 60 ? '…' : ''}`;
   document.getElementById('m-ctx-lbl').style.display     = 'block';
@@ -905,11 +939,6 @@ function syncTypeUI() {
 }
 
 async function saveModal() {
-  const text   = document.getElementById('f-entry').value.trim();
-  const textEl = document.getElementById('f-entry');
-  if (!text) { textEl.classList.add('err'); textEl.focus(); return; }
-  textEl.classList.remove('err');
-
   if (mMode === 'new_topic') {
     const title   = document.getElementById('f-topic').value.trim();
     const titleEl = document.getElementById('f-topic');
@@ -917,13 +946,20 @@ async function saveModal() {
     titleEl.classList.remove('err');
     const newTopic = {
       id: 't' + Date.now(), title, archived: false, createdAt: new Date().toISOString(),
-      entries: [{ id: 'e' + Date.now(), type: mSelType, text, done: false, notes: [], createdAt: new Date().toISOString() }]
+      entries: []
     };
     expandedIds.add(newTopic.id);
     closeModal();
     await saveTopic(newTopic);
+    return;
+  }
 
-  } else if (mMode === 'add_entry') {
+  const text   = document.getElementById('f-entry').value.trim();
+  const textEl = document.getElementById('f-entry');
+  if (!text) { textEl.classList.add('err'); textEl.focus(); return; }
+  textEl.classList.remove('err');
+
+  if (mMode === 'add_entry') {
     const topic = topics.find(t => t.id === mTopicId);
     if (topic) {
       topic.entries.push({ id: 'e' + Date.now(), type: mSelType, text, done: false, notes: [], createdAt: new Date().toISOString() });
