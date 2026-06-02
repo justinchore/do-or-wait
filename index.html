@@ -413,9 +413,9 @@
 // ═══════════════════════════════════════════════════════════════
 import { initializeApp }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, onAuthStateChanged, signOut }
+import { getAuth, signInWithRedirect, getRedirectResult, GoogleAuthProvider, onAuthStateChanged, signOut }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-import { initializeFirestore, persistentLocalCache, collection, doc, setDoc, onSnapshot }
+import { getFirestore, collection, doc, setDoc, onSnapshot }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js';
@@ -431,7 +431,7 @@ const firebaseConfig = {
 
 const fbApp   = initializeApp(firebaseConfig);
 const auth    = getAuth(fbApp);
-const db      = initializeFirestore(fbApp, { localCache: persistentLocalCache() });
+const db      = getFirestore(fbApp);
 const storage = getStorage(fbApp);
 const gProvider = new GoogleAuthProvider();
 
@@ -1054,23 +1054,8 @@ document.getElementById('file-input').addEventListener('change', async e => {
 // ═══════════════════════════════════════════════════════════════
 //  AUTH ACTIONS
 // ═══════════════════════════════════════════════════════════════
-const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
-
 async function handleSignIn() {
-  if (isIOS) {
-    // iOS blocks popups — use redirect instead
-    await signInWithRedirect(auth, gProvider);
-  } else {
-    try {
-      await signInWithPopup(auth, gProvider);
-    } catch (err) {
-      if (err.code === 'auth/popup-blocked') {
-        await signInWithRedirect(auth, gProvider);
-      } else if (err.code !== 'auth/popup-closed-by-user') {
-        alert('Sign-in failed: ' + err.message);
-      }
-    }
-  }
+  await signInWithRedirect(auth, gProvider);
 }
 
 async function handleSignOut() {
