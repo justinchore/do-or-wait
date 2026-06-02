@@ -56,14 +56,12 @@
       --shadow-lg: 0 8px 24px rgba(0,0,0,.12);
     }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body {
+    body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       background: var(--bg);
       color: var(--text);
       min-height: 100vh;
       -webkit-font-smoothing: antialiased;
-      overflow-x: hidden;
-      max-width: 100vw;
     }
 
     /* ── Loading / Sign-in screens ───────────── */
@@ -167,7 +165,7 @@
     .topic-card.archived { opacity: .5; border-left-color: var(--border); }
     .card-summary { padding: 13px 14px 13px 15px; cursor: pointer; display: flex; align-items: flex-start; gap: 10px; }
     .card-summary-body { flex: 1; min-width: 0; }
-    .card-title { font-size: 14px; font-weight: 700; line-height: 1.3; margin-bottom: 4px; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+    .card-title { font-size: 14px; font-weight: 700; line-height: 1.3; margin-bottom: 4px; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; word-break: break-word; overflow-wrap: anywhere; }
     .badge { font-size: 10px; font-weight: 800; letter-spacing: .6px; padding: 2px 7px; border-radius: 20px; flex-shrink: 0; text-transform: uppercase; }
     .badge.do   { background: var(--do-bg);   color: var(--do);   border: 1px solid var(--do-mid); }
     .badge.wait { background: var(--wait-bg); color: var(--wait); border: 1px solid var(--wait-mid); }
@@ -190,7 +188,7 @@
     .entry-dot.wait { background: var(--wait-bg); color: var(--wait); border: 1.5px solid var(--wait); }
     .entry-dot.done { background: #f3f4f6; color: var(--done-fg); border: 1.5px solid var(--border); }
     .entry-body { flex: 1; min-width: 0; }
-    .entry-text { font-size: 13px; line-height: 1.5; color: var(--text); }
+    .entry-text { font-size: 13px; line-height: 1.5; color: var(--text); word-break: break-word; overflow-wrap: anywhere; }
     .entry-text.done { color: var(--done-fg); text-decoration: line-through; }
 
     /* ── Notes ──────────────────────────────── */
@@ -328,7 +326,7 @@
   </div>
 
   <div class="grid">
-    <div>
+    <div style="min-width:0">
       <div class="col-hd">
         <div class="col-hd-left">
           <div class="col-icon do">⚡</div>
@@ -340,7 +338,7 @@
       <button class="archived-tog" id="do-arch-tog" onclick="toggleArchived('do')"></button>
     </div>
 
-    <div>
+    <div style="min-width:0">
       <div class="col-hd">
         <div class="col-hd-left">
           <div class="col-icon wait">⏳</div>
