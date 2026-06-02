@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<!--
+  DO OR WAIT — Task Tracker
+  ──────────────────────────────────────────────────────────────
+  GitHub Pages deployment:
+  1. Create repo "do-or-wait" (public) on GitHub
+  2. Upload this file as index.html
+  3. Settings → Pages → Source: main / root → Save
+  4. Live at https://YOUR-USERNAME.github.io/do-or-wait/
+  5. Phone: open URL → Share → "Add to Home Screen"
+
+  Firebase security rules (update before 30-day test mode expires):
+  Firestore → Rules:
+    rules_version = '2';
+    service cloud.firestore {
+      match /databases/{db}/documents {
+        match /users/{uid}/{document=**} {
+          allow read, write: if request.auth.uid == uid;
+        }
+      }
+    }
+  Storage → Rules:
+    rules_version = '2';
+    service firebase.storage {
+      match /b/{bucket}/o {
+        match /users/{uid}/{allPaths=**} {
+          allow read, write: if request.auth.uid == uid;
+        }
+      }
+    }
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Do or Wait">
+  <title>Do or Wait</title>
+  <style>
+    :root {
+      --do:        #e85d04;
+      --do-bg:     #fff4ed;
+      --do-mid:    #fdd0a2;
+      --wait:      #0077b6;
+      --wait-bg:   #e8f4fd;
+      --wait-mid:  #a8d5f5;
+      --done-fg:   #6b7280;
+      --bg:        #f3f4f6;
+      --surface:   #ffffff;
+      --text:      #111827;
+      --text2:     #6b7280;
+      --border:    #e5e7eb;
+      --note-bg:   #f9fafb;
+      --radius:    12px;
+      --shadow:    0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.04);
+      --shadow-lg: 0 8px 24px rgba(0,0,0,.12);
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Loading / Sign-in screens ───────────── */
+    .full-screen {
+      position: fixed; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--bg); z-index: 300;
+    }
+    #loading-screen .spinner {
+      width: 36px; height: 36px; border-radius: 50%;
+      border: 3px solid var(--border); border-top-color: var(--text);
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .auth-card {
+      background: var(--surface); border-radius: 20px;
+      padding: 40px 36px; text-align: center;
+      box-shadow: var(--shadow-lg); max-width: 360px; width: 100%; margin: 16px;
+    }
+    .auth-logo { font-size: 48px; margin-bottom: 12px; }
+    .auth-card h1 { font-size: 24px; font-weight: 800; margin-bottom: 6px; }
+    .auth-card p  { font-size: 14px; color: var(--text2); margin-bottom: 28px; line-height: 1.5; }
+    .google-btn {
+      width: 100%; padding: 13px 20px;
+      border: 1.5px solid var(--border); border-radius: 10px;
+      background: var(--surface); font-size: 15px; font-weight: 600;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      gap: 10px; font-family: inherit; transition: all .15s; color: var(--text);
+    }
+    .google-btn:hover { background: var(--bg); border-color: #9ca3af; }
+    .google-icon { width: 20px; height: 20px; flex-shrink: 0; }
+
+    /* ── Header ─────────────────────────────── */
+    header {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 12px 20px; display: flex; align-items: center;
+      justify-content: space-between; position: sticky; top: 0; z-index: 100; gap: 10px;
+    }
+    .logo { font-size: 16px; font-weight: 800; letter-spacing: -.3px; }
+    .hbtns { display: flex; gap: 7px; align-items: center; flex-shrink: 0; }
+    .user-photo {
+      width: 30px; height: 30px; border-radius: 50%;
+      border: 1.5px solid var(--border); display: none; object-fit: cover;
+    }
+
+    /* ── Stats ──────────────────────────────── */
+    .stats {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 9px 20px; display: flex; gap: 18px;
+    }
+    .stat { font-size: 13px; color: var(--text2); display: flex; align-items: center; gap: 6px; }
+    .pip { width: 8px; height: 8px; border-radius: 50%; }
+    .pip.do   { background: var(--do); }
+    .pip.wait { background: var(--wait); }
+    .stat strong { color: var(--text); font-weight: 700; }
+
+    /* ── Sync indicator ─────────────────────── */
+    .sync-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: #10b981; display: inline-block; margin-left: 4px;
+      transition: background .3s;
+    }
+    .sync-dot.saving { background: #f59e0b; animation: pulse .8s ease-in-out infinite; }
+    .sync-dot.offline { background: #ef4444; }
+
+    /* ── Grid ───────────────────────────────── */
+    .grid {
+      max-width: 1100px; margin: 0 auto; padding: 20px;
+      display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start;
+    }
+    @media (max-width: 700px) {
+      .grid { grid-template-columns: 1fr; padding: 12px; gap: 12px; }
+    }
+
+    /* ── Column header ──────────────────────── */
+    .col-hd { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .col-hd-left { display: flex; align-items: center; gap: 9px; }
+    .col-icon {
+      width: 33px; height: 33px; border-radius: 9px;
+      display: flex; align-items: center; justify-content: center; font-size: 17px; flex-shrink: 0;
+    }
+    .col-icon.do   { background: var(--do-bg); }
+    .col-icon.wait { background: var(--wait-bg); }
+    .col-hd h2  { font-size: 15px; font-weight: 700; }
+    .col-hd sub { font-size: 12px; color: var(--text2); font-weight: 400; display: block; margin-top: 1px; vertical-align: baseline; }
+    .col-badge { background: var(--bg); color: var(--text2); font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 20px; border: 1px solid var(--border); }
+
+    /* ── Topic cards ────────────────────────── */
+    .topic-list { display: flex; flex-direction: column; gap: 9px; }
+    .topic-card {
+      background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow);
+      border-left: 3px solid transparent; overflow: hidden; transition: box-shadow .15s;
+    }
+    .topic-card:hover { box-shadow: var(--shadow-lg); }
+    .topic-card.do   { border-left-color: var(--do); }
+    .topic-card.wait { border-left-color: var(--wait); }
+    .topic-card.archived { opacity: .5; border-left-color: var(--border); }
+    .card-summary { padding: 13px 14px 13px 15px; cursor: pointer; display: flex; align-items: flex-start; gap: 10px; }
+    .card-summary-body { flex: 1; min-width: 0; }
+    .card-title { font-size: 14px; font-weight: 700; line-height: 1.3; margin-bottom: 4px; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+    .badge { font-size: 10px; font-weight: 800; letter-spacing: .6px; padding: 2px 7px; border-radius: 20px; flex-shrink: 0; text-transform: uppercase; }
+    .badge.do   { background: var(--do-bg);   color: var(--do);   border: 1px solid var(--do-mid); }
+    .badge.wait { background: var(--wait-bg); color: var(--wait); border: 1px solid var(--wait-mid); }
+    .badge.done { background: #f3f4f6; color: var(--done-fg); border: 1px solid var(--border); }
+    .card-snippet { font-size: 13px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .card-meta-row { font-size: 11px; color: var(--text2); margin-top: 5px; opacity: .7; }
+    .chevron { font-size: 12px; color: var(--text2); flex-shrink: 0; transition: transform .2s; margin-top: 2px; user-select: none; }
+    .topic-card.open .chevron { transform: rotate(180deg); }
+
+    /* ── Thread ─────────────────────────────── */
+    .thread { display: none; border-top: 1px solid var(--border); padding: 12px 15px; }
+    .topic-card.open .thread { display: block; }
+    .entry { display: flex; gap: 10px; padding: 9px 0; position: relative; }
+    .entry:not(:last-child)::after {
+      content: ''; position: absolute; left: 10px; top: 26px; bottom: -6px;
+      width: 1px; background: var(--border);
+    }
+    .entry-dot { width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 800; flex-shrink: 0; margin-top: 1px; z-index: 1; }
+    .entry-dot.do   { background: var(--do-bg);   color: var(--do);   border: 1.5px solid var(--do); }
+    .entry-dot.wait { background: var(--wait-bg); color: var(--wait); border: 1.5px solid var(--wait); }
+    .entry-dot.done { background: #f3f4f6; color: var(--done-fg); border: 1.5px solid var(--border); }
+    .entry-body { flex: 1; min-width: 0; }
+    .entry-text { font-size: 13px; line-height: 1.5; color: var(--text); }
+    .entry-text.done { color: var(--done-fg); text-decoration: line-through; }
+
+    /* ── Notes ──────────────────────────────── */
+    .entry-notes { margin-top: 7px; display: flex; flex-direction: column; gap: 5px; }
+    .note-item { display: flex; align-items: center; gap: 7px; background: var(--note-bg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 9px; font-size: 12px; }
+    .note-icon { font-size: 13px; flex-shrink: 0; }
+    .note-audio { flex: 1; height: 28px; min-width: 100px; }
+    .note-dur { color: var(--text2); font-size: 11px; flex-shrink: 0; }
+    .note-text-val { flex: 1; color: var(--text); font-style: italic; line-height: 1.4; }
+    .note-del { background: none; border: none; cursor: pointer; font-size: 15px; color: var(--text2); padding: 1px 4px; border-radius: 4px; flex-shrink: 0; line-height: 1; font-family: inherit; }
+    .note-del:hover { background: #fee2e2; color: #dc2626; }
+    /* image notes */
+    .note-item.image-note { flex-direction: column; align-items: stretch; padding: 6px; gap: 5px; }
+    .note-img-wrap { position: relative; }
+    .note-img { width: 100%; max-height: 200px; object-fit: cover; border-radius: 6px; display: block; cursor: pointer; }
+    .note-img-del { position: absolute; top: 5px; right: 5px; background: rgba(0,0,0,.55); color: #fff; border: none; border-radius: 50%; width: 22px; height: 22px; cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center; font-family: inherit; }
+    .note-img-del:hover { background: rgba(220,38,38,.8); }
+    .note-img-caption { font-size: 11px; color: var(--text2); }
+    /* file chip */
+    .note-file-link { flex: 1; color: var(--text); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+    .note-file-link:hover { text-decoration: underline; }
+
+    /* ── Entry footer ───────────────────────── */
+    .entry-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 5px; gap: 6px; }
+    .entry-date { font-size: 11px; color: var(--text2); opacity: .7; }
+    .note-btns { display: flex; gap: 3px; flex-shrink: 0; }
+    @media (hover: hover) {
+      .note-btns { opacity: 0; transition: opacity .15s; }
+      .entry:hover .note-btns { opacity: 1; }
+    }
+    .note-btn { background: none; border: 1px solid var(--border); cursor: pointer; font-size: 11px; padding: 2px 8px; border-radius: 6px; color: var(--text2); transition: all .12s; font-family: inherit; display: flex; align-items: center; gap: 3px; white-space: nowrap; }
+    .note-btn:hover { background: var(--bg); border-color: #9ca3af; color: var(--text); }
+    .note-btn.recording { background: #fee2e2; border-color: #f87171; color: #dc2626; }
+
+    /* ── Entry done btn ─────────────────────── */
+    .entry-done-btn { background: none; border: none; cursor: pointer; font-size: 13px; color: var(--text2); padding: 2px 4px; border-radius: 4px; flex-shrink: 0; align-self: flex-start; margin-top: 1px; font-family: inherit; transition: opacity .15s, background .1s; }
+    @media (hover: hover) { .entry-done-btn { opacity: 0; } .entry:hover .entry-done-btn { opacity: 1; } }
+    .entry-done-btn:hover { background: var(--border); }
+
+    /* ── Recording pulse ─────────────────────── */
+    .rec-dot { display: inline-block; width: 7px; height: 7px; background: #dc2626; border-radius: 50%; animation: pulse 1s ease-in-out infinite; flex-shrink: 0; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+
+    /* ── Thread footer ──────────────────────── */
+    .thread-foot { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .archive-btn { background: none; border: none; font-size: 12px; color: var(--text2); cursor: pointer; font-family: inherit; padding: 4px 0; }
+    .archive-btn:hover { color: var(--text); }
+
+    /* ── Add topic / archived toggle ─────────── */
+    .add-topic-btn { width: 100%; padding: 11px; border: 1.5px dashed var(--border); background: transparent; border-radius: var(--radius); font-size: 13px; color: var(--text2); cursor: pointer; transition: all .15s; font-family: inherit; margin-top: 9px; }
+    .add-topic-btn:hover { border-color: #9ca3af; background: var(--surface); color: var(--text); }
+    .archived-tog { background: none; border: none; font-size: 12px; color: var(--text2); cursor: pointer; font-family: inherit; margin-top: 6px; display: none; padding: 4px 2px; }
+    .archived-tog:hover { color: var(--text); }
+
+    /* ── Empty state ────────────────────────── */
+    .empty { text-align: center; padding: 28px 16px; color: var(--text2); font-size: 13px; }
+
+    /* ── Buttons ────────────────────────────── */
+    .btn { padding: 8px 15px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; border: 1.5px solid var(--border); background: var(--surface); color: var(--text); display: inline-flex; align-items: center; gap: 5px; transition: all .15s; font-family: inherit; white-space: nowrap; }
+    .btn:hover { background: var(--bg); }
+    .btn.dark  { background: var(--text); color: #fff; border-color: transparent; }
+    .btn.dark:hover { background: #1f2937; }
+    .btn.sm { padding: 6px 12px; font-size: 12px; }
+
+    /* ── Modal ──────────────────────────────── */
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 200; padding: 16px; opacity: 0; pointer-events: none; transition: opacity .2s; }
+    .overlay.open { opacity: 1; pointer-events: all; }
+    .modal { background: var(--surface); border-radius: 16px; padding: 22px; width: 100%; max-width: 460px; transform: scale(.96) translateY(8px); transition: transform .2s; max-height: 90vh; overflow-y: auto; }
+    .overlay.open .modal { transform: scale(1) translateY(0); }
+    .modal h3 { font-size: 17px; font-weight: 800; margin-bottom: 4px; }
+    .modal-sub { font-size: 13px; color: var(--text2); margin-bottom: 18px; }
+    .type-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+    .t-opt { border: 2px solid var(--border); border-radius: 10px; padding: 11px 10px; cursor: pointer; transition: all .15s; text-align: center; background: var(--surface); font-family: inherit; }
+    .t-opt:hover { border-color: #9ca3af; }
+    .t-opt.sel.do   { border-color: var(--do);   background: var(--do-bg); }
+    .t-opt.sel.wait { border-color: var(--wait); background: var(--wait-bg); }
+    .t-opt .t-ico  { font-size: 20px; margin-bottom: 3px; }
+    .t-opt .t-name { font-size: 13px; font-weight: 700; }
+    .t-opt .t-sub  { font-size: 11px; color: var(--text2); margin-top: 1px; }
+    .field { margin-bottom: 13px; }
+    .field label { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--text2); margin-bottom: 5px; }
+    .field input, .field textarea { width: 100%; padding: 9px 12px; border: 1.5px solid var(--border); border-radius: 8px; font-size: 14px; font-family: inherit; outline: none; color: var(--text); background: var(--surface); transition: border-color .15s; }
+    .field input:focus, .field textarea:focus { border-color: #9ca3af; }
+    .field textarea { resize: vertical; min-height: 80px; }
+    .field input.err, .field textarea.err { border-color: #ef4444; }
+    .ctx-label { font-size: 12px; color: var(--text2); margin-bottom: 6px; font-weight: 500; font-style: italic; }
+    .modal-foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+
+    /* ── Print ──────────────────────────────── */
+    .print-hd { display: none; }
+    @media print {
+      header, .stats, .hbtns, .add-topic-btn, .archived-tog, .entry-done-btn,
+      .note-btns, .thread-foot, .overlay, #loading-screen, #signin-screen { display: none !important; }
+      body { background: white; font-size: 12px; }
+      .print-hd { display: block !important; padding-bottom: 10px; border-bottom: 2px solid #000; margin-bottom: 18px; }
+      .print-hd h1 { font-size: 18px; }
+      .print-hd p  { font-size: 12px; color: #555; margin-top: 3px; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; padding: 0; gap: 20px; max-width: 100%; }
+      .topic-card { box-shadow: none; border: 1px solid #ddd; break-inside: avoid; }
+      .topic-card.archived { display: none; }
+      .thread { display: block !important; }
+      .chevron { display: none; }
+      .note-audio { display: none; }
+      .note-item.audio-note .note-icon::after { content: ' [voice note]'; font-style: italic; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Loading -->
+<div class="full-screen" id="loading-screen">
+  <div class="spinner"></div>
+</div>
+
+<!-- Sign-in -->
+<div class="full-screen" id="signin-screen" style="display:none">
+  <div class="auth-card">
+    <div class="auth-logo">📋</div>
+    <h1>Do or Wait</h1>
+    <p>Track what you need to act on vs.<br>what you're waiting on — with a full thread for each topic.</p>
+    <button class="google-btn" id="signin-btn">
+      <svg class="google-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+        <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+        <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+        <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+      </svg>
+      Sign in with Google
+    </button>
+  </div>
+</div>
+
+<!-- Main app -->
+<div id="app" style="display:none">
+
+  <div class="print-hd">
+    <h1>Do or Wait</h1>
+    <p id="print-date"></p>
+  </div>
+
+  <header>
+    <div class="logo">📋 Do or Wait <span class="sync-dot" id="sync-dot" title="Synced"></span></div>
+    <div class="hbtns">
+      <img class="user-photo" id="user-photo" alt="You" />
+      <button class="btn" onclick="handleSignOut()">Sign out</button>
+      <button class="btn" onclick="window.print()">🖨️ Print</button>
+      <button class="btn dark" onclick="openNewTopic()">＋ New Topic</button>
+    </div>
+  </header>
+
+  <div class="stats">
+    <div class="stat"><div class="pip do"></div><strong id="do-count">0</strong> to act on</div>
+    <div class="stat"><div class="pip wait"></div><strong id="wait-count">0</strong> waiting on</div>
+  </div>
+
+  <div class="grid">
+    <div>
+      <div class="col-hd">
+        <div class="col-hd-left">
+          <div class="col-icon do">⚡</div>
+          <div><h2>I Need to Act</h2><sub>Respond · Send · Do</sub></div>
+        </div>
+        <span class="col-badge" id="do-badge">0</span>
+      </div>
+      <div class="topic-list" id="do-list"></div>
+      <button class="add-topic-btn" onclick="openNewTopic('do')">＋ New topic</button>
+      <button class="archived-tog" id="do-arch-tog" onclick="toggleArchived('do')"></button>
+    </div>
+
+    <div>
+      <div class="col-hd">
+        <div class="col-hd-left">
+          <div class="col-icon wait">⏳</div>
+          <div><h2>Waiting On</h2><sub>Response · Call · Info</sub></div>
+        </div>
+        <span class="col-badge" id="wait-badge">0</span>
+      </div>
+      <div class="topic-list" id="wait-list"></div>
+      <button class="add-topic-btn" onclick="openNewTopic('wait')">＋ New topic</button>
+      <button class="archived-tog" id="wait-arch-tog" onclick="toggleArchived('wait')"></button>
+    </div>
+  </div>
+
+</div><!-- /#app -->
+
+<!-- Hidden file input -->
+<input type="file" id="file-input" accept="image/*,.pdf,.doc,.docx,.txt,.csv,.xlsx,.pptx,.mp4,.mov,.zip" style="display:none" />
+
+<!-- Modal -->
+<div class="overlay" id="overlay" onclick="overlayClick(event)">
+  <div class="modal">
+    <h3 id="m-title">New Topic</h3>
+    <div class="modal-sub" id="m-sub"></div>
+    <div id="m-topic-field" class="field">
+      <label>Topic</label>
+      <input id="f-topic" type="text" placeholder="e.g. Walnut Robotics Sponsorship" autocomplete="off" />
+    </div>
+    <div class="type-row" id="m-type-row">
+      <button class="t-opt do sel" id="t-do" onclick="pickType('do')">
+        <div class="t-ico">⚡</div><div class="t-name">DO</div><div class="t-sub">I need to act</div>
+      </button>
+      <button class="t-opt wait" id="t-wait" onclick="pickType('wait')">
+        <div class="t-ico">⏳</div><div class="t-name">WAIT</div><div class="t-sub">Waiting for something</div>
+      </button>
+    </div>
+    <div class="field">
+      <label id="m-entry-lbl">First update</label>
+      <div class="ctx-label" id="m-ctx-lbl" style="display:none"></div>
+      <textarea id="f-entry" placeholder="What's the current status or next action?"></textarea>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn dark" onclick="saveModal()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+// ═══════════════════════════════════════════════════════════════
+//  FIREBASE
+// ═══════════════════════════════════════════════════════════════
+import { initializeApp }
+  from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { getAuth, signInWithRedirect, GoogleAuthProvider, onAuthStateChanged, signOut }
+  from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
+import { initializeFirestore, persistentLocalCache, collection, doc, setDoc, onSnapshot }
+  from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject }
+  from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js';
+
+const firebaseConfig = {
+  apiKey:            "AIzaSyBQ-1dSWkXnh5Ju2lVKsUieCx3r-lZc08U",
+  authDomain:        "do-or-wait.firebaseapp.com",
+  projectId:         "do-or-wait",
+  storageBucket:     "do-or-wait.firebasestorage.app",
+  messagingSenderId: "502204732668",
+  appId:             "1:502204732668:web:f6f11cc3b28288dc39f379"
+};
+
+const fbApp   = initializeApp(firebaseConfig);
+const auth    = getAuth(fbApp);
+const db      = initializeFirestore(fbApp, { localCache: persistentLocalCache() });
+const storage = getStorage(fbApp);
+const gProvider = new GoogleAuthProvider();
+
+// ═══════════════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════════════
+let topics       = [];
+let currentUser  = null;
+let unsubTopics  = null;
+let expandedIds  = new Set();
+let showArchived = { do: false, wait: false };
+
+// Modal
+let mMode    = 'new_topic'; // 'new_topic' | 'add_entry' | 'text_note'
+let mTopicId = null;
+let mEntryId = null;
+let mSelType = 'do';
+
+// Recording
+let activeRec = null; // { topicId, entryId, recorder, stream, chunks, start, timer }
+
+// File upload
+let pendingFileTopicId = null;
+let pendingFileEntryId = null;
+
+// Audio URL cache
+const audioUrls = {};
+
+// ═══════════════════════════════════════════════════════════════
+//  AUTH
+// ═══════════════════════════════════════════════════════════════
+onAuthStateChanged(auth, user => {
+  if (user) {
+    currentUser = user;
+    // Show user photo
+    const photo = document.getElementById('user-photo');
+    if (user.photoURL) { photo.src = user.photoURL; photo.style.display = 'inline-block'; }
+    // Show app
+    document.getElementById('loading-screen').style.display = 'none';
+    document.getElementById('signin-screen').style.display  = 'none';
+    document.getElementById('app').style.display            = 'block';
+    // Subscribe to topics
+    setupTopicsListener(user.uid);
+  } else {
+    currentUser = null;
+    if (unsubTopics) { unsubTopics(); unsubTopics = null; }
+    topics = [];
+    document.getElementById('loading-screen').style.display = 'none';
+    document.getElementById('signin-screen').style.display  = 'flex';
+    document.getElementById('app').style.display            = 'none';
+  }
+});
+
+function setupTopicsListener(uid) {
+  if (unsubTopics) unsubTopics();
+  unsubTopics = onSnapshot(collection(db, `users/${uid}/topics`), snapshot => {
+    topics = snapshot.docs.map(d => d.data());
+    // Ensure notes arrays exist (schema compat)
+    topics.forEach(t => t.entries?.forEach(e => { if (!e.notes) e.notes = []; }));
+    render();
+    populateAudio();
+  }, err => {
+    console.error('Firestore error:', err);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  FIRESTORE SAVE
+// ═══════════════════════════════════════════════════════════════
+async function saveTopic(topic) {
+  if (!currentUser) return;
+  setSyncing(true);
+  try {
+    await setDoc(doc(db, `users/${currentUser.uid}/topics`, topic.id), topic);
+  } catch (e) {
+    console.error('Save failed:', e);
+  } finally {
+    setSyncing(false);
+  }
+}
+
+function setSyncing(on) {
+  const dot = document.getElementById('sync-dot');
+  if (!dot) return;
+  dot.className = 'sync-dot' + (on ? ' saving' : '');
+  dot.title = on ? 'Saving…' : 'Synced';
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  FIREBASE STORAGE (audio)
+// ═══════════════════════════════════════════════════════════════
+async function uploadAudio(audioId, blob, mimeType) {
+  if (!currentUser) return;
+  const r = ref(storage, `users/${currentUser.uid}/audio/${audioId}`);
+  await uploadBytes(r, blob, { contentType: mimeType || 'audio/webm' });
+}
+
+async function getAudioUrl(audioId) {
+  if (!currentUser) return null;
+  if (audioUrls[audioId]) return audioUrls[audioId];
+  const r = ref(storage, `users/${currentUser.uid}/audio/${audioId}`);
+  const url = await getDownloadURL(r);
+  audioUrls[audioId] = url;
+  return url;
+}
+
+async function removeAudio(audioId) {
+  if (!currentUser) return;
+  try {
+    await deleteObject(ref(storage, `users/${currentUser.uid}/audio/${audioId}`));
+  } catch { /* not found is fine */ }
+  delete audioUrls[audioId];
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  RECORDING
+// ═══════════════════════════════════════════════════════════════
+function bestMimeType() {
+  const types = ['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/mp4','audio/ogg'];
+  return types.find(t => { try { return MediaRecorder.isTypeSupported(t); } catch { return false; } }) || '';
+}
+
+async function toggleRecording(topicId, entryId) {
+  if (activeRec) {
+    stopRecording();
+    return;
+  }
+  try {
+    const stream   = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mimeType = bestMimeType();
+    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+    const chunks   = [];
+
+    recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+
+    recorder.onstop = async () => {
+      const { topicId: tId, entryId: eId, start } = activeRec;
+      activeRec = null;
+
+      const blob     = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+      const duration = Math.max(1, Math.round((Date.now() - start) / 1000));
+      const audioId  = 'a' + Date.now();
+
+      setSyncing(true);
+      try {
+        await uploadAudio(audioId, blob, recorder.mimeType || 'audio/webm');
+        const topic = topics.find(t => t.id === tId);
+        const entry = topic?.entries.find(e => e.id === eId);
+        if (entry) {
+          if (!entry.notes) entry.notes = [];
+          entry.notes.push({ id: 'n' + Date.now(), type: 'audio', audioId, duration, createdAt: new Date().toISOString() });
+          expandedIds.add(tId);
+          await saveTopic(topic);
+        }
+      } finally {
+        setSyncing(false);
+      }
+      // onSnapshot will trigger render + populateAudio
+    };
+
+    recorder.start(100);
+    activeRec = { topicId, entryId, recorder, stream, chunks, start: Date.now(), timer: null };
+    activeRec.timer = setInterval(refreshRecBtn, 500);
+    refreshRecBtn();
+
+  } catch {
+    alert('Microphone access denied. Allow microphone in your browser settings.');
+  }
+}
+
+function stopRecording() {
+  if (!activeRec) return;
+  clearInterval(activeRec.timer);
+  activeRec.stream.getTracks().forEach(t => t.stop());
+  activeRec.recorder.stop();
+}
+
+function refreshRecBtn() {
+  if (!activeRec) return;
+  const elapsed = Math.floor((Date.now() - activeRec.start) / 1000);
+  const t = `${Math.floor(elapsed/60)}:${(elapsed%60).toString().padStart(2,'0')}`;
+  const btn = document.querySelector(`[data-rec="${activeRec.entryId}"]`);
+  if (btn) { btn.innerHTML = `<span class="rec-dot"></span> ${t}`; btn.classList.add('recording'); btn.title = 'Tap to stop'; }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  AUDIO POPULATION
+// ═══════════════════════════════════════════════════════════════
+async function populateAudio() {
+  const els = document.querySelectorAll('audio[data-audio-id]');
+  for (const el of els) {
+    const id = el.dataset.audioId;
+    if (el.src && el.src !== window.location.href) continue;
+    try {
+      const url = await getAudioUrl(id);
+      if (url) el.src = url;
+    } catch { /* not available */ }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  HELPERS
+// ═══════════════════════════════════════════════════════════════
+function currentStatus(topic) {
+  const last = [...topic.entries].reverse().find(e => !e.done);
+  return last?.type || topic.entries.at(-1)?.type || 'do';
+}
+function allDone(topic) { return topic.entries.length > 0 && topic.entries.every(e => e.done); }
+function fmtDate(iso) {
+  const d = new Date(iso), now = new Date();
+  const diff = Math.floor((now - d) / 86400000);
+  if (diff === 0) return 'today';
+  if (diff === 1) return 'yesterday';
+  if (diff < 7)  return diff + 'd ago';
+  return d.toLocaleDateString('en-US', { month:'short', day:'numeric' });
+}
+function fmtDur(s) { return `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`; }
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// ═══════════════════════════════════════════════════════════════
+//  RENDER
+// ═══════════════════════════════════════════════════════════════
+function render() {
+  const active   = t => !t.archived;
+  const archived = t =>  t.archived;
+  const doActive   = topics.filter(t => active(t)   && currentStatus(t) === 'do');
+  const waitActive = topics.filter(t => active(t)   && currentStatus(t) === 'wait');
+  const doArch     = topics.filter(t => archived(t) && currentStatus(t) === 'do');
+  const waitArch   = topics.filter(t => archived(t) && currentStatus(t) === 'wait');
+
+  document.getElementById('do-count').textContent   = doActive.length;
+  document.getElementById('wait-count').textContent = waitActive.length;
+  document.getElementById('do-badge').textContent   = doActive.length;
+  document.getElementById('wait-badge').textContent = waitActive.length;
+  renderCol('do-list',   doActive,   showArchived.do   ? doArch   : []);
+  renderCol('wait-list', waitActive, showArchived.wait ? waitArch : []);
+  setArchToggle('do',   doArch.length);
+  setArchToggle('wait', waitArch.length);
+  document.getElementById('print-date').textContent =
+    new Date().toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+  if (activeRec) refreshRecBtn();
+}
+
+function setArchToggle(type, n) {
+  const btn = document.getElementById(type + '-arch-tog');
+  if (!n) { btn.style.display = 'none'; return; }
+  btn.style.display = 'block';
+  btn.textContent = showArchived[type] ? `▲ Hide archived (${n})` : `▼ Show ${n} archived`;
+}
+
+function renderCol(listId, active, archived) {
+  const all = [...active, ...archived];
+  document.getElementById(listId).innerHTML = all.length
+    ? all.map(t => renderCard(t)).join('')
+    : '<div class="empty">Nothing here ✓</div>';
+}
+
+function renderCard(topic) {
+  const status  = currentStatus(topic);
+  const isOpen  = expandedIds.has(topic.id);
+  const last    = topic.entries.at(-1);
+  const allRes  = allDone(topic);
+  const noteCount = topic.entries.reduce((n, e) => n + (e.notes?.length || 0), 0);
+  return `
+  <div class="topic-card ${topic.archived ? 'archived' : status}${isOpen ? ' open' : ''}" id="tc-${topic.id}">
+    <div class="card-summary" onclick="toggleCard('${topic.id}')">
+      <div class="card-summary-body">
+        <div class="card-title">
+          <span class="badge ${topic.archived || allRes ? 'done' : status}">
+            ${topic.archived ? 'ARCHIVED' : allRes ? 'DONE' : status.toUpperCase()}
+          </span>
+          ${esc(topic.title)}
+        </div>
+        <div class="card-snippet">${last ? esc(last.text) : ''}</div>
+        <div class="card-meta-row">
+          ${topic.entries.length} update${topic.entries.length !== 1 ? 's' : ''}
+          ${noteCount ? ` · 🎤 ${noteCount} note${noteCount !== 1 ? 's' : ''}` : ''}
+          · last ${fmtDate(last?.createdAt || topic.createdAt)}
+        </div>
+      </div>
+      <span class="chevron">▼</span>
+    </div>
+    <div class="thread">
+      ${topic.entries.map(e => renderEntry(topic, e)).join('')}
+      <div class="thread-foot">
+        <button class="archive-btn" onclick="toggleArchive('${topic.id}')">
+          ${topic.archived ? '↩ Unarchive' : '📁 Archive topic'}
+        </button>
+        ${!topic.archived ? `<button class="btn sm dark" onclick="openAddEntry('${topic.id}',event)">＋ Update</button>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderEntry(topic, entry) {
+  const notes  = entry.notes || [];
+  const isRec  = activeRec?.entryId === entry.id;
+  return `
+  <div class="entry">
+    <div class="entry-dot ${entry.done ? 'done' : entry.type}">
+      ${entry.done ? '✓' : entry.type === 'do' ? '!' : '…'}
+    </div>
+    <div class="entry-body">
+      <div class="entry-text${entry.done ? ' done' : ''}">${esc(entry.text)}</div>
+      ${notes.length ? `<div class="entry-notes">${notes.map(n => renderNote(topic.id, entry.id, n)).join('')}</div>` : ''}
+      <div class="entry-footer">
+        <span class="entry-date">${entry.type.toUpperCase()} · ${fmtDate(entry.createdAt)}</span>
+        <span class="note-btns">
+          <button class="note-btn${isRec ? ' recording' : ''}" data-rec="${entry.id}"
+                  onclick="toggleRecording('${topic.id}','${entry.id}')"
+                  title="${isRec ? 'Stop recording' : 'Voice note'}">
+            ${isRec ? '<span class="rec-dot"></span> 0:00' : '🎤 Voice'}
+          </button>
+          <button class="note-btn" onclick="openTextNote('${topic.id}','${entry.id}',event)" title="Text note">📝 Note</button>
+          <button class="note-btn" onclick="openFileUpload('${topic.id}','${entry.id}',event)" title="Attach file">📎 File</button>
+        </span>
+      </div>
+    </div>
+    <button class="entry-done-btn" onclick="toggleEntry('${topic.id}','${entry.id}')" title="${entry.done ? 'Reopen' : 'Resolve'}">
+      ${entry.done ? '↩' : '✓'}
+    </button>
+  </div>`;
+}
+
+function renderNote(topicId, entryId, note) {
+  const del = `deleteNote('${topicId}','${entryId}','${note.id}')`;
+  if (note.type === 'audio') {
+    return `<div class="note-item audio-note">
+      <span class="note-icon">🎤</span>
+      <audio controls preload="none" data-audio-id="${note.audioId}" class="note-audio"></audio>
+      <span class="note-dur">${fmtDur(note.duration)}</span>
+      <button class="note-del" onclick="${del}">×</button>
+    </div>`;
+  }
+  if (note.type === 'file') {
+    const isImage = note.mimeType?.startsWith('image/');
+    if (isImage) {
+      return `<div class="note-item image-note">
+        <div class="note-img-wrap">
+          <a href="${note.downloadUrl}" target="_blank" rel="noopener">
+            <img class="note-img" src="${note.downloadUrl}" alt="${esc(note.fileName)}" loading="lazy" />
+          </a>
+          <button class="note-img-del" onclick="${del}" title="Delete">×</button>
+        </div>
+        <div class="note-img-caption">${esc(note.fileName)} · ${fmtFileSize(note.fileSize)}</div>
+      </div>`;
+    }
+    return `<div class="note-item file-note">
+      <span class="note-icon">📎</span>
+      <a class="note-file-link" href="${note.downloadUrl}" target="_blank" rel="noopener">${esc(note.fileName)}</a>
+      <span class="note-dur">${fmtFileSize(note.fileSize)}</span>
+      <button class="note-del" onclick="${del}">×</button>
+    </div>`;
+  }
+  return `<div class="note-item text-note">
+    <span class="note-icon">📝</span>
+    <span class="note-text-val">${esc(note.text)}</span>
+    <button class="note-del" onclick="${del}">×</button>
+  </div>`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INTERACTIONS
+// ═══════════════════════════════════════════════════════════════
+function toggleCard(id) {
+  if (expandedIds.has(id)) expandedIds.delete(id); else expandedIds.add(id);
+  render(); populateAudio();
+}
+
+async function toggleEntry(topicId, entryId) {
+  const topic = topics.find(t => t.id === topicId);
+  const entry = topic?.entries.find(e => e.id === entryId);
+  if (!entry) return;
+  entry.done = !entry.done;
+  render();
+  await saveTopic(topic);
+}
+
+async function toggleArchive(topicId) {
+  const topic = topics.find(t => t.id === topicId);
+  if (!topic) return;
+  topic.archived = !topic.archived;
+  render();
+  await saveTopic(topic);
+}
+
+function toggleArchived(type) {
+  showArchived[type] = !showArchived[type];
+  render(); populateAudio();
+}
+
+async function deleteNote(topicId, entryId, noteId) {
+  const topic = topics.find(t => t.id === topicId);
+  const entry = topic?.entries.find(e => e.id === entryId);
+  if (!entry) return;
+  const note = (entry.notes || []).find(n => n.id === noteId);
+  if (note?.type === 'audio' && note.audioId) await removeAudio(note.audioId);
+  if (note?.type === 'file'  && note.storagePath) {
+    try { await deleteObject(ref(storage, note.storagePath)); } catch { /* already gone */ }
+  }
+  entry.notes = (entry.notes || []).filter(n => n.id !== noteId);
+  render();
+  await saveTopic(topic);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MODAL
+// ═══════════════════════════════════════════════════════════════
+function _resetModal() {
+  document.getElementById('f-topic').classList.remove('err');
+  document.getElementById('f-entry').classList.remove('err');
+  document.getElementById('f-entry').value = '';
+  document.getElementById('m-ctx-lbl').style.display = 'none';
+}
+
+function openNewTopic(defaultType = 'do') {
+  mMode = 'new_topic'; mTopicId = null; mEntryId = null; mSelType = defaultType;
+  _resetModal();
+  document.getElementById('m-title').textContent         = 'New Topic';
+  document.getElementById('m-sub').textContent           = 'Start a thread for something you\'re tracking.';
+  document.getElementById('m-topic-field').style.display = 'block';
+  document.getElementById('m-type-row').style.display    = 'grid';
+  document.getElementById('m-entry-lbl').textContent     = 'First update';
+  document.getElementById('f-topic').value               = '';
+  document.getElementById('f-entry').placeholder         = 'What\'s the current status or next action?';
+  syncTypeUI();
+  document.getElementById('overlay').classList.add('open');
+  setTimeout(() => document.getElementById('f-topic').focus(), 180);
+}
+
+function openAddEntry(topicId, e) {
+  e.stopPropagation();
+  const topic = topics.find(t => t.id === topicId);
+  if (!topic) return;
+  mMode = 'add_entry'; mTopicId = topicId; mEntryId = null; mSelType = currentStatus(topic);
+  _resetModal();
+  document.getElementById('m-title').textContent         = '+ Update';
+  document.getElementById('m-sub').textContent           = '';
+  document.getElementById('m-topic-field').style.display = 'none';
+  document.getElementById('m-type-row').style.display    = 'grid';
+  document.getElementById('m-entry-lbl').textContent     = 'What happened / what\'s next?';
+  document.getElementById('m-ctx-lbl').textContent       = topic.title;
+  document.getElementById('m-ctx-lbl').style.display     = 'block';
+  document.getElementById('f-entry').placeholder         = 'What\'s the current status or next action?';
+  syncTypeUI();
+  document.getElementById('overlay').classList.add('open');
+  setTimeout(() => document.getElementById('f-entry').focus(), 180);
+}
+
+function openTextNote(topicId, entryId, e) {
+  e.stopPropagation();
+  const topic = topics.find(t => t.id === topicId);
+  const entry = topic?.entries.find(en => en.id === entryId);
+  if (!entry) return;
+  mMode = 'text_note'; mTopicId = topicId; mEntryId = entryId;
+  _resetModal();
+  document.getElementById('m-title').textContent         = '📝 Add Note';
+  document.getElementById('m-sub').textContent           = '';
+  document.getElementById('m-topic-field').style.display = 'none';
+  document.getElementById('m-type-row').style.display    = 'none';
+  document.getElementById('m-entry-lbl').textContent     = 'Note';
+  document.getElementById('m-ctx-lbl').textContent       = `${topic.title} — ${entry.text.slice(0,60)}${entry.text.length > 60 ? '…' : ''}`;
+  document.getElementById('m-ctx-lbl').style.display     = 'block';
+  document.getElementById('f-entry').placeholder         = 'Add a note, transcription, or follow-up thought…';
+  document.getElementById('overlay').classList.add('open');
+  setTimeout(() => document.getElementById('f-entry').focus(), 180);
+}
+
+function closeModal() { document.getElementById('overlay').classList.remove('open'); }
+function overlayClick(e) { if (e.target === document.getElementById('overlay')) closeModal(); }
+function pickType(t) { mSelType = t; syncTypeUI(); }
+function syncTypeUI() {
+  document.getElementById('t-do').className   = `t-opt do${mSelType === 'do'   ? ' sel' : ''}`;
+  document.getElementById('t-wait').className = `t-opt wait${mSelType === 'wait' ? ' sel' : ''}`;
+}
+
+async function saveModal() {
+  const text   = document.getElementById('f-entry').value.trim();
+  const textEl = document.getElementById('f-entry');
+  if (!text) { textEl.classList.add('err'); textEl.focus(); return; }
+  textEl.classList.remove('err');
+
+  if (mMode === 'new_topic') {
+    const title   = document.getElementById('f-topic').value.trim();
+    const titleEl = document.getElementById('f-topic');
+    if (!title) { titleEl.classList.add('err'); titleEl.focus(); return; }
+    titleEl.classList.remove('err');
+    const newTopic = {
+      id: 't' + Date.now(), title, archived: false, createdAt: new Date().toISOString(),
+      entries: [{ id: 'e' + Date.now(), type: mSelType, text, done: false, notes: [], createdAt: new Date().toISOString() }]
+    };
+    expandedIds.add(newTopic.id);
+    closeModal();
+    await saveTopic(newTopic);
+
+  } else if (mMode === 'add_entry') {
+    const topic = topics.find(t => t.id === mTopicId);
+    if (topic) {
+      topic.entries.push({ id: 'e' + Date.now(), type: mSelType, text, done: false, notes: [], createdAt: new Date().toISOString() });
+      expandedIds.add(topic.id);
+      closeModal();
+      await saveTopic(topic);
+    }
+
+  } else if (mMode === 'text_note') {
+    const topic = topics.find(t => t.id === mTopicId);
+    const entry = topic?.entries.find(e => e.id === mEntryId);
+    if (entry) {
+      if (!entry.notes) entry.notes = [];
+      entry.notes.push({ id: 'n' + Date.now(), type: 'text', text, createdAt: new Date().toISOString() });
+      expandedIds.add(mTopicId);
+      closeModal();
+      await saveTopic(topic);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  FILE ATTACHMENTS
+// ═══════════════════════════════════════════════════════════════
+function openFileUpload(topicId, entryId, e) {
+  e.stopPropagation();
+  pendingFileTopicId = topicId;
+  pendingFileEntryId = entryId;
+  document.getElementById('file-input').click();
+}
+
+async function handleFileUpload(file) {
+  const topicId = pendingFileTopicId;
+  const entryId = pendingFileEntryId;
+  pendingFileTopicId = null;
+  pendingFileEntryId = null;
+  if (!file || !topicId || !entryId || !currentUser) return;
+
+  const fileId = 'f' + Date.now();
+  const ext    = file.name.includes('.') ? '.' + file.name.split('.').pop().toLowerCase() : '';
+  const path   = `users/${currentUser.uid}/files/${fileId}${ext}`;
+
+  setSyncing(true);
+  try {
+    const r = ref(storage, path);
+    await uploadBytes(r, file, { contentType: file.type || 'application/octet-stream' });
+    const downloadUrl = await getDownloadURL(r);
+
+    const topic = topics.find(t => t.id === topicId);
+    const entry = topic?.entries.find(e => e.id === entryId);
+    if (entry) {
+      if (!entry.notes) entry.notes = [];
+      entry.notes.push({
+        id: 'n' + Date.now(),
+        type: 'file',
+        fileId,
+        storagePath: path,
+        downloadUrl,
+        fileName: file.name,
+        fileSize: file.size,
+        mimeType: file.type || 'application/octet-stream',
+        createdAt: new Date().toISOString()
+      });
+      expandedIds.add(topicId);
+      await saveTopic(topic);
+    }
+  } catch (err) {
+    alert('Upload failed: ' + err.message);
+  } finally {
+    setSyncing(false);
+  }
+}
+
+function fmtFileSize(bytes) {
+  if (!bytes) return '';
+  if (bytes < 1024)          return bytes + ' B';
+  if (bytes < 1024 * 1024)   return Math.round(bytes / 1024) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+// Wire up file input (once DOM is ready)
+document.getElementById('file-input').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  e.target.value = ''; // reset so same file can be re-selected
+  if (file) await handleFileUpload(file);
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  AUTH ACTIONS
+// ═══════════════════════════════════════════════════════════════
+async function handleSignIn() {
+  await signInWithRedirect(auth, gProvider);
+}
+async function handleSignOut() {
+  if (unsubTopics) { unsubTopics(); unsubTopics = null; }
+  topics = []; expandedIds.clear();
+  await signOut(auth);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  KEYBOARD
+// ═══════════════════════════════════════════════════════════════
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    if (activeRec) { stopRecording(); return; }
+    closeModal();
+  }
+  const inModal = document.getElementById('overlay').classList.contains('open');
+  if (e.key === 'Enter' && inModal && document.activeElement.tagName !== 'TEXTAREA') {
+    e.preventDefault(); saveModal();
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'n') { e.preventDefault(); openNewTopic(); }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'p') { e.preventDefault(); window.print(); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  SIGN-IN BUTTON (outside module scope in HTML, so wire up here)
+// ═══════════════════════════════════════════════════════════════
+document.getElementById('signin-btn').addEventListener('click', handleSignIn);
+
+// ═══════════════════════════════════════════════════════════════
+//  EXPOSE GLOBALS (for onclick= attributes in HTML)
+// ═══════════════════════════════════════════════════════════════
+window.toggleCard      = toggleCard;
+window.toggleEntry     = toggleEntry;
+window.toggleArchive   = toggleArchive;
+window.toggleArchived  = toggleArchived;
+window.deleteNote      = deleteNote;
+window.toggleRecording = toggleRecording;
+window.openNewTopic    = openNewTopic;
+window.openAddEntry    = openAddEntry;
+window.openTextNote    = openTextNote;
+window.openFileUpload  = openFileUpload;
+window.closeModal      = closeModal;
+window.saveModal       = saveModal;
+window.overlayClick    = overlayClick;
+window.pickType        = pickType;
+window.handleSignOut   = handleSignOut;
+</script>
+</body>
+</html>
