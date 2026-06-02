@@ -413,7 +413,7 @@
 // ═══════════════════════════════════════════════════════════════
 import { initializeApp }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut }
+import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, onAuthStateChanged, signOut }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 import { initializeFirestore, persistentLocalCache, collection, doc, setDoc, onSnapshot }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
@@ -1050,15 +1050,24 @@ document.getElementById('file-input').addEventListener('change', async e => {
 // ═══════════════════════════════════════════════════════════════
 //  AUTH ACTIONS
 // ═══════════════════════════════════════════════════════════════
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
 async function handleSignIn() {
-  try {
-    await signInWithPopup(auth, gProvider);
-  } catch (err) {
-    if (err.code !== 'auth/popup-closed-by-user') {
-      alert('Sign-in failed: ' + err.message);
+  if (isMobile) {
+    await signInWithRedirect(auth, gProvider);
+  } else {
+    try {
+      await signInWithPopup(auth, gProvider);
+    } catch (err) {
+      if (err.code !== 'auth/popup-closed-by-user') {
+        alert('Sign-in failed: ' + err.message);
+      }
     }
   }
 }
+
+// Process any pending redirect result on page load (mobile sign-in)
+getRedirectResult(auth).catch(() => {});
 async function handleSignOut() {
   if (unsubTopics) { unsubTopics(); unsubTopics = null; }
   topics = []; expandedIds.clear();
