@@ -134,11 +134,11 @@
     /* ── Grid ───────────────────────────────── */
     .grid {
       max-width: 1100px; margin: 0 auto; padding: 20px;
-      display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start;
+      display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start;
       width: 100%;
     }
     @media (max-width: 768px) {
-      .grid { grid-template-columns: 1fr; padding: 12px; gap: 12px; }
+      .grid { grid-template-columns: minmax(0, 1fr); padding: 12px; gap: 12px; }
     }
 
     /* ── Column header ──────────────────────── */
@@ -155,10 +155,11 @@
     .col-badge { background: var(--bg); color: var(--text2); font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 20px; border: 1px solid var(--border); }
 
     /* ── Topic cards ────────────────────────── */
-    .topic-list { display: flex; flex-direction: column; gap: 9px; }
+    .topic-list { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
     .topic-card {
       background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow);
       border-left: 3px solid transparent; overflow: hidden; transition: box-shadow .15s;
+      min-width: 0; width: 100%;
     }
     .topic-card:hover { box-shadow: var(--shadow-lg); }
     .topic-card.do   { border-left-color: var(--do); }
