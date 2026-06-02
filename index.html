@@ -1050,23 +1050,26 @@ document.getElementById('file-input').addEventListener('change', async e => {
 // ═══════════════════════════════════════════════════════════════
 //  AUTH ACTIONS
 // ═══════════════════════════════════════════════════════════════
-const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
 
 async function handleSignIn() {
-  if (isMobile) {
+  if (isIOS) {
+    // iOS blocks popups — use redirect instead
     await signInWithRedirect(auth, gProvider);
   } else {
     try {
       await signInWithPopup(auth, gProvider);
     } catch (err) {
-      if (err.code !== 'auth/popup-closed-by-user') {
+      if (err.code === 'auth/popup-blocked') {
+        await signInWithRedirect(auth, gProvider);
+      } else if (err.code !== 'auth/popup-closed-by-user') {
         alert('Sign-in failed: ' + err.message);
       }
     }
   }
 }
 
-// Process any pending redirect result on page load (mobile sign-in)
+// Process any pending redirect result on page load
 getRedirectResult(auth).catch(() => {});
 async function handleSignOut() {
   if (unsubTopics) { unsubTopics(); unsubTopics = null; }
