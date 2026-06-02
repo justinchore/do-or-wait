@@ -463,27 +463,31 @@ const audioUrls = {};
 // ═══════════════════════════════════════════════════════════════
 //  AUTH
 // ═══════════════════════════════════════════════════════════════
-onAuthStateChanged(auth, user => {
-  if (user) {
-    currentUser = user;
-    // Show user photo
-    const photo = document.getElementById('user-photo');
-    if (user.photoURL) { photo.src = user.photoURL; photo.style.display = 'inline-block'; }
-    // Show app
-    document.getElementById('loading-screen').style.display = 'none';
-    document.getElementById('signin-screen').style.display  = 'none';
-    document.getElementById('app').style.display            = 'block';
-    // Subscribe to topics
-    setupTopicsListener(user.uid);
-  } else {
-    currentUser = null;
-    if (unsubTopics) { unsubTopics(); unsubTopics = null; }
-    topics = [];
-    document.getElementById('loading-screen').style.display = 'none';
-    document.getElementById('signin-screen').style.display  = 'flex';
-    document.getElementById('app').style.display            = 'none';
-  }
-});
+// Process any pending redirect FIRST, then listen for auth state.
+// On iOS the redirect result must be explicitly consumed before
+// onAuthStateChanged fires with the correct user.
+getRedirectResult(auth)
+  .catch(() => null)
+  .then(() => {
+    onAuthStateChanged(auth, user => {
+      if (user) {
+        currentUser = user;
+        const photo = document.getElementById('user-photo');
+        if (user.photoURL) { photo.src = user.photoURL; photo.style.display = 'inline-block'; }
+        document.getElementById('loading-screen').style.display = 'none';
+        document.getElementById('signin-screen').style.display  = 'none';
+        document.getElementById('app').style.display            = 'block';
+        setupTopicsListener(user.uid);
+      } else {
+        currentUser = null;
+        if (unsubTopics) { unsubTopics(); unsubTopics = null; }
+        topics = [];
+        document.getElementById('loading-screen').style.display = 'none';
+        document.getElementById('signin-screen').style.display  = 'flex';
+        document.getElementById('app').style.display            = 'none';
+      }
+    });
+  });
 
 function setupTopicsListener(uid) {
   if (unsubTopics) unsubTopics();
@@ -1069,8 +1073,6 @@ async function handleSignIn() {
   }
 }
 
-// Process any pending redirect result on page load
-getRedirectResult(auth).catch(() => {});
 async function handleSignOut() {
   if (unsubTopics) { unsubTopics(); unsubTopics = null; }
   topics = []; expandedIds.clear();
