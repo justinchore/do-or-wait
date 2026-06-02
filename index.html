@@ -1486,8 +1486,9 @@ function renderLeadCard(lead, stage, nextLabel) {
 
 // ── Tab switching ────────────────────────────────────────────
 function switchTab(tab) {
-  document.getElementById('tasks-view').style.display = tab === 'tasks' ? '' : 'none';
-  document.getElementById('leads-view').style.display = tab === 'leads' ? '' : 'none';
+  document.getElementById('tasks-view').style.display    = tab === 'tasks'    ? '' : 'none';
+  document.getElementById('leads-view').style.display    = tab === 'leads'    ? '' : 'none';
+  document.getElementById('playbook-view').style.display = tab === 'playbook' ? '' : 'none';
   document.querySelectorAll('.tab-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.tab === tab);
   });
