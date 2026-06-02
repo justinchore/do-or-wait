@@ -277,6 +277,83 @@
     .ctx-label { font-size: 12px; color: var(--text2); margin-bottom: 6px; font-weight: 500; font-style: italic; }
     .modal-foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
 
+    /* ── Tab bar ────────────────────────────── */
+    .tab-bar {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 0 16px; display: flex; gap: 0;
+    }
+    .tab-btn {
+      padding: 12px 18px; font-size: 14px; font-weight: 600; font-family: inherit;
+      background: none; border: none; border-bottom: 2px solid transparent;
+      color: var(--text2); cursor: pointer; transition: all .15s; margin-bottom: -1px;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { color: var(--text); border-bottom-color: var(--text); }
+
+    /* ── Pipeline ───────────────────────────── */
+    .pipeline {
+      display: flex; gap: 12px; padding: 16px;
+      overflow-x: auto; align-items: flex-start;
+      -webkit-overflow-scrolling: touch;
+      scroll-snap-type: x proximity;
+    }
+    .pipeline::-webkit-scrollbar { height: 6px; }
+    .pipeline::-webkit-scrollbar-track { background: var(--bg); }
+    .pipeline::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    .pcol {
+      flex: 0 0 240px; display: flex; flex-direction: column; gap: 8px;
+      scroll-snap-align: start;
+    }
+    .pcol-hd {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 4px 6px;
+    }
+    .pcol-hd-left { display: flex; align-items: center; gap: 7px; }
+    .pcol-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+    .pcol-title { font-size: 13px; font-weight: 700; }
+    .pcol-count {
+      background: var(--bg); color: var(--text2); font-size: 11px; font-weight: 700;
+      padding: 1px 7px; border-radius: 20px; border: 1px solid var(--border);
+    }
+    .pcol-add {
+      width: 100%; padding: 8px; border: 1.5px dashed var(--border); background: transparent;
+      border-radius: 10px; font-size: 12px; color: var(--text2); cursor: pointer;
+      transition: all .15s; font-family: inherit; margin-top: 2px;
+    }
+    .pcol-add:hover { border-color: #9ca3af; background: var(--surface); color: var(--text); }
+
+    /* ── Lead cards ─────────────────────────── */
+    .lead-card {
+      background: var(--surface); border-radius: 10px; padding: 12px;
+      box-shadow: var(--shadow); cursor: pointer; transition: box-shadow .15s;
+      border-left: 3px solid transparent;
+    }
+    .lead-card:hover { box-shadow: var(--shadow-lg); }
+    .lead-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; margin-bottom: 6px; }
+    .lead-company { font-size: 13px; font-weight: 700; line-height: 1.3; word-break: break-word; flex: 1; }
+    .lead-seg {
+      font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 20px;
+      white-space: nowrap; flex-shrink: 0;
+    }
+    .lead-contact { font-size: 12px; color: var(--text2); margin-bottom: 5px; }
+    .lead-space { font-size: 12px; color: var(--text2); margin-bottom: 6px; }
+    .lead-next-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--text2); opacity: .7; }
+    .lead-next-text { font-size: 12px; color: var(--text); margin-top: 2px; word-break: break-word; }
+    .lead-date { font-size: 11px; color: var(--text2); margin-top: 5px; }
+    .lead-date.overdue { color: #dc2626; font-weight: 600; }
+    .lead-card-foot {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-top: 10px; gap: 6px;
+    }
+    .advance-btn {
+      font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 6px;
+      border: 1.5px solid; cursor: pointer; font-family: inherit; background: transparent;
+      white-space: nowrap; transition: all .12s;
+    }
+    .lead-del { background: none; border: none; font-size: 14px; color: var(--text2); cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+    .lead-del:hover { background: #fee2e2; color: #dc2626; }
+
     /* ── Print ──────────────────────────────── */
     .print-hd { display: none; }
     @media print {
@@ -320,6 +397,14 @@
   </div>
 
   <!-- New topics (no entries yet) -->
+  <!-- Tab bar -->
+  <div class="tab-bar">
+    <button class="tab-btn active" data-tab="tasks" onclick="switchTab('tasks')">📋 Tasks</button>
+    <button class="tab-btn" data-tab="leads" onclick="switchTab('leads')">🎯 Leads</button>
+  </div>
+
+  <!-- Tasks view -->
+  <div id="tasks-view">
   <div id="new-topics-wrap" style="display:none; max-width:1100px; margin:0 auto; padding:12px 12px 0; width:100%;">
     <div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--text2); margin-bottom:8px; padding:0 4px;">New — tap to add first entry</div>
     <div id="new-topics-list" style="display:flex; flex-direction:column; gap:8px;"></div>
@@ -351,7 +436,15 @@
     </div>
   </div>
 
-</div><!-- /#app -->
+
+  </div><!-- /#tasks-view -->
+
+  <!-- Leads view -->
+  <div id="leads-view" style="display:none">
+    <div class="pipeline" id="pipeline"></div>
+  </div>
+
+</div><!-- /#app (closed here instead of below) -->
 
 <!-- Hidden file input -->
 <input type="file" id="file-input" accept="image/*,.pdf,.doc,.docx,.txt,.csv,.xlsx,.pptx,.mp4,.mov,.zip" style="display:none" />
@@ -381,6 +474,63 @@
     <div class="modal-foot">
       <button class="btn" onclick="closeModal()">Cancel</button>
       <button class="btn dark" onclick="saveModal()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Lead modal -->
+<div class="overlay" id="lead-overlay" onclick="leadOverlayClick(event)">
+  <div class="modal">
+    <h3 id="lm-title">Add Lead</h3>
+    <div class="field">
+      <label>Company / Name</label>
+      <input id="lf-company" type="text" placeholder="e.g. Acme Imports LLC" autocomplete="off" />
+    </div>
+    <div class="field">
+      <label>Contact</label>
+      <input id="lf-contact" type="text" placeholder="Person you're talking to" autocomplete="off" />
+    </div>
+    <div class="field">
+      <label>Segment</label>
+      <select id="lf-segment">
+        <option value="importer">🚢 Importer</option>
+        <option value="3pl">📦 3PL / Logistics</option>
+        <option value="ecommerce">🛍️ E-commerce / FBA</option>
+        <option value="tenant">🏢 Existing Tenant</option>
+        <option value="broker">🤝 Broker</option>
+        <option value="other">📋 Other</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Space Needs</label>
+      <input id="lf-space" type="text" placeholder="e.g. 2,000 sf dock-high" autocomplete="off" />
+    </div>
+    <div class="field">
+      <label>Stage</label>
+      <select id="lf-status">
+        <option value="cold">Cold</option>
+        <option value="contacted">Contacted</option>
+        <option value="toured">Toured</option>
+        <option value="proposal">Proposal</option>
+        <option value="won">Won ✓</option>
+        <option value="lost">Lost ✗</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Next Action</label>
+      <input id="lf-action" type="text" placeholder="e.g. Send proposal, Follow up call" autocomplete="off" />
+    </div>
+    <div class="field">
+      <label>Next Date</label>
+      <input id="lf-date" type="date" />
+    </div>
+    <div class="field">
+      <label>Notes</label>
+      <textarea id="lf-notes" placeholder="Any extra context…"></textarea>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeLeadModal()">Cancel</button>
+      <button class="btn dark" onclick="saveLead()">Save</button>
     </div>
   </div>
 </div>
@@ -1005,6 +1155,181 @@ document.addEventListener('keydown', e => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+//  LEADS
+// ═══════════════════════════════════════════════════════════════
+let leads = [];
+let unsubLeads = null;
+let editLeadId = null;
+let leadDefaultStage = 'cold';
+
+const STAGES = [
+  { id:'cold',      label:'Cold',      color:'#6b7280', dot:'#9ca3af' },
+  { id:'contacted', label:'Contacted', color:'#2563eb', dot:'#3b82f6' },
+  { id:'toured',    label:'Toured',    color:'#7c3aed', dot:'#8b5cf6' },
+  { id:'proposal',  label:'Proposal',  color:'#d97706', dot:'#f59e0b' },
+  { id:'won',       label:'Won ✓',     color:'#059669', dot:'#10b981' },
+  { id:'lost',      label:'Lost ✗',    color:'#dc2626', dot:'#ef4444' },
+];
+
+const SEGMENTS = {
+  importer:  { label:'🚢 Importer',    bg:'#f5f3ff', color:'#6d28d9' },
+  '3pl':     { label:'📦 3PL',         bg:'#eff6ff', color:'#1d4ed8' },
+  ecommerce: { label:'🛍️ E-comm',      bg:'#fff7ed', color:'#c2410c' },
+  tenant:    { label:'🏢 Existing',    bg:'#f0fdf4', color:'#15803d' },
+  broker:    { label:'🤝 Broker',      bg:'#f0f9ff', color:'#0369a1' },
+  other:     { label:'📋 Other',       bg:'#f3f4f6', color:'#4b5563' },
+};
+
+const NEXT_STAGE = { cold:'contacted', contacted:'toured', toured:'proposal', proposal:'won' };
+
+// Start Firestore listener for leads
+function setupLeadsListener() {
+  if (unsubLeads) unsubLeads();
+  unsubLeads = onSnapshot(collection(db, 'leads'), snap => {
+    leads = snap.docs.map(d => d.data());
+    renderPipeline();
+  });
+}
+setupLeadsListener();
+
+async function saveLead() {
+  const company = document.getElementById('lf-company').value.trim();
+  if (!company) { document.getElementById('lf-company').classList.add('err'); return; }
+  document.getElementById('lf-company').classList.remove('err');
+
+  const lead = {
+    id:        editLeadId || ('l' + Date.now()),
+    company,
+    contact:   document.getElementById('lf-contact').value.trim(),
+    segment:   document.getElementById('lf-segment').value,
+    space:     document.getElementById('lf-space').value.trim(),
+    status:    document.getElementById('lf-status').value,
+    action:    document.getElementById('lf-action').value.trim(),
+    nextDate:  document.getElementById('lf-date').value,
+    notes:     document.getElementById('lf-notes').value.trim(),
+    createdAt: editLeadId ? (leads.find(l => l.id === editLeadId)?.createdAt || new Date().toISOString()) : new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  setSyncing(true);
+  try {
+    await setDoc(doc(db, 'leads', lead.id), lead);
+  } catch(e) { console.error(e); } finally { setSyncing(false); }
+  closeLeadModal();
+}
+
+async function deleteLead(id) {
+  if (!confirm('Delete this lead?')) return;
+  try { await setDoc(doc(db, 'leads', id), { _deleted: true, id }); } catch(e) { console.error(e); }
+}
+
+async function advanceLead(id, e) {
+  e.stopPropagation();
+  const lead = leads.find(l => l.id === id);
+  if (!lead || !NEXT_STAGE[lead.status]) return;
+  const updated = { ...lead, status: NEXT_STAGE[lead.status], updatedAt: new Date().toISOString() };
+  setSyncing(true);
+  try { await setDoc(doc(db, 'leads', id), updated); } catch(e) { console.error(e); } finally { setSyncing(false); }
+}
+
+function openAddLead(stage = 'cold', e) {
+  if (e) e.stopPropagation();
+  editLeadId = null;
+  leadDefaultStage = stage;
+  document.getElementById('lm-title').textContent = 'Add Lead';
+  document.getElementById('lf-company').value  = '';
+  document.getElementById('lf-contact').value  = '';
+  document.getElementById('lf-segment').value  = 'importer';
+  document.getElementById('lf-space').value    = '';
+  document.getElementById('lf-status').value   = stage;
+  document.getElementById('lf-action').value   = '';
+  document.getElementById('lf-date').value     = '';
+  document.getElementById('lf-notes').value    = '';
+  document.getElementById('lf-company').classList.remove('err');
+  document.getElementById('lead-overlay').classList.add('open');
+  setTimeout(() => document.getElementById('lf-company').focus(), 180);
+}
+
+function openEditLead(id, e) {
+  e.stopPropagation();
+  const lead = leads.find(l => l.id === id);
+  if (!lead) return;
+  editLeadId = id;
+  document.getElementById('lm-title').textContent = 'Edit Lead';
+  document.getElementById('lf-company').value  = lead.company || '';
+  document.getElementById('lf-contact').value  = lead.contact || '';
+  document.getElementById('lf-segment').value  = lead.segment || 'other';
+  document.getElementById('lf-space').value    = lead.space   || '';
+  document.getElementById('lf-status').value   = lead.status  || 'cold';
+  document.getElementById('lf-action').value   = lead.action  || '';
+  document.getElementById('lf-date').value     = lead.nextDate|| '';
+  document.getElementById('lf-notes').value    = lead.notes   || '';
+  document.getElementById('lf-company').classList.remove('err');
+  document.getElementById('lead-overlay').classList.add('open');
+  setTimeout(() => document.getElementById('lf-company').focus(), 180);
+}
+
+function closeLeadModal() { document.getElementById('lead-overlay').classList.remove('open'); editLeadId = null; }
+function leadOverlayClick(e) { if (e.target === document.getElementById('lead-overlay')) closeLeadModal(); }
+
+function renderPipeline() {
+  const active = leads.filter(l => !l._deleted);
+  const pipeline = document.getElementById('pipeline');
+  if (!pipeline) return;
+
+  pipeline.innerHTML = STAGES.map(stage => {
+    const stageLeads = active.filter(l => l.status === stage.id);
+    const next = NEXT_STAGE[stage.id];
+    const nextLabel = next ? STAGES.find(s => s.id === next)?.label : null;
+
+    return `
+    <div class="pcol">
+      <div class="pcol-hd">
+        <div class="pcol-hd-left">
+          <div class="pcol-dot" style="background:${stage.dot}"></div>
+          <span class="pcol-title">${stage.label}</span>
+        </div>
+        <span class="pcol-count">${stageLeads.length}</span>
+      </div>
+      ${stageLeads.map(lead => renderLeadCard(lead, stage, nextLabel)).join('')}
+      <button class="pcol-add" onclick="openAddLead('${stage.id}', event)">＋ Add lead</button>
+    </div>`;
+  }).join('');
+}
+
+function renderLeadCard(lead, stage, nextLabel) {
+  const seg    = SEGMENTS[lead.segment] || SEGMENTS.other;
+  const today  = new Date().toISOString().slice(0,10);
+  const overdue = lead.nextDate && lead.nextDate < today;
+  const dateStr = lead.nextDate ? new Date(lead.nextDate + 'T12:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric' }) : '';
+
+  return `
+  <div class="lead-card" style="border-left-color:${stage.dot}" onclick="openEditLead('${lead.id}', event)">
+    <div class="lead-card-top">
+      <div class="lead-company">${esc(lead.company)}</div>
+      <span class="lead-seg" style="background:${seg.bg};color:${seg.color}">${seg.label}</span>
+    </div>
+    ${lead.contact ? `<div class="lead-contact">👤 ${esc(lead.contact)}</div>` : ''}
+    ${lead.space   ? `<div class="lead-space">📐 ${esc(lead.space)}</div>` : ''}
+    ${lead.action  ? `<div><div class="lead-next-label">Next</div><div class="lead-next-text">${esc(lead.action)}</div></div>` : ''}
+    ${dateStr      ? `<div class="lead-date${overdue ? ' overdue' : ''}">📅 ${dateStr}${overdue ? ' — overdue' : ''}</div>` : ''}
+    <div class="lead-card-foot">
+      <button class="lead-del" onclick="deleteLead('${lead.id}')" title="Delete">🗑</button>
+      ${nextLabel ? `<button class="advance-btn" style="color:${stage.color};border-color:${stage.dot}" onclick="advanceLead('${lead.id}',event)">→ ${nextLabel}</button>` : '<span></span>'}
+    </div>
+  </div>`;
+}
+
+// ── Tab switching ────────────────────────────────────────────
+function switchTab(tab) {
+  document.getElementById('tasks-view').style.display = tab === 'tasks' ? '' : 'none';
+  document.getElementById('leads-view').style.display = tab === 'leads' ? '' : 'none';
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === tab);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  EXPOSE GLOBALS (for onclick= attributes in HTML)
 // ═══════════════════════════════════════════════════════════════
 window.toggleCard      = toggleCard;
@@ -1021,6 +1346,14 @@ window.closeModal      = closeModal;
 window.saveModal       = saveModal;
 window.overlayClick    = overlayClick;
 window.pickType        = pickType;
+window.switchTab       = switchTab;
+window.openAddLead     = openAddLead;
+window.openEditLead    = openEditLead;
+window.closeLeadModal  = closeLeadModal;
+window.leadOverlayClick= leadOverlayClick;
+window.saveLead        = saveLead;
+window.deleteLead      = deleteLead;
+window.advanceLead     = advanceLead;
 </script>
 </body>
 </html>
