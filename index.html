@@ -1007,30 +1007,8 @@ function render() {
   document.getElementById('do-badge').textContent   = doActive.length;
   document.getElementById('wait-badge').textContent = waitActive.length;
 
-  // New (empty) topics strip
-  const wrap = document.getElementById('new-topics-wrap');
-  const list = document.getElementById('new-topics-list');
-  if (newTopics.length) {
-    wrap.style.display = 'block';
-    list.innerHTML = newTopics.map(t => `
-      <div class="topic-card open" id="tc-${t.id}" style="width:100%;">
-        <div class="card-summary" onclick="toggleCard('${t.id}')">
-          <div class="card-summary-body">
-            <div class="card-title"><span class="badge done">New</span>${esc(t.title)}</div>
-          </div>
-          <span class="chevron">▼</span>
-        </div>
-        <div class="thread">
-          <div class="empty" style="padding:10px 0;">No entries yet</div>
-          <div class="thread-foot">
-            <button class="archive-btn" onclick="toggleArchive('${t.id}')">📁 Archive</button>
-            <button class="btn sm dark" onclick="openAddEntry('${t.id}',event)">＋ Add entry</button>
-          </div>
-        </div>
-      </div>`).join('');
-  } else {
-    wrap.style.display = 'none';
-  }
+  // New topics strip — hidden, topics only appear once they have a DO/WAIT entry
+  document.getElementById('new-topics-wrap').style.display = 'none';
 
   renderCol('do-list',   doActive,   showArchived.do   ? doArch   : []);
   renderCol('wait-list', waitActive, showArchived.wait ? waitArch : []);
@@ -1300,13 +1278,25 @@ async function saveModal() {
     const titleEl = document.getElementById('f-topic');
     if (!title) { titleEl.classList.add('err'); titleEl.focus(); return; }
     titleEl.classList.remove('err');
+    // Save topic, then immediately open the add-entry modal so it lands in DO or WAIT
     const newTopic = {
       id: 't' + Date.now(), title, archived: false, createdAt: new Date().toISOString(),
       entries: []
     };
     expandedIds.add(newTopic.id);
-    closeModal();
     await saveTopic(newTopic);
+    // Reuse the entry modal — switch mode in place
+    mMode = 'add_entry'; mTopicId = newTopic.id; mColl = 'topics'; mSelType = 'do';
+    document.getElementById('m-title').textContent         = title;
+    document.getElementById('m-topic-field').style.display = 'none';
+    document.getElementById('m-type-row').style.display    = 'grid';
+    document.getElementById('m-entry-lbl').parentElement.style.display = 'block';
+    document.getElementById('m-entry-lbl').textContent     = 'First update — Do or Wait?';
+    document.getElementById('m-ctx-lbl').style.display     = 'none';
+    document.getElementById('f-entry').value               = '';
+    document.getElementById('f-entry').placeholder         = 'What\'s the action or what are you waiting on?';
+    syncTypeUI();
+    setTimeout(() => document.getElementById('f-entry').focus(), 50);
     return;
   }
 
