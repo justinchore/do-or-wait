@@ -329,6 +329,26 @@
     .lf-btn:hover { border-color:#9ca3af; color:var(--text); }
     .lf-btn.active { background:var(--text); color:#fff; border-color:transparent; }
 
+    /* ── Lead chips (new leads with no entries) ── */
+    .lead-chips { display:flex; flex-wrap:wrap; gap:7px; }
+    .lead-chip {
+      display:inline-flex; align-items:center; gap:7px;
+      background:var(--surface); border:1.5px solid var(--border);
+      border-radius:20px; padding:6px 10px 6px 12px;
+      font-size:13px; transition:border-color .15s;
+    }
+    .lead-chip:hover { border-color:#9ca3af; }
+    .chip-name { font-weight:600; color:var(--text); }
+    .chip-seg  { font-size:11px; color:var(--text2); }
+    .chip-btn  {
+      background:none; border:none; cursor:pointer;
+      font-size:13px; color:var(--text2); padding:0 2px;
+      border-radius:4px; font-family:inherit; transition:background .1s;
+    }
+    .chip-btn:hover { background:var(--bg); }
+    .chip-btn.add { color:var(--do); font-weight:700; font-size:15px; }
+    .chip-btn.edit { font-size:12px; }
+
     /* ── Lead detail panel ───────────────────── */
     .lead-detail-panel { background:var(--note-bg); border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-bottom:10px; display:flex; flex-direction:column; gap:5px; }
     .lead-detail-panel.empty-details { display:block; }
@@ -628,10 +648,10 @@
       <button class="lf-btn"        data-stage="proposal"  onclick="setLeadFilter('proposal')">Proposal</button>
     </div>
 
-    <!-- New leads strip -->
-    <div id="new-leads-wrap" style="display:none; max-width:1100px; margin:0 auto; padding:12px 12px 0; width:100%;">
-      <div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--text2); margin-bottom:8px; padding:0 4px;">New — tap to add first update</div>
-      <div id="new-leads-list" style="display:flex; flex-direction:column; gap:8px;"></div>
+    <!-- New leads strip (compact chips) -->
+    <div id="new-leads-wrap" style="display:none; max-width:1100px; margin:0 auto; padding:12px 16px 0; width:100%;">
+      <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--text2); margin-bottom:8px;">New — tap ＋ to add first update</div>
+      <div id="new-leads-list" class="lead-chips"></div>
     </div>
 
     <!-- DO / WAIT grid -->
@@ -1456,7 +1476,15 @@ function renderLeadsSection() {
   const nw = document.getElementById('new-leads-wrap');
   const nl = document.getElementById('new-leads-list');
   if (nw) nw.style.display = newL.length ? 'block' : 'none';
-  if (nl) nl.innerHTML = newL.map(l => renderLeadCard(l)).join('');
+  if (nl) nl.innerHTML = newL.map(l => {
+    const seg = LEAD_SEGS[l.segment] || LEAD_SEGS.other;
+    return `<div class="lead-chip">
+      <span class="chip-name">${esc(l.company)}</span>
+      <span class="chip-seg">${seg.label}</span>
+      <button class="chip-btn edit" onclick="openEditLeadDetails('${l.id}',event)" title="Edit details">✏️</button>
+      <button class="chip-btn add"  onclick="openAddLeadEntry('${l.id}',event)"    title="Add first update">＋</button>
+    </div>`;
+  }).join('');
 
   // DO / WAIT cols
   const doList   = document.getElementById('lead-do-list');
