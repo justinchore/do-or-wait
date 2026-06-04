@@ -323,6 +323,19 @@
     }
     .pcol-add:hover { border-color: #9ca3af; background: var(--surface); color: var(--text); }
 
+    /* ── Lead stage filter ──────────────────── */
+    .lead-filter { display:flex; gap:6px; flex-wrap:wrap; padding:12px 16px 0; max-width:1100px; margin:0 auto; width:100%; }
+    .lf-btn { padding:5px 12px; border-radius:20px; border:1.5px solid var(--border); background:var(--surface); font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; color:var(--text2); transition:all .15s; }
+    .lf-btn:hover { border-color:#9ca3af; color:var(--text); }
+    .lf-btn.active { background:var(--text); color:#fff; border-color:transparent; }
+
+    /* ── Lead detail panel ───────────────────── */
+    .lead-detail-panel { background:var(--note-bg); border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-bottom:10px; display:flex; flex-direction:column; gap:5px; }
+    .lead-detail-panel.empty-details { display:block; }
+    .lead-detail-row { display:flex; align-items:baseline; gap:8px; font-size:12px; }
+    .lead-detail-key { color:var(--text2); flex-shrink:0; width:90px; }
+    .lead-detail-val { color:var(--text); font-weight:500; word-break:break-word; }
+
     /* ── Lead cards ─────────────────────────── */
     .lead-card {
       background: var(--surface); border-radius: 10px; padding: 12px;
@@ -605,7 +618,57 @@
 
   <!-- Leads view -->
   <div id="leads-view" style="display:none">
-    <div class="pipeline" id="pipeline"></div>
+
+    <!-- Stage filter -->
+    <div class="lead-filter">
+      <button class="lf-btn active" data-stage="all"       onclick="setLeadFilter('all')">All</button>
+      <button class="lf-btn"        data-stage="cold"      onclick="setLeadFilter('cold')">Cold</button>
+      <button class="lf-btn"        data-stage="contacted" onclick="setLeadFilter('contacted')">Contacted</button>
+      <button class="lf-btn"        data-stage="toured"    onclick="setLeadFilter('toured')">Toured</button>
+      <button class="lf-btn"        data-stage="proposal"  onclick="setLeadFilter('proposal')">Proposal</button>
+    </div>
+
+    <!-- New leads strip -->
+    <div id="new-leads-wrap" style="display:none; max-width:1100px; margin:0 auto; padding:12px 12px 0; width:100%;">
+      <div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--text2); margin-bottom:8px; padding:0 4px;">New — tap to add first update</div>
+      <div id="new-leads-list" style="display:flex; flex-direction:column; gap:8px;"></div>
+    </div>
+
+    <!-- DO / WAIT grid -->
+    <div class="grid">
+      <div style="min-width:0">
+        <div class="col-hd">
+          <div class="col-hd-left">
+            <div class="col-icon do">⚡</div>
+            <div><h2>Do</h2><sub>Follow up · Send · Call</sub></div>
+          </div>
+          <span class="col-badge" id="lead-do-badge">0</span>
+        </div>
+        <div class="topic-list" id="lead-do-list"></div>
+      </div>
+      <div style="min-width:0">
+        <div class="col-hd">
+          <div class="col-hd-left">
+            <div class="col-icon wait">⏳</div>
+            <div><h2>Wait</h2><sub>Their decision · Response</sub></div>
+          </div>
+          <span class="col-badge" id="lead-wait-badge">0</span>
+        </div>
+        <div class="topic-list" id="lead-wait-list"></div>
+      </div>
+    </div>
+
+    <!-- Won / Lost section -->
+    <div style="max-width:1100px; margin:0 auto; padding:0 20px 20px;">
+      <button class="archived-tog" id="wl-toggle" onclick="toggleWonLost()" style="display:none"></button>
+      <div id="wl-list" style="display:none; margin-top:8px;"></div>
+    </div>
+
+    <!-- Add new lead button -->
+    <div style="max-width:1100px; margin:0 auto; padding:0 20px 20px;">
+      <button class="add-topic-btn" onclick="openNewLead()">＋ New lead</button>
+    </div>
+
   </div>
 
 </div><!-- /#app (closed here instead of below) -->
@@ -643,58 +706,65 @@
 </div>
 
 <!-- Lead modal -->
+<!-- Lead modal (new lead + edit details) -->
 <div class="overlay" id="lead-overlay" onclick="leadOverlayClick(event)">
   <div class="modal">
-    <h3 id="lm-title">Add Lead</h3>
+    <h3 id="lm-title">New Lead</h3>
     <div class="field">
-      <label>Company / Name</label>
+      <label>Company / Name *</label>
       <input id="lf-company" type="text" placeholder="e.g. Acme Imports LLC" autocomplete="off" />
     </div>
     <div class="field">
       <label>Contact</label>
       <input id="lf-contact" type="text" placeholder="Person you're talking to" autocomplete="off" />
     </div>
-    <div class="field">
-      <label>Segment</label>
-      <select id="lf-segment">
-        <option value="importer">🚢 Importer</option>
-        <option value="3pl">📦 3PL / Logistics</option>
-        <option value="ecommerce">🛍️ E-commerce / FBA</option>
-        <option value="tenant">🏢 Existing Tenant</option>
-        <option value="broker">🤝 Broker</option>
-        <option value="other">📋 Other</option>
-      </select>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="field">
+        <label>Segment</label>
+        <select id="lf-segment">
+          <option value="importer">🚢 Importer</option>
+          <option value="3pl">📦 3PL</option>
+          <option value="ecommerce">🛍️ E-commerce</option>
+          <option value="tenant">🏢 Existing Tenant</option>
+          <option value="broker">🤝 Broker</option>
+          <option value="other">📋 Other</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Stage</label>
+        <select id="lf-stage">
+          <option value="cold">Cold</option>
+          <option value="contacted">Contacted</option>
+          <option value="toured">Toured</option>
+          <option value="proposal">Proposal</option>
+          <option value="won">Won ✓</option>
+          <option value="lost">Lost ✗</option>
+        </select>
+      </div>
     </div>
-    <div class="field">
-      <label>Space Needs</label>
-      <input id="lf-space" type="text" placeholder="e.g. 2,000 sf dock-high" autocomplete="off" />
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="field">
+        <label>Location</label>
+        <input id="lf-location" type="text" placeholder="e.g. Fontana, CA" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label>Sq Ft Needed</label>
+        <input id="lf-sqft" type="text" placeholder="e.g. 2,000–5,000" autocomplete="off" />
+      </div>
     </div>
-    <div class="field">
-      <label>Stage</label>
-      <select id="lf-status">
-        <option value="cold">Cold</option>
-        <option value="contacted">Contacted</option>
-        <option value="toured">Toured</option>
-        <option value="proposal">Proposal</option>
-        <option value="won">Won ✓</option>
-        <option value="lost">Lost ✗</option>
-      </select>
-    </div>
-    <div class="field">
-      <label>Next Action</label>
-      <input id="lf-action" type="text" placeholder="e.g. Send proposal, Follow up call" autocomplete="off" />
-    </div>
-    <div class="field">
-      <label>Next Date</label>
-      <input id="lf-date" type="date" />
-    </div>
-    <div class="field">
-      <label>Notes</label>
-      <textarea id="lf-notes" placeholder="Any extra context…"></textarea>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="field">
+        <label>Lease Length</label>
+        <input id="lf-lease" type="text" placeholder="e.g. MTM, 6 mo, 1 yr" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label>Move-in Timeline</label>
+        <input id="lf-movein" type="text" placeholder="e.g. ASAP, 30 days" autocomplete="off" />
+      </div>
     </div>
     <div class="modal-foot">
       <button class="btn" onclick="closeLeadModal()">Cancel</button>
-      <button class="btn dark" onclick="saveLead()">Save</button>
+      <button class="btn dark" onclick="saveLeadDetails()">Save</button>
     </div>
   </div>
 </div>
@@ -734,6 +804,7 @@ let mMode    = 'new_topic';
 let mTopicId = null;
 let mEntryId = null;
 let mSelType = 'do';
+let mColl    = 'topics'; // which collection the modal is operating on
 
 // Recording
 let activeRec = null;
@@ -741,6 +812,7 @@ let activeRec = null;
 // File upload
 let pendingFileTopicId = null;
 let pendingFileEntryId = null;
+let pendingFileColl    = 'topics';
 
 // Audio URL cache
 const audioUrls = {};
@@ -809,11 +881,8 @@ function bestMimeType() {
   return types.find(t => { try { return MediaRecorder.isTypeSupported(t); } catch { return false; } }) || '';
 }
 
-async function toggleRecording(topicId, entryId) {
-  if (activeRec) {
-    stopRecording();
-    return;
-  }
+async function toggleRecording(topicId, entryId, coll='topics') {
+  if (activeRec) { stopRecording(); return; }
   try {
     const stream   = await navigator.mediaDevices.getUserMedia({ audio: true });
     const mimeType = bestMimeType();
@@ -823,35 +892,29 @@ async function toggleRecording(topicId, entryId) {
     recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
 
     recorder.onstop = async () => {
-      const { topicId: tId, entryId: eId, start } = activeRec;
+      const { topicId: tId, entryId: eId, start, coll: rColl } = activeRec;
       activeRec = null;
-
       const blob     = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
       const duration = Math.max(1, Math.round((Date.now() - start) / 1000));
       const audioId  = 'a' + Date.now();
-
       setSyncing(true);
       try {
         await uploadAudio(audioId, blob, recorder.mimeType || 'audio/webm');
-        const topic = topics.find(t => t.id === tId);
-        const entry = topic?.entries.find(e => e.id === eId);
+        const item  = findItem(tId, rColl);
+        const entry = item?.entries.find(e => e.id === eId);
         if (entry) {
           if (!entry.notes) entry.notes = [];
           entry.notes.push({ id: 'n' + Date.now(), type: 'audio', audioId, duration, createdAt: new Date().toISOString() });
-          expandedIds.add(tId);
-          await saveTopic(topic);
+          if (rColl === 'leads') expandedLeadIds.add(tId); else expandedIds.add(tId);
+          await persistItem(item, rColl);
         }
-      } finally {
-        setSyncing(false);
-      }
-      // onSnapshot will trigger render + populateAudio
+      } finally { setSyncing(false); }
     };
 
     recorder.start(100);
-    activeRec = { topicId, entryId, recorder, stream, chunks, start: Date.now(), timer: null };
+    activeRec = { topicId, entryId, recorder, stream, chunks, start: Date.now(), timer: null, coll };
     activeRec.timer = setInterval(refreshRecBtn, 500);
     refreshRecBtn();
-
   } catch {
     alert('Microphone access denied. Allow microphone in your browser settings.');
   }
@@ -1039,8 +1102,8 @@ function renderEntry(topic, entry) {
   </div>`;
 }
 
-function renderNote(topicId, entryId, note) {
-  const del = `deleteNote('${topicId}','${entryId}','${note.id}')`;
+function renderNote(topicId, entryId, note, coll='topics') {
+  const del = `deleteNote('${topicId}','${entryId}','${note.id}','${coll}')`;
   if (note.type === 'audio') {
     return `<div class="note-item audio-note">
       <span class="note-icon">🎤</span>
@@ -1084,21 +1147,36 @@ function toggleCard(id) {
   render(); populateAudio();
 }
 
-async function toggleEntry(topicId, entryId) {
-  const topic = topics.find(t => t.id === topicId);
-  const entry = topic?.entries.find(e => e.id === entryId);
-  if (!entry) return;
-  entry.done = !entry.done;
-  render();
-  await saveTopic(topic);
+// ── Collection helpers ────────────────────────────────────────
+function findItem(id, coll) {
+  return (coll === 'leads' ? leads : topics).find(x => x.id === id);
+}
+async function persistItem(item, coll) {
+  setSyncing(true);
+  try { await setDoc(doc(db, coll, item.id), item); }
+  catch(e) { console.error('Save failed:', e); }
+  finally { setSyncing(false); }
+}
+function rerender(coll) {
+  if (coll === 'leads') renderLeadsSection(); else render();
+  populateAudio();
 }
 
-async function toggleArchive(topicId) {
-  const topic = topics.find(t => t.id === topicId);
-  if (!topic) return;
-  topic.archived = !topic.archived;
-  render();
-  await saveTopic(topic);
+async function toggleEntry(itemId, entryId, coll='topics') {
+  const item = findItem(itemId, coll);
+  const entry = item?.entries.find(e => e.id === entryId);
+  if (!entry) return;
+  entry.done = !entry.done;
+  rerender(coll);
+  await persistItem(item, coll);
+}
+
+async function toggleArchive(itemId, coll='topics') {
+  const item = findItem(itemId, coll);
+  if (!item) return;
+  item.archived = !item.archived;
+  rerender(coll);
+  await persistItem(item, coll);
 }
 
 function toggleArchived(type) {
@@ -1106,9 +1184,9 @@ function toggleArchived(type) {
   render(); populateAudio();
 }
 
-async function deleteNote(topicId, entryId, noteId) {
-  const topic = topics.find(t => t.id === topicId);
-  const entry = topic?.entries.find(e => e.id === entryId);
+async function deleteNote(itemId, entryId, noteId, coll='topics') {
+  const item = findItem(itemId, coll);
+  const entry = item?.entries.find(e => e.id === entryId);
   if (!entry) return;
   const note = (entry.notes || []).find(n => n.id === noteId);
   if (note?.type === 'audio' && note.audioId) await removeAudio(note.audioId);
@@ -1116,8 +1194,8 @@ async function deleteNote(topicId, entryId, noteId) {
     try { await deleteObject(ref(storage, note.storagePath)); } catch { /* already gone */ }
   }
   entry.notes = (entry.notes || []).filter(n => n.id !== noteId);
-  render();
-  await saveTopic(topic);
+  rerender(coll);
+  await persistItem(item, coll);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1143,20 +1221,19 @@ function openNewTopic() {
   setTimeout(() => document.getElementById('f-topic').focus(), 180);
 }
 
-function openAddEntry(topicId, e) {
+function openAddEntry(itemId, e, coll='topics') {
   e.stopPropagation();
-  const topic = topics.find(t => t.id === topicId);
-  if (!topic) return;
-  const status = currentStatus(topic);
-  mMode = 'add_entry'; mTopicId = topicId; mEntryId = null;
+  const item = findItem(itemId, coll);
+  if (!item) return;
+  const status = currentStatus(item);
+  mMode = 'add_entry'; mTopicId = itemId; mEntryId = null; mColl = coll;
   mSelType = status === 'new' ? 'do' : status;
   _resetModal();
-  document.getElementById('m-title').textContent         = topic.title;
+  document.getElementById('m-title').textContent         = item.title || item.company || '';
   document.getElementById('m-sub').textContent           = '';
   document.getElementById('m-topic-field').style.display = 'none';
   document.getElementById('m-type-row').style.display    = 'grid';
-  const entryField = document.getElementById('m-entry-lbl').parentElement;
-  entryField.style.display = 'block';
+  document.getElementById('m-entry-lbl').parentElement.style.display = 'block';
   document.getElementById('m-entry-lbl').textContent     = 'What\'s happening?';
   document.getElementById('m-ctx-lbl').style.display     = 'none';
   document.getElementById('f-entry').placeholder         = 'Describe the action or what you\'re waiting on…';
@@ -1165,12 +1242,15 @@ function openAddEntry(topicId, e) {
   setTimeout(() => document.getElementById('f-entry').focus(), 180);
 }
 
-function openTextNote(topicId, entryId, e) {
+// Alias for leads
+function openAddLeadEntry(leadId, e) { openAddEntry(leadId, e, 'leads'); }
+
+function openTextNote(itemId, entryId, e, coll='topics') {
   e.stopPropagation();
-  const topic = topics.find(t => t.id === topicId);
-  const entry = topic?.entries.find(en => en.id === entryId);
+  const item  = findItem(itemId, coll);
+  const entry = item?.entries.find(en => en.id === entryId);
   if (!entry) return;
-  mMode = 'text_note'; mTopicId = topicId; mEntryId = entryId;
+  mMode = 'text_note'; mTopicId = itemId; mEntryId = entryId; mColl = coll;
   _resetModal();
   document.getElementById('m-title').textContent         = '📝 Add Note';
   document.getElementById('m-sub').textContent           = '';
@@ -1178,7 +1258,8 @@ function openTextNote(topicId, entryId, e) {
   document.getElementById('m-type-row').style.display    = 'none';
   document.getElementById('m-entry-lbl').parentElement.style.display = 'block';
   document.getElementById('m-entry-lbl').textContent     = 'Note';
-  document.getElementById('m-ctx-lbl').textContent       = `${topic.title} — ${entry.text.slice(0,60)}${entry.text.length > 60 ? '…' : ''}`;
+  const label = item.title || item.company || '';
+  document.getElementById('m-ctx-lbl').textContent       = `${label} — ${entry.text.slice(0,60)}${entry.text.length > 60 ? '…' : ''}`;
   document.getElementById('m-ctx-lbl').style.display     = 'block';
   document.getElementById('f-entry').placeholder         = 'Add a note, transcription, or follow-up thought…';
   document.getElementById('overlay').classList.add('open');
@@ -1215,23 +1296,23 @@ async function saveModal() {
   textEl.classList.remove('err');
 
   if (mMode === 'add_entry') {
-    const topic = topics.find(t => t.id === mTopicId);
-    if (topic) {
-      topic.entries.push({ id: 'e' + Date.now(), type: mSelType, text, done: false, notes: [], createdAt: new Date().toISOString() });
-      expandedIds.add(topic.id);
+    const item = findItem(mTopicId, mColl);
+    if (item) {
+      item.entries.push({ id: 'e' + Date.now(), type: mSelType, text, done: false, notes: [], createdAt: new Date().toISOString() });
+      if (mColl === 'leads') expandedLeadIds.add(item.id); else expandedIds.add(item.id);
       closeModal();
-      await saveTopic(topic);
+      await persistItem(item, mColl);
     }
 
   } else if (mMode === 'text_note') {
-    const topic = topics.find(t => t.id === mTopicId);
-    const entry = topic?.entries.find(e => e.id === mEntryId);
+    const item  = findItem(mTopicId, mColl);
+    const entry = item?.entries.find(e => e.id === mEntryId);
     if (entry) {
       if (!entry.notes) entry.notes = [];
       entry.notes.push({ id: 'n' + Date.now(), type: 'text', text, createdAt: new Date().toISOString() });
-      expandedIds.add(mTopicId);
+      if (mColl === 'leads') expandedLeadIds.add(mTopicId); else expandedIds.add(mTopicId);
       closeModal();
-      await saveTopic(topic);
+      await persistItem(item, mColl);
     }
   }
 }
@@ -1239,18 +1320,21 @@ async function saveModal() {
 // ═══════════════════════════════════════════════════════════════
 //  FILE ATTACHMENTS
 // ═══════════════════════════════════════════════════════════════
-function openFileUpload(topicId, entryId, e) {
+function openFileUpload(topicId, entryId, e, coll='topics') {
   e.stopPropagation();
   pendingFileTopicId = topicId;
   pendingFileEntryId = entryId;
+  pendingFileColl    = coll;
   document.getElementById('file-input').click();
 }
 
 async function handleFileUpload(file) {
   const topicId = pendingFileTopicId;
   const entryId = pendingFileEntryId;
+  const coll    = pendingFileColl || 'topics';
   pendingFileTopicId = null;
   pendingFileEntryId = null;
+  pendingFileColl    = 'topics';
   if (!file || !topicId || !entryId) return;
 
   const fileId = 'f' + Date.now();
@@ -1263,23 +1347,18 @@ async function handleFileUpload(file) {
     await uploadBytes(r, file, { contentType: file.type || 'application/octet-stream' });
     const downloadUrl = await getDownloadURL(r);
 
-    const topic = topics.find(t => t.id === topicId);
-    const entry = topic?.entries.find(e => e.id === entryId);
+    const item  = findItem(topicId, coll);
+    const entry = item?.entries.find(e => e.id === entryId);
     if (entry) {
       if (!entry.notes) entry.notes = [];
       entry.notes.push({
-        id: 'n' + Date.now(),
-        type: 'file',
-        fileId,
-        storagePath: path,
-        downloadUrl,
-        fileName: file.name,
-        fileSize: file.size,
+        id: 'n' + Date.now(), type: 'file', fileId, storagePath: path, downloadUrl,
+        fileName: file.name, fileSize: file.size,
         mimeType: file.type || 'application/octet-stream',
         createdAt: new Date().toISOString()
       });
-      expandedIds.add(topicId);
-      await saveTopic(topic);
+      if (coll === 'leads') expandedLeadIds.add(topicId); else expandedIds.add(topicId);
+      await persistItem(item, coll);
     }
   } catch (err) {
     alert('Upload failed: ' + err.message);
@@ -1323,63 +1402,243 @@ document.addEventListener('keydown', e => {
 // ═══════════════════════════════════════════════════════════════
 let leads = [];
 let unsubLeads = null;
-let editLeadId = null;
-let leadDefaultStage = 'cold';
+let editLeadId   = null;
+let leadFilter   = 'all';
+let showWonLost  = false;
+let expandedLeadIds = new Set();
 
-const STAGES = [
-  { id:'cold',      label:'Cold',      color:'#6b7280', dot:'#9ca3af' },
-  { id:'contacted', label:'Contacted', color:'#2563eb', dot:'#3b82f6' },
-  { id:'toured',    label:'Toured',    color:'#7c3aed', dot:'#8b5cf6' },
-  { id:'proposal',  label:'Proposal',  color:'#d97706', dot:'#f59e0b' },
-  { id:'won',       label:'Won ✓',     color:'#059669', dot:'#10b981' },
-  { id:'lost',      label:'Lost ✗',    color:'#dc2626', dot:'#ef4444' },
-];
-
-const SEGMENTS = {
-  importer:  { label:'🚢 Importer',    bg:'#f5f3ff', color:'#6d28d9' },
-  '3pl':     { label:'📦 3PL',         bg:'#eff6ff', color:'#1d4ed8' },
-  ecommerce: { label:'🛍️ E-comm',      bg:'#fff7ed', color:'#c2410c' },
-  tenant:    { label:'🏢 Existing',    bg:'#f0fdf4', color:'#15803d' },
-  broker:    { label:'🤝 Broker',      bg:'#f0f9ff', color:'#0369a1' },
-  other:     { label:'📋 Other',       bg:'#f3f4f6', color:'#4b5563' },
+const LEAD_STAGES = {
+  cold:      { label:'Cold',      color:'#6b7280' },
+  contacted: { label:'Contacted', color:'#2563eb' },
+  toured:    { label:'Toured',    color:'#7c3aed' },
+  proposal:  { label:'Proposal',  color:'#d97706' },
+  won:       { label:'Won ✓',     color:'#059669' },
+  lost:      { label:'Lost ✗',    color:'#dc2626' },
+};
+const LEAD_SEGS = {
+  importer:  { label:'🚢 Importer',  bg:'#f5f3ff', color:'#6d28d9' },
+  '3pl':     { label:'📦 3PL',       bg:'#eff6ff', color:'#1d4ed8' },
+  ecommerce: { label:'🛍️ E-comm',    bg:'#fff7ed', color:'#c2410c' },
+  tenant:    { label:'🏢 Existing',  bg:'#f0fdf4', color:'#15803d' },
+  broker:    { label:'🤝 Broker',    bg:'#f0f9ff', color:'#0369a1' },
+  other:     { label:'📋 Other',     bg:'#f3f4f6', color:'#4b5563' },
 };
 
-const NEXT_STAGE = { cold:'contacted', contacted:'toured', toured:'proposal', proposal:'won' };
+// Firestore listener
+unsubLeads = onSnapshot(collection(db, 'leads'), snap => {
+  leads = snap.docs.map(d => d.data()).filter(l => !l._deleted);
+  leads.forEach(l => { if (!l.entries) l.entries = []; l.entries.forEach(e => { if (!e.notes) e.notes = []; }); });
+  renderLeadsSection();
+  populateAudio();
+});
 
-// Start Firestore listener for leads
-function setupLeadsListener() {
-  if (unsubLeads) unsubLeads();
-  unsubLeads = onSnapshot(collection(db, 'leads'), snap => {
-    leads = snap.docs.map(d => d.data());
-    renderPipeline();
-  });
+// ── Lead renders ──────────────────────────────────────────────
+function renderLeadsSection() {
+  const closed  = ['won','lost'];
+  const active  = leads.filter(l => !l.archived && !closed.includes(l.stage || 'cold'));
+  const wonlost = leads.filter(l => l.archived || closed.includes(l.stage || 'cold'));
+  const filtered = leadFilter === 'all' ? active : active.filter(l => (l.stage||'cold') === leadFilter);
+
+  const newL  = filtered.filter(l => !l.entries.length);
+  const doL   = filtered.filter(l =>  l.entries.length && currentStatus(l) === 'do');
+  const waitL = filtered.filter(l =>  l.entries.length && currentStatus(l) === 'wait');
+
+  // filter buttons
+  document.querySelectorAll('.lf-btn').forEach(b => b.classList.toggle('active', b.dataset.stage === leadFilter));
+
+  // stats
+  const doEl   = document.getElementById('lead-do-badge');
+  const waitEl = document.getElementById('lead-wait-badge');
+  if (doEl)   doEl.textContent   = doL.length;
+  if (waitEl) waitEl.textContent = waitL.length;
+
+  // new leads strip
+  const nw = document.getElementById('new-leads-wrap');
+  const nl = document.getElementById('new-leads-list');
+  if (nw) nw.style.display = newL.length ? 'block' : 'none';
+  if (nl) nl.innerHTML = newL.map(l => renderLeadCard(l)).join('');
+
+  // DO / WAIT cols
+  const doList   = document.getElementById('lead-do-list');
+  const waitList = document.getElementById('lead-wait-list');
+  if (doList)   doList.innerHTML   = doL.length   ? doL.map(l => renderLeadCard(l)).join('')   : '<div class="empty">Nothing here ✓</div>';
+  if (waitList) waitList.innerHTML = waitL.length ? waitL.map(l => renderLeadCard(l)).join('') : '<div class="empty">Nothing here ✓</div>';
+
+  // Won/Lost
+  const wlBtn  = document.getElementById('wl-toggle');
+  const wlList = document.getElementById('wl-list');
+  if (wlBtn) {
+    wlBtn.style.display = wonlost.length ? 'block' : 'none';
+    wlBtn.textContent = showWonLost ? `▲ Hide closed (${wonlost.length})` : `▼ Show ${wonlost.length} closed`;
+  }
+  if (wlList) {
+    wlList.style.display = showWonLost ? 'block' : 'none';
+    if (showWonLost) wlList.innerHTML = wonlost.map(l => renderLeadCard(l)).join('');
+  }
 }
-setupLeadsListener();
 
-async function saveLead() {
+function renderLeadCard(lead) {
+  const status  = currentStatus(lead);
+  const isOpen  = expandedLeadIds.has(lead.id);
+  const last    = lead.entries.at(-1);
+  const stage   = LEAD_STAGES[lead.stage || 'cold'] || LEAD_STAGES.cold;
+  const seg     = LEAD_SEGS[lead.segment] || LEAD_SEGS.other;
+  const allRes  = allDone(lead);
+  const noteCount = lead.entries.reduce((n,e) => n + (e.notes?.length||0), 0);
+  const entryCount = lead.entries.length;
+
+  return `
+  <div class="topic-card ${lead.archived ? 'archived' : status}${isOpen ? ' open' : ''}" id="lc-${lead.id}" style="border-left-color:${stage.color}">
+    <div class="card-summary" onclick="toggleLeadCard('${lead.id}')">
+      <div class="card-summary-body">
+        <div class="card-title">
+          <span class="badge" style="background:#f3f4f6;color:${stage.color};border:1px solid ${stage.color}40">
+            ${lead.archived ? 'Archived' : allRes ? 'Done' : stage.label}
+          </span>
+          <span class="badge" style="background:${seg.bg};color:${seg.color};border:1px solid ${seg.color}30">${seg.label}</span>
+          ${esc(lead.company)}
+        </div>
+        <div class="card-snippet">${last ? esc(last.text) : ''}</div>
+        <div class="card-meta-row">
+          ${entryCount} update${entryCount!==1?'s':''}
+          ${noteCount ? ` · 🎤 ${noteCount} note${noteCount!==1?'s':''}` : ''}
+          · last ${fmtDate(last?.createdAt || lead.createdAt)}
+        </div>
+      </div>
+      <span class="chevron">▼</span>
+    </div>
+    <div class="thread">
+      ${renderLeadDetails(lead)}
+      ${lead.entries.map(e => renderLeadEntry(lead, e)).join('')}
+      <div class="thread-foot">
+        <button class="archive-btn" onclick="toggleArchive('${lead.id}','leads')">
+          ${lead.archived ? '↩ Unarchive' : '📁 Archive'}
+        </button>
+        <div style="display:flex;gap:6px;">
+          <button class="btn sm" onclick="openEditLeadDetails('${lead.id}',event)">✏️ Details</button>
+          ${!lead.archived ? `<button class="btn sm dark" onclick="openAddLeadEntry('${lead.id}',event)">＋ Update</button>` : ''}
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderLeadDetails(lead) {
+  const rows = [
+    lead.contact    && ['👤', 'Contact',   lead.contact],
+    lead.location   && ['📍', 'Location',  lead.location],
+    lead.sqft       && ['📐', 'Sq Ft',     lead.sqft],
+    lead.leaseLength && ['📋', 'Lease',    lead.leaseLength],
+    lead.moveIn     && ['🚀', 'Move-in',   lead.moveIn],
+  ].filter(Boolean);
+
+  if (!rows.length) return `<div class="lead-detail-panel empty-details"><span style="font-size:12px;color:var(--text2)">No details yet — click ✏️ Details to add.</span></div>`;
+  return `<div class="lead-detail-panel">
+    ${rows.map(([icon,k,v]) => `<div class="lead-detail-row"><span class="lead-detail-key">${icon} ${k}</span><span class="lead-detail-val">${esc(v)}</span></div>`).join('')}
+  </div>`;
+}
+
+function renderLeadEntry(lead, entry) {
+  const notes = entry.notes || [];
+  const isRec = activeRec?.entryId === entry.id;
+  return `
+  <div class="entry">
+    <div class="entry-dot ${entry.done ? 'done' : entry.type}">${entry.done ? '✓' : entry.type==='do' ? '!' : '…'}</div>
+    <div class="entry-body">
+      <div class="entry-text${entry.done ? ' done' : ''}">${esc(entry.text)}</div>
+      ${notes.length ? `<div class="entry-notes">${notes.map(n => renderNote(lead.id, entry.id, n, 'leads')).join('')}</div>` : ''}
+      <div class="entry-footer">
+        <span class="entry-date">${entry.type==='do'?'Do':'Wait'} · ${fmtDate(entry.createdAt)}</span>
+        <span class="note-btns">
+          <button class="note-btn${isRec?' recording':''}" data-rec="${entry.id}"
+                  onclick="toggleRecording('${lead.id}','${entry.id}','leads')">${isRec?'<span class="rec-dot"></span> 0:00':'🎤 Voice'}</button>
+          <button class="note-btn" onclick="openTextNote('${lead.id}','${entry.id}',event,'leads')">📝 Note</button>
+          <button class="note-btn" onclick="openFileUpload('${lead.id}','${entry.id}',event,'leads')">📎 File</button>
+        </span>
+      </div>
+    </div>
+    <button class="entry-done-btn" onclick="toggleEntry('${lead.id}','${entry.id}','leads')">${entry.done?'↩':'✓'}</button>
+  </div>`;
+}
+
+function toggleLeadCard(id) {
+  if (expandedLeadIds.has(id)) expandedLeadIds.delete(id); else expandedLeadIds.add(id);
+  renderLeadsSection();
+  populateAudio();
+}
+
+function setLeadFilter(stage) {
+  leadFilter = stage;
+  renderLeadsSection();
+}
+
+function toggleWonLost() {
+  showWonLost = !showWonLost;
+  renderLeadsSection();
+}
+
+// ── Lead modal ────────────────────────────────────────────────
+function openNewLead() {
+  editLeadId = null;
+  document.getElementById('lm-title').textContent = 'New Lead';
+  document.getElementById('lf-company').value    = '';
+  document.getElementById('lf-contact').value    = '';
+  document.getElementById('lf-segment').value    = 'importer';
+  document.getElementById('lf-stage').value      = 'cold';
+  document.getElementById('lf-location').value   = '';
+  document.getElementById('lf-sqft').value       = '';
+  document.getElementById('lf-lease').value      = '';
+  document.getElementById('lf-movein').value     = '';
+  document.getElementById('lf-company').classList.remove('err');
+  document.getElementById('lead-overlay').classList.add('open');
+  setTimeout(() => document.getElementById('lf-company').focus(), 180);
+}
+
+function openEditLeadDetails(id, e) {
+  e.stopPropagation();
+  const lead = leads.find(l => l.id === id);
+  if (!lead) return;
+  editLeadId = id;
+  document.getElementById('lm-title').textContent = 'Edit Details';
+  document.getElementById('lf-company').value    = lead.company     || '';
+  document.getElementById('lf-contact').value    = lead.contact     || '';
+  document.getElementById('lf-segment').value    = lead.segment     || 'other';
+  document.getElementById('lf-stage').value      = lead.stage       || 'cold';
+  document.getElementById('lf-location').value   = lead.location    || '';
+  document.getElementById('lf-sqft').value       = lead.sqft        || '';
+  document.getElementById('lf-lease').value      = lead.leaseLength || '';
+  document.getElementById('lf-movein').value     = lead.moveIn      || '';
+  document.getElementById('lf-company').classList.remove('err');
+  document.getElementById('lead-overlay').classList.add('open');
+  setTimeout(() => document.getElementById('lf-company').focus(), 180);
+}
+
+async function saveLeadDetails() {
   const company = document.getElementById('lf-company').value.trim();
   if (!company) { document.getElementById('lf-company').classList.add('err'); return; }
   document.getElementById('lf-company').classList.remove('err');
 
+  const existing = editLeadId ? leads.find(l => l.id === editLeadId) : null;
   const lead = {
-    id:        editLeadId || ('l' + Date.now()),
+    ...(existing || {}),
+    id:          editLeadId || ('l' + Date.now()),
     company,
-    contact:   document.getElementById('lf-contact').value.trim(),
-    segment:   document.getElementById('lf-segment').value,
-    space:     document.getElementById('lf-space').value.trim(),
-    status:    document.getElementById('lf-status').value,
-    action:    document.getElementById('lf-action').value.trim(),
-    nextDate:  document.getElementById('lf-date').value,
-    notes:     document.getElementById('lf-notes').value.trim(),
-    createdAt: editLeadId ? (leads.find(l => l.id === editLeadId)?.createdAt || new Date().toISOString()) : new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    contact:     document.getElementById('lf-contact').value.trim(),
+    segment:     document.getElementById('lf-segment').value,
+    stage:       document.getElementById('lf-stage').value,
+    location:    document.getElementById('lf-location').value.trim(),
+    sqft:        document.getElementById('lf-sqft').value.trim(),
+    leaseLength: document.getElementById('lf-lease').value.trim(),
+    moveIn:      document.getElementById('lf-movein').value.trim(),
+    archived:    existing?.archived || false,
+    entries:     existing?.entries  || [],
+    createdAt:   existing?.createdAt || new Date().toISOString(),
+    updatedAt:   new Date().toISOString(),
   };
 
-  setSyncing(true);
-  try {
-    await setDoc(doc(db, 'leads', lead.id), lead);
-  } catch(e) { console.error(e); } finally { setSyncing(false); }
   closeLeadModal();
+  await persistItem(lead, 'leads');
+  if (!editLeadId) expandedLeadIds.add(lead.id);
 }
 
 async function deleteLead(id) {
@@ -1387,102 +1646,8 @@ async function deleteLead(id) {
   try { await setDoc(doc(db, 'leads', id), { _deleted: true, id }); } catch(e) { console.error(e); }
 }
 
-async function advanceLead(id, e) {
-  e.stopPropagation();
-  const lead = leads.find(l => l.id === id);
-  if (!lead || !NEXT_STAGE[lead.status]) return;
-  const updated = { ...lead, status: NEXT_STAGE[lead.status], updatedAt: new Date().toISOString() };
-  setSyncing(true);
-  try { await setDoc(doc(db, 'leads', id), updated); } catch(e) { console.error(e); } finally { setSyncing(false); }
-}
-
-function openAddLead(stage = 'cold', e) {
-  if (e) e.stopPropagation();
-  editLeadId = null;
-  leadDefaultStage = stage;
-  document.getElementById('lm-title').textContent = 'Add Lead';
-  document.getElementById('lf-company').value  = '';
-  document.getElementById('lf-contact').value  = '';
-  document.getElementById('lf-segment').value  = 'importer';
-  document.getElementById('lf-space').value    = '';
-  document.getElementById('lf-status').value   = stage;
-  document.getElementById('lf-action').value   = '';
-  document.getElementById('lf-date').value     = '';
-  document.getElementById('lf-notes').value    = '';
-  document.getElementById('lf-company').classList.remove('err');
-  document.getElementById('lead-overlay').classList.add('open');
-  setTimeout(() => document.getElementById('lf-company').focus(), 180);
-}
-
-function openEditLead(id, e) {
-  e.stopPropagation();
-  const lead = leads.find(l => l.id === id);
-  if (!lead) return;
-  editLeadId = id;
-  document.getElementById('lm-title').textContent = 'Edit Lead';
-  document.getElementById('lf-company').value  = lead.company || '';
-  document.getElementById('lf-contact').value  = lead.contact || '';
-  document.getElementById('lf-segment').value  = lead.segment || 'other';
-  document.getElementById('lf-space').value    = lead.space   || '';
-  document.getElementById('lf-status').value   = lead.status  || 'cold';
-  document.getElementById('lf-action').value   = lead.action  || '';
-  document.getElementById('lf-date').value     = lead.nextDate|| '';
-  document.getElementById('lf-notes').value    = lead.notes   || '';
-  document.getElementById('lf-company').classList.remove('err');
-  document.getElementById('lead-overlay').classList.add('open');
-  setTimeout(() => document.getElementById('lf-company').focus(), 180);
-}
-
 function closeLeadModal() { document.getElementById('lead-overlay').classList.remove('open'); editLeadId = null; }
 function leadOverlayClick(e) { if (e.target === document.getElementById('lead-overlay')) closeLeadModal(); }
-
-function renderPipeline() {
-  const active = leads.filter(l => !l._deleted);
-  const pipeline = document.getElementById('pipeline');
-  if (!pipeline) return;
-
-  pipeline.innerHTML = STAGES.map(stage => {
-    const stageLeads = active.filter(l => l.status === stage.id);
-    const next = NEXT_STAGE[stage.id];
-    const nextLabel = next ? STAGES.find(s => s.id === next)?.label : null;
-
-    return `
-    <div class="pcol">
-      <div class="pcol-hd">
-        <div class="pcol-hd-left">
-          <div class="pcol-dot" style="background:${stage.dot}"></div>
-          <span class="pcol-title">${stage.label}</span>
-        </div>
-        <span class="pcol-count">${stageLeads.length}</span>
-      </div>
-      ${stageLeads.map(lead => renderLeadCard(lead, stage, nextLabel)).join('')}
-      <button class="pcol-add" onclick="openAddLead('${stage.id}', event)">＋ Add lead</button>
-    </div>`;
-  }).join('');
-}
-
-function renderLeadCard(lead, stage, nextLabel) {
-  const seg    = SEGMENTS[lead.segment] || SEGMENTS.other;
-  const today  = new Date().toISOString().slice(0,10);
-  const overdue = lead.nextDate && lead.nextDate < today;
-  const dateStr = lead.nextDate ? new Date(lead.nextDate + 'T12:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric' }) : '';
-
-  return `
-  <div class="lead-card" style="border-left-color:${stage.dot}" onclick="openEditLead('${lead.id}', event)">
-    <div class="lead-card-top">
-      <div class="lead-company">${esc(lead.company)}</div>
-      <span class="lead-seg" style="background:${seg.bg};color:${seg.color}">${seg.label}</span>
-    </div>
-    ${lead.contact ? `<div class="lead-contact">👤 ${esc(lead.contact)}</div>` : ''}
-    ${lead.space   ? `<div class="lead-space">📐 ${esc(lead.space)}</div>` : ''}
-    ${lead.action  ? `<div><div class="lead-next-label">Next</div><div class="lead-next-text">${esc(lead.action)}</div></div>` : ''}
-    ${dateStr      ? `<div class="lead-date${overdue ? ' overdue' : ''}">📅 ${dateStr}${overdue ? ' — overdue' : ''}</div>` : ''}
-    <div class="lead-card-foot">
-      <button class="lead-del" onclick="deleteLead('${lead.id}')" title="Delete">🗑</button>
-      ${nextLabel ? `<button class="advance-btn" style="color:${stage.color};border-color:${stage.dot}" onclick="advanceLead('${lead.id}',event)">→ ${nextLabel}</button>` : '<span></span>'}
-    </div>
-  </div>`;
-}
 
 // ── Tab switching ────────────────────────────────────────────
 function switchTab(tab) {
@@ -1511,14 +1676,17 @@ window.closeModal      = closeModal;
 window.saveModal       = saveModal;
 window.overlayClick    = overlayClick;
 window.pickType        = pickType;
-window.switchTab       = switchTab;
-window.openAddLead     = openAddLead;
-window.openEditLead    = openEditLead;
-window.closeLeadModal  = closeLeadModal;
-window.leadOverlayClick= leadOverlayClick;
-window.saveLead        = saveLead;
-window.deleteLead      = deleteLead;
-window.advanceLead     = advanceLead;
+window.switchTab           = switchTab;
+window.openNewLead         = openNewLead;
+window.openEditLeadDetails = openEditLeadDetails;
+window.openAddLeadEntry    = openAddLeadEntry;
+window.closeLeadModal      = closeLeadModal;
+window.leadOverlayClick    = leadOverlayClick;
+window.saveLeadDetails     = saveLeadDetails;
+window.deleteLead          = deleteLead;
+window.toggleLeadCard      = toggleLeadCard;
+window.setLeadFilter       = setLeadFilter;
+window.toggleWonLost       = toggleWonLost;
 </script>
 </body>
 </html>
