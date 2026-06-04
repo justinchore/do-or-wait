@@ -353,6 +353,53 @@
     .chip-btn.add { color:var(--do); font-weight:700; font-size:15px; }
     .chip-btn.edit { font-size:12px; }
 
+    /* ── Email approval UI ──────────────────── */
+    .email-preview {
+      border: 2px solid #2563eb; border-radius: 10px;
+      background: #eff6ff; padding: 12px 14px; margin-bottom: 12px;
+    }
+    .email-preview-hd {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 10px; gap: 8px;
+    }
+    .email-ready-badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      background: #2563eb; color: #fff; font-size: 11px; font-weight: 700;
+      padding: 3px 9px; border-radius: 20px; animation: readyPulse 2s ease-in-out infinite;
+    }
+    @keyframes readyPulse { 0%,100%{ box-shadow:0 0 0 0 rgba(37,99,235,.4); } 50%{ box-shadow:0 0 0 6px rgba(37,99,235,0); } }
+    .email-meta { font-size: 12px; color: #1e40af; margin-bottom: 8px; line-height: 1.6; }
+    .email-meta b { color: #1e3a8a; }
+    .email-divider { border: none; border-top: 1px solid #bfdbfe; margin: 8px 0; }
+    .email-body {
+      font-size: 12px; color: #1e40af; white-space: pre-wrap; line-height: 1.6;
+      max-height: 140px; overflow-y: auto; margin-bottom: 10px;
+    }
+    .email-actions { display: flex; gap: 7px; flex-wrap: wrap; }
+    .approve-btn {
+      padding: 7px 14px; border-radius: 8px; font-size: 13px; font-weight: 700;
+      cursor: pointer; border: none; background: #2563eb; color: #fff;
+      font-family: inherit; transition: background .15s;
+    }
+    .approve-btn:hover { background: #1d4ed8; }
+    .email-skip-btn, .email-snooze-btn {
+      padding: 7px 12px; border-radius: 8px; font-size: 12px; font-weight: 600;
+      cursor: pointer; border: 1.5px solid #bfdbfe; background: transparent;
+      color: #2563eb; font-family: inherit; transition: all .15s;
+    }
+    .email-skip-btn:hover  { background: #dbeafe; }
+    .email-snooze-btn:hover{ background: #dbeafe; }
+    /* Tab badge */
+    .tab-badge {
+      background: var(--do); color: #fff; font-size: 10px; font-weight: 700;
+      padding: 1px 6px; border-radius: 10px; margin-left: 5px; vertical-align: middle;
+    }
+    /* Seq status badge on cards */
+    .seq-badge {
+      font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 20px;
+      flex-shrink: 0; text-transform: uppercase; letter-spacing: .4px;
+    }
+
     /* ── Lead detail panel ───────────────────── */
     .lead-detail-panel { background:var(--note-bg); border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-bottom:10px; display:flex; flex-direction:column; gap:5px; }
     .lead-detail-panel.empty-details { display:block; }
@@ -1510,6 +1557,15 @@ function renderLeadsSection() {
   // filter buttons
   document.querySelectorAll('.lf-btn').forEach(b => b.classList.toggle('active', b.dataset.stage === leadFilter));
 
+  // Tab badge — show count of pending approvals
+  const pendingCount = leads.filter(l => l.pending_email && !l.archived).length;
+  const leadsTab = document.querySelector('.tab-btn[data-tab="leads"]');
+  if (leadsTab) {
+    leadsTab.innerHTML = pendingCount > 0
+      ? `🎯 Leads <span class="tab-badge">${pendingCount}</span>`
+      : '🎯 Leads';
+  }
+
   // stats
   const doEl   = document.getElementById('lead-do-badge');
   const waitEl = document.getElementById('lead-wait-badge');
@@ -1572,6 +1628,7 @@ function renderLeadCard(lead) {
         </div>
         <div class="card-snippet">${last ? esc(last.text) : ''}</div>
         <div class="card-meta-row">
+          ${lead.pending_email ? `<span style="color:#2563eb;font-weight:700">📧 Touch ${lead.pending_email.step} ready · </span>` : ''}
           ${entryCount} update${entryCount!==1?'s':''}
           ${noteCount ? ` · 🎤 ${noteCount} note${noteCount!==1?'s':''}` : ''}
           · last ${fmtDate(last?.createdAt || lead.createdAt)}
@@ -1580,6 +1637,7 @@ function renderLeadCard(lead) {
       <span class="chevron">▼</span>
     </div>
     <div class="thread">
+      ${lead.pending_email ? renderEmailPreview(lead) : ''}
       ${renderLeadDetails(lead)}
       ${lead.entries.map(e => renderLeadEntry(lead, e)).join('')}
       <div class="thread-foot">
@@ -1591,6 +1649,29 @@ function renderLeadCard(lead) {
           ${!lead.archived ? `<button class="btn sm dark" onclick="openAddLeadEntry('${lead.id}',event)">＋ Update</button>` : ''}
         </div>
       </div>
+    </div>
+  </div>`;
+}
+
+function renderEmailPreview(lead) {
+  const pe = lead.pending_email;
+  if (!pe) return '';
+  return `
+  <div class="email-preview">
+    <div class="email-preview-hd">
+      <span class="email-ready-badge">📧 Touch ${pe.step} of 5 — Ready to send</span>
+      <span style="font-size:11px;color:#3b82f6">${fmtDate(pe.drafted_at)}</span>
+    </div>
+    <div class="email-meta">
+      <b>To:</b> ${esc(pe.to)}<br>
+      <b>Subject:</b> ${esc(pe.subject)}
+    </div>
+    <hr class="email-divider">
+    <div class="email-body">${esc(pe.body)}</div>
+    <div class="email-actions">
+      <button class="approve-btn" onclick="approveEmail('${lead.id}',event)">✓ Approve &amp; Send</button>
+      <button class="email-snooze-btn" onclick="snoozeEmail('${lead.id}',event)">Snooze 3 days</button>
+      <button class="email-skip-btn"   onclick="skipEmail('${lead.id}',event)">Skip this touch</button>
     </div>
   </div>`;
 }
@@ -1661,6 +1742,38 @@ function renderLeadEntry(lead, entry) {
     </div>
     <button class="entry-done-btn" onclick="toggleEntry('${lead.id}','${entry.id}','leads')">${entry.done?'↩':'✓'}</button>
   </div>`;
+}
+
+// ── Email approval actions ────────────────────────────────────
+async function approveEmail(leadId, e) {
+  e.stopPropagation();
+  const lead = leads.find(l => l.id === leadId);
+  if (!lead) return;
+  // Write 'send_approved' — n8n watches for this, sends, then clears pending_email + bumps step
+  await persistItem({ ...lead, seq_status: 'send_approved', updatedAt: new Date().toISOString() }, 'leads');
+}
+
+async function skipEmail(leadId, e) {
+  e.stopPropagation();
+  const lead = leads.find(l => l.id === leadId);
+  if (!lead) return;
+  const { pending_email, ...rest } = lead;
+  await persistItem({ ...rest, seq_status: 'active', updatedAt: new Date().toISOString() }, 'leads');
+}
+
+async function snoozeEmail(leadId, e) {
+  e.stopPropagation();
+  const lead = leads.find(l => l.id === leadId);
+  if (!lead) return;
+  const snoozeUntil = new Date();
+  snoozeUntil.setDate(snoozeUntil.getDate() + 3);
+  const { pending_email, ...rest } = lead;
+  await persistItem({
+    ...rest,
+    seq_status:   'snoozed',
+    snooze_until: snoozeUntil.toISOString().slice(0, 10),
+    updatedAt:    new Date().toISOString()
+  }, 'leads');
 }
 
 function toggleLeadCard(id) {
@@ -1816,6 +1929,9 @@ window.deleteLead          = deleteLead;
 window.toggleLeadCard      = toggleLeadCard;
 window.setLeadFilter       = setLeadFilter;
 window.toggleWonLost       = toggleWonLost;
+window.approveEmail        = approveEmail;
+window.skipEmail           = skipEmail;
+window.snoozeEmail         = snoozeEmail;
 </script>
 </body>
 </html>
