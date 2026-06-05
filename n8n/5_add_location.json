@@ -1,0 +1,139 @@
+{
+  "name": "CW — 5. Add Location",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "add-location",
+        "options": { "responseMode": "responseNode" }
+      },
+      "id": "al-001", "name": "Webhook",
+      "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [200, 300],
+      "webhookId": "add-location"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse SharePoint URL → site path + file path, generate propId slug\nconst body = $input.first().json.body || $input.first().json;\nconst raw  = (body.sharepoint_url || '').trim();\nif (!raw) throw new Error('sharepoint_url is required');\nif (!body.property) throw new Error('property name is required');\n\nconst u = new URL(raw);\nconst origin   = u.origin; // https://cubework365.sharepoint.com\nconst parts    = decodeURIComponent(u.pathname).split('/').filter(Boolean);\nconst sitesIdx = parts.indexOf('sites');\n\nif (sitesIdx < 0) throw new Error('Could not find /sites/ in SharePoint URL');\n\n// e.g. /sites/Cubework_PropertyManagement\nconst siteRelPath = '/' + parts.slice(0, sitesIdx + 2).join('/');\n// e.g. Shared Documents/Pellissier 2720, CA/.../2720 Pellissier.xlsx\nconst filePath = parts.slice(sitesIdx + 2).join('/');\n\n// slug: '4800 Fontana' → '4800-fontana'\nconst propId = body.property.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');\n\nreturn [{ json: {\n  ...body,\n  propId,\n  origin,\n  siteRelPath,\n  filePath\n} }];"
+      },
+      "id": "al-002", "name": "Parse URL + generate ID",
+      "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://graph.microsoft.com/v1.0/sites/{{ $json.origin.replace('https://','') }}:{{ $json.siteRelPath }}:/drive/root:/{{ $json.filePath }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOAuth2Api",
+        "options": {}
+      },
+      "id": "al-003", "name": "Resolve SharePoint file",
+      "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [640, 300],
+      "credentials": { "microsoftOAuth2Api": { "id": "REPLACE_WITH_CREDENTIAL_ID", "name": "Microsoft OAuth2 — Cubework Outlook" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $('Parse URL + generate ID').first().json;\nconst item = $input.first().json;\nconst driveId = item.parentReference?.driveId || '';\nconst itemId  = item.id || '';\nif (!driveId || !itemId) throw new Error('Could not resolve driveId/itemId from SharePoint URL');\nreturn [{ json: { ...prev, driveId, itemId } }];"
+      },
+      "id": "al-004", "name": "Extract file IDs",
+      "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [860, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/config/properties",
+        "options": {}
+      },
+      "id": "al-005", "name": "Read current config",
+      "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1080, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const prop   = $('Extract file IDs').first().json;\nconst config = $input.first().json;\n\nconst toStr = v => ({ stringValue: String(v || '') });\n\nconst arr = config.fields?.properties?.arrayValue?.values || [];\n\n// Prevent duplicate IDs\nif (arr.some(it => it.mapValue?.fields?.id?.stringValue === prop.propId)) {\n  throw new Error(`Location \"${prop.propId}\" already exists in config. Edit it in Firestore directly.`);\n}\n\nconst newEntry = {\n  mapValue: {\n    fields: {\n      id:             toStr(prop.propId),\n      driveId:        toStr(prop.driveId),\n      itemId:         toStr(prop.itemId),\n      property:       toStr(prop.property),\n      address:        toStr(prop.address),\n      yardi_url:      toStr(prop.yardi_url),\n      sharepoint_url: toStr(prop.sharepoint_url)\n    }\n  }\n};\n\nconst updatedValues = [...arr, newEntry];\nconst patchBody = { fields: { properties: { arrayValue: { values: updatedValues } } } };\n\nreturn [{ json: { propId: prop.propId, pa: prop.pa || null, patchBody } }];"
+      },
+      "id": "al-006", "name": "Build updated config",
+      "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1300, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/config/properties?updateMask.fieldPaths=properties",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.patchBody) }}",
+        "options": {}
+      },
+      "id": "al-007", "name": "Save config",
+      "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1520, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// If PA was provided, build an initial availability doc with just the PA field\nconst { propId, pa } = $('Build updated config').first().json;\nif (!pa || !pa.name) return [{ json: { propId, hasPa: false } }];\n\nconst patchBody = {\n  fields: {\n    pa: {\n      mapValue: {\n        fields: {\n          name:  { stringValue: pa.name  || '' },\n          phone: { stringValue: pa.phone || '' },\n          email: { stringValue: pa.email || '' }\n        }\n      }\n    }\n  }\n};\nreturn [{ json: { propId, hasPa: true, paPatch: patchBody } }];"
+      },
+      "id": "al-008", "name": "Prep PA patch",
+      "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1740, 300]
+    },
+    {
+      "parameters": {
+        "conditions": { "options": {}, "combinator": "and",
+          "conditions": [{ "id": "has-pa", "leftValue": "={{ $json.hasPa }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equal" } }]
+        }, "options": {}
+      },
+      "id": "al-009", "name": "Has PA?",
+      "type": "n8n-nodes-base.if", "typeVersion": 2, "position": [1960, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/availability/{{ $json.propId }}?updateMask.fieldPaths=pa",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.paPatch) }}",
+        "options": {}
+      },
+      "id": "al-010", "name": "Save PA to availability",
+      "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [2180, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "REPLACE_WITH_AVAILABILITY_SYNC_WEBHOOK_URL",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"propId\": \"{{ $('Prep PA patch').first().json.propId }}\" }",
+        "options": {}
+      },
+      "id": "al-011", "name": "Trigger availability sync",
+      "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [2180, 380]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"ok\": true, \"propId\": \"{{ $('Prep PA patch').first().json.propId }}\" }",
+        "options": {}
+      },
+      "id": "al-012", "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1, "position": [2400, 300]
+    }
+  ],
+  "connections": {
+    "Webhook":                  { "main": [[{ "node": "Parse URL + generate ID",  "type": "main", "index": 0 }]] },
+    "Parse URL + generate ID":  { "main": [[{ "node": "Resolve SharePoint file", "type": "main", "index": 0 }]] },
+    "Resolve SharePoint file":  { "main": [[{ "node": "Extract file IDs",         "type": "main", "index": 0 }]] },
+    "Extract file IDs":         { "main": [[{ "node": "Read current config",       "type": "main", "index": 0 }]] },
+    "Read current config":      { "main": [[{ "node": "Build updated config",      "type": "main", "index": 0 }]] },
+    "Build updated config":     { "main": [[{ "node": "Save config",              "type": "main", "index": 0 }]] },
+    "Save config":              { "main": [[{ "node": "Prep PA patch",             "type": "main", "index": 0 }]] },
+    "Prep PA patch":            { "main": [[{ "node": "Has PA?",                   "type": "main", "index": 0 }]] },
+    "Has PA?": {
+      "main": [
+        [{ "node": "Save PA to availability",  "type": "main", "index": 0 }],
+        [{ "node": "Trigger availability sync","type": "main", "index": 0 }]
+      ]
+    },
+    "Save PA to availability":  { "main": [[{ "node": "Trigger availability sync","type": "main", "index": 0 }]] },
+    "Trigger availability sync":{ "main": [[{ "node": "Respond OK",               "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "cw-workflow-005"
+}

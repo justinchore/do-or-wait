@@ -2036,7 +2036,8 @@ const expandedAvailProps = new Set(['pellissier-2720']); // open by default
 const fpFloors   = {};          // propId → 'warehouse' | 'office'
 
 // n8n on-demand webhook URL — fill in after importing workflow 4
-const AVAIL_WEBHOOK = 'REPLACE_WITH_N8N_WEBHOOK_URL';
+const AVAIL_WEBHOOK        = 'REPLACE_WITH_N8N_WEBHOOK_URL';
+const ADD_LOCATION_WEBHOOK = 'REPLACE_WITH_ADD_LOCATION_WEBHOOK_URL';
 
 // Listen to ALL availability docs (scales to multiple locations)
 unsubAvail = onSnapshot(collection(db, 'availability'), snap => {
