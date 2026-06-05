@@ -2062,8 +2062,9 @@ const expandedAvailProps = new Set(['pellissier-2720']); // open by default
 const fpFloors   = {};          // propId → 'warehouse' | 'office'
 
 // n8n on-demand webhook URL — fill in after importing workflow 4
-const AVAIL_WEBHOOK        = 'https://ailinker.item.com/webhook/availability-sync';
-const ADD_LOCATION_WEBHOOK = 'https://ailinker.item.com/webhook/add-location';
+const PROXY                = 'https://plain-credit-5962.jchoustin91.workers.dev';
+const AVAIL_WEBHOOK        = `${PROXY}/webhook/availability-sync`;
+const ADD_LOCATION_WEBHOOK = `${PROXY}/webhook/add-location`;
 
 // Listen to ALL availability docs (scales to multiple locations)
 unsubAvail = onSnapshot(collection(db, 'availability'), snap => {
@@ -2244,11 +2245,10 @@ async function triggerAvailSync(propId) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ propId })
     });
-    // onSnapshot updates the card automatically when Firestore changes
   } catch(e) {
     console.error('Sync trigger failed:', e);
-    if (btn) { btn.textContent = '⚠ Failed'; btn.classList.remove('spinning'); }
-    setTimeout(() => { if (btn) { btn.textContent = '⟳ Refresh'; btn.classList.remove('spinning'); } }, 2000);
+    if (btn) { btn.textContent = '⚠'; btn.classList.remove('spinning'); }
+    setTimeout(() => { if (btn) { btn.textContent = '⟳'; } }, 3000);
   }
 }
 
