@@ -548,12 +548,22 @@
     .loc-chip.avail { background:#dcfce7; color:#15803d; }
     .loc-chip.full  { background:#f3f4f6; color:var(--text2); }
     .loc-meta { font-size:11px; color:var(--text2); margin-top:5px; opacity:.7; }
-    .loc-hd-right { display:flex; align-items:center; gap:8px; flex-shrink:0; }
-    .loc-chevron { font-size:12px; color:var(--text2); transition:transform .2s; }
+    .loc-hd-right { display:flex; align-items:flex-start; gap:6px; flex-shrink:0; padding-top:2px; }
+    .loc-chevron { font-size:12px; color:var(--text2); transition:transform .2s; margin-top:2px; }
     .loc-card.open .loc-chevron { transform:rotate(180deg); }
     .loc-body { display:none; border-top:1px solid var(--border); padding:16px; }
     .loc-card.open .loc-body { display:block; }
     .loc-actions { display:flex; gap:7px; flex-wrap:wrap; margin-bottom:14px; }
+    /* header quick links */
+    .loc-quick-links { display:flex; gap:5px; flex-wrap:wrap; margin-top:7px; align-items:center; }
+    .loc-ql { font-size:11px; font-weight:600; padding:2px 9px; border-radius:20px; border:1.5px solid var(--border); background:var(--surface); color:var(--text2); text-decoration:none; cursor:pointer; font-family:inherit; transition:all .15s; white-space:nowrap; }
+    .loc-ql:hover { background:var(--bg); color:var(--text); border-color:#9ca3af; }
+    /* PA row */
+    .loc-pa { display:flex; align-items:center; gap:8px; margin-top:7px; font-size:12px; flex-wrap:wrap; }
+    .loc-pa-name { font-weight:700; color:var(--text); }
+    .loc-pa-phone { color:var(--text2); }
+    .loc-pa-edit { background:none; border:none; font-size:11px; color:var(--text2); cursor:pointer; font-family:inherit; padding:0; text-decoration:underline; text-underline-offset:2px; }
+    .loc-pa-edit:hover { color:var(--text); }
 
     /* ── Floorplan ───────────────────────────── */
     .fp-section { margin-top:20px; }
@@ -874,6 +884,21 @@
   <div class="unit-popup-row" id="up-status"></div>
   <div class="unit-popup-row" id="up-sf"></div>
   <div class="unit-popup-row" id="up-tenant"></div>
+</div>
+
+<!-- PA modal -->
+<div class="overlay" id="pa-overlay" onclick="if(event.target===this)closePAModal()">
+  <div class="modal">
+    <h3>Property Associate</h3>
+    <input type="hidden" id="pa-prop-id">
+    <div class="field"><label>Name</label><input id="pa-name" type="text" placeholder="e.g. Huy Nguyen" autocomplete="off"/></div>
+    <div class="field"><label>Phone</label><input id="pa-phone" type="tel" placeholder="909-767-3596" autocomplete="off"/></div>
+    <div class="field"><label>Email</label><input id="pa-email" type="email" placeholder="huy@cubework.com" autocomplete="off"/></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closePAModal()">Cancel</button>
+      <button class="btn dark" onclick="savePA()">Save</button>
+    </div>
+  </div>
 </div>
 
 <!-- Lead modal (new lead + edit details) -->
@@ -2069,6 +2094,21 @@ function renderLocCard(propId, d) {
 
   const body = isOpen ? renderLocBody(propId, d) : '';
 
+  const pa = d.pa || {};
+  const paLine = pa.name
+    ? `<div class="loc-pa">
+        <span class="loc-pa-name">👤 ${esc(pa.name)}</span>
+        ${pa.phone ? `<a class="loc-pa-phone" href="tel:${esc(pa.phone)}" onclick="event.stopPropagation()">📞 ${esc(pa.phone)}</a>` : ''}
+        <button class="loc-pa-edit" onclick="openEditPA('${propId}',event)">edit</button>
+      </div>`
+    : `<div class="loc-pa"><button class="loc-pa-edit" onclick="openEditPA('${propId}',event)">+ Add property associate</button></div>`;
+
+  const quickLinks = [
+    d.yardi_url      ? `<a class="loc-ql" href="${esc(d.yardi_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Yardi ↗</a>` : '',
+    d.sharepoint_url ? `<a class="loc-ql" href="${esc(d.sharepoint_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">SharePoint ↗</a>` : '',
+    `<button class="loc-ql avail-refresh" id="refresh-${propId}" onclick="event.stopPropagation();triggerAvailSync('${propId}')">⟳</button>`
+  ].filter(Boolean).join('');
+
   return `
   <div class="loc-card${isOpen ? ' open' : ''}" id="loc-${propId}">
     <div class="loc-card-hd" onclick="toggleAvailCard('${propId}')">
@@ -2076,6 +2116,8 @@ function renderLocCard(propId, d) {
         <div class="loc-name">🏭 ${esc(d.property || propId)}</div>
         ${d.address ? `<div class="loc-addr">${esc(d.address)}</div>` : ''}
         <div class="loc-chips">${chips}</div>
+        ${paLine}
+        <div class="loc-quick-links">${quickLinks}</div>
         ${sheetDate ? `<div class="loc-meta">Sheet: ${sheetDate}${syncDate ? ' · Synced: ' + syncDate : ''}</div>` : ''}
       </div>
       <div class="loc-hd-right">
@@ -2111,13 +2153,6 @@ function renderLocBody(propId, d) {
   }
 
   return `
-    <!-- Actions -->
-    <div class="loc-actions">
-      ${d.yardi_url     ? `<a class="avail-link" href="${esc(d.yardi_url)}" target="_blank" rel="noopener">Yardi ↗</a>` : ''}
-      ${d.sharepoint_url? `<a class="avail-link" href="${esc(d.sharepoint_url)}" target="_blank" rel="noopener">SharePoint ↗</a>` : ''}
-      <button class="avail-link avail-refresh" id="refresh-${propId}" onclick="triggerAvailSync('${propId}')">⟳ Refresh</button>
-    </div>
-
     <!-- Stats -->
     <div class="avail-summary">
       <div class="avail-stat-card highlight">
@@ -2174,10 +2209,15 @@ function toggleAvailCard(propId) {
 }
 
 async function triggerAvailSync(propId) {
-  const btn = document.getElementById(propId ? `refresh-${propId}` : 'avail-refresh-btn');
+  const btn = document.getElementById(`refresh-${propId}`);
   if (btn) { btn.textContent = '⟳ Syncing…'; btn.classList.add('spinning'); }
   try {
-    await fetch(AVAIL_WEBHOOK, { method: 'POST' });
+    await fetch(AVAIL_WEBHOOK, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ propId })
+    });
+    // onSnapshot updates the card automatically when Firestore changes
   } catch(e) {
     console.error('Sync trigger failed:', e);
     if (btn) { btn.textContent = '⚠ Failed'; btn.classList.remove('spinning'); }
@@ -2320,6 +2360,58 @@ document.addEventListener('click', e => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+//  PROPERTY ASSOCIATE
+// ═══════════════════════════════════════════════════════════════
+function openEditPA(propId, e) {
+  e.stopPropagation();
+  const pa = availMap[propId]?.pa || {};
+  document.getElementById('pa-prop-id').value = propId;
+  document.getElementById('pa-name').value    = pa.name  || '';
+  document.getElementById('pa-phone').value   = pa.phone || '';
+  document.getElementById('pa-email').value   = pa.email || '';
+  document.getElementById('pa-overlay').classList.add('open');
+  setTimeout(() => document.getElementById('pa-name').focus(), 180);
+}
+
+function closePAModal() {
+  document.getElementById('pa-overlay').classList.remove('open');
+}
+
+async function savePA() {
+  const propId = document.getElementById('pa-prop-id').value;
+  const name   = document.getElementById('pa-name').value.trim();
+  const phone  = document.getElementById('pa-phone').value.trim();
+  const email  = document.getElementById('pa-email').value.trim();
+  if (!name) { document.getElementById('pa-name').focus(); return; }
+
+  const patchBody = {
+    fields: {
+      pa: {
+        mapValue: {
+          fields: {
+            name:  { stringValue: name },
+            phone: { stringValue: phone },
+            email: { stringValue: email }
+          }
+        }
+      }
+    }
+  };
+
+  setSyncing(true);
+  try {
+    await fetch(
+      `https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/availability/${propId}?updateMask.fieldPaths=pa`,
+      { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patchBody) }
+    );
+    // onSnapshot will update the card automatically
+  } catch(e) { console.error('Save PA failed:', e); }
+  finally { setSyncing(false); }
+
+  closePAModal();
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  EXPOSE GLOBALS (for onclick= attributes in HTML)
 // ═══════════════════════════════════════════════════════════════
 window.toggleCard      = toggleCard;
@@ -2342,6 +2434,9 @@ window.switchFP            = switchFP;
 window.showUnitPopup       = showUnitPopup;
 window.closeUnitPopup      = closeUnitPopup;
 window.toggleAvailCard     = toggleAvailCard;
+window.openEditPA          = openEditPA;
+window.closePAModal        = closePAModal;
+window.savePA              = savePA;
 window.openNewLead         = openNewLead;
 window.openEditLeadDetails = openEditLeadDetails;
 window.openAddLeadEntry    = openAddLeadEntry;
