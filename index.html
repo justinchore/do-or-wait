@@ -533,6 +533,32 @@
     .avail-all-occupied { font-size:13px; color:var(--text2); font-style:italic; padding:10px 0; }
     .avail-loading { text-align:center; padding:60px 20px; color:var(--text2); font-size:14px; }
 
+    /* ── Floorplan ───────────────────────────── */
+    .fp-section { margin-top:20px; }
+    .fp-hd { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; flex-wrap:wrap; gap:8px; }
+    .fp-title { font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--text2); }
+    .fp-tabs { display:flex; gap:6px; }
+    .fp-tab { padding:5px 14px; border-radius:20px; border:1.5px solid var(--border); background:var(--surface); font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; color:var(--text2); transition:all .15s; }
+    .fp-tab.active { background:var(--text); color:#fff; border-color:transparent; }
+    .fp-legend { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:10px; }
+    .fp-legend-item { display:flex; align-items:center; gap:5px; font-size:11px; color:var(--text2); }
+    .fp-legend-dot { width:12px; height:12px; border-radius:3px; flex-shrink:0; }
+    .fp-svg-wrap { background:var(--surface); border-radius:12px; padding:12px; box-shadow:var(--shadow); overflow:hidden; }
+    .fp-svg-wrap svg { width:100%; height:auto; display:block; }
+
+    /* Unit detail popup */
+    .unit-popup {
+      position:fixed; bottom:90px; left:50%; transform:translateX(-50%);
+      background:var(--surface); border-radius:14px; padding:14px 18px 16px;
+      box-shadow:var(--shadow-lg); z-index:250; min-width:220px; max-width:320px;
+      border:1.5px solid var(--border); display:none; text-align:left;
+    }
+    .unit-popup.open { display:block; }
+    .unit-popup-id { font-size:18px; font-weight:800; margin-bottom:4px; }
+    .unit-popup-row { font-size:13px; color:var(--text2); margin-top:3px; }
+    .unit-popup-row b { color:var(--text); }
+    .unit-popup-close { position:absolute; top:10px; right:12px; background:none; border:none; font-size:16px; cursor:pointer; color:var(--text2); font-family:inherit; }
+
     /* ── Print ──────────────────────────────── */
     .print-hd { display: none; }
     @media print {
@@ -817,6 +843,15 @@
       <button class="btn dark" onclick="saveModal()">Save</button>
     </div>
   </div>
+</div>
+
+<!-- Unit detail popup -->
+<div class="unit-popup" id="unit-popup">
+  <button class="unit-popup-close" onclick="closeUnitPopup()">✕</button>
+  <div class="unit-popup-id" id="up-id"></div>
+  <div class="unit-popup-row" id="up-status"></div>
+  <div class="unit-popup-row" id="up-sf"></div>
+  <div class="unit-popup-row" id="up-tenant"></div>
 </div>
 
 <!-- Lead modal (new lead + edit details) -->
@@ -2062,6 +2097,9 @@ function renderAvailability() {
         ? `<div class="avail-unit-list">${offUnits.map(unitCard).join('')}</div>`
         : `<div class="avail-all-occupied">All office units occupied</div>`}
     </div>`;
+
+  // Render floorplan after content is in DOM
+  setTimeout(() => renderFloorplans(), 0);
 }
 
 async function triggerAvailSync() {
@@ -2076,6 +2114,196 @@ async function triggerAvailSync() {
     setTimeout(() => { if (btn) { btn.textContent = '⟳ Refresh'; btn.classList.remove('spinning'); } }, 2000);
   }
 }
+
+// ═══════════════════════════════════════════════════════════════
+//  FLOORPLAN
+// ═══════════════════════════════════════════════════════════════
+let fpFloor = 'warehouse'; // 'warehouse' | 'office'
+
+function fpUnits() { return availData?.units || []; }
+
+function fpFill(id) {
+  const u = fpUnits().find(x => x.unit === id);
+  if (!u) return '#f3f4f6';
+  return u.available ? '#dcfce7' : '#ffedd5';
+}
+function fpStroke(id) {
+  const u = fpUnits().find(x => x.unit === id);
+  if (!u) return '#d1d5db';
+  return u.available ? '#16a34a' : '#f97316';
+}
+function fpTextColor(id) {
+  const u = fpUnits().find(x => x.unit === id);
+  if (!u) return '#6b7280';
+  return u.available ? '#166534' : '#9a3412';
+}
+
+// Generate one unit rectangle + label
+function fpRect(id, x, y, w, h) {
+  const fill   = fpFill(id);
+  const stroke = fpStroke(id);
+  const tc     = fpTextColor(id);
+  const cx = x + w/2, cy = y + h/2;
+  const fs = Math.min(13, Math.max(8, w / 5));
+  const u  = fpUnits().find(x => x.unit === id);
+  const sf = u?.sf ? `${Number(u.sf).toLocaleString()}` : '';
+  const showSf = sf && h > 38 && w > 55;
+  return `<g onclick="showUnitPopup('${id}')" style="cursor:pointer">
+    <rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${fill}" stroke="${stroke}" stroke-width="1.5" rx="3"/>
+    <text x="${cx}" y="${cy + (showSf ? -6 : 4)}" text-anchor="middle" dominant-baseline="middle"
+          font-family="Inter,system-ui,sans-serif" font-size="${fs}" font-weight="700" fill="${tc}">${id}</text>
+    ${showSf ? `<text x="${cx}" y="${cy+8}" text-anchor="middle" dominant-baseline="middle"
+          font-family="Inter,system-ui,sans-serif" font-size="${Math.max(7,fs-3)}" fill="${tc}" opacity=".75">${sf} sf</text>` : ''}
+  </g>`;
+}
+
+// Non-unit label (lobby, hallway etc.)
+function fpLabel(txt, x, y, w, h, bg='#f9fafb', tc='#9ca3af') {
+  const cx = x+w/2, cy = y+h/2;
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${bg}" stroke="#e5e7eb" stroke-width="1" rx="3"/>
+    <text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="middle"
+          font-family="Inter,system-ui,sans-serif" font-size="9" font-weight="600" fill="${tc}" letter-spacing=".5">${txt}</text>`;
+}
+
+function warehouseSVG() {
+  return `<svg viewBox="0 0 790 510" xmlns="http://www.w3.org/2000/svg">
+    <!-- ── D units row ── -->
+    ${fpRect('D05', 10, 10, 105, 82)}
+    ${fpRect('D03', 123, 10, 115, 82)}
+    ${fpRect('D04', 246, 10, 113, 82)}
+    ${fpRect('D02', 367, 10, 200, 82)}
+    ${fpRect('D01', 575, 10, 135, 82)}
+
+    <!-- hallway -->
+    <rect x="10" y="100" width="700" height="14" fill="#e5e7eb" rx="2"/>
+    <text x="355" y="110" text-anchor="middle" dominant-baseline="middle"
+          font-family="Inter,system-ui,sans-serif" font-size="8" fill="#9ca3af" letter-spacing="1">HALLWAY</text>
+
+    <!-- ── B01 ── -->
+    ${fpRect('B01', 10, 122, 468, 378)}
+
+    <!-- ── C column ── -->
+    ${fpRect('C05', 486, 122, 132, 76)}
+    ${fpRect('C04', 486, 198, 132, 76)}
+    ${fpRect('C03', 486, 274, 132, 76)}
+    ${fpRect('C02', 486, 350, 132, 76)}
+    ${fpRect('C01', 486, 426, 132, 74)}
+
+    <!-- ── A column ── -->
+    ${fpRect('A02', 626, 122, 154, 95)}
+    ${fpRect('A01', 626, 225, 154, 275)}
+
+    <!-- exit marker -->
+    <text x="770" y="55" text-anchor="end" font-family="Inter,system-ui,sans-serif" font-size="8" fill="#9ca3af">EXIT ↑</text>
+  </svg>`;
+}
+
+function officeSVG() {
+  return `<svg viewBox="0 0 700 520" xmlns="http://www.w3.org/2000/svg">
+    <!-- ── Left column ── -->
+    ${fpRect('R05', 10, 10, 130, 115)}
+    ${fpRect('R06', 10, 133, 130, 195)}
+    ${fpRect('R07', 10, 336, 130, 125)}
+
+    <!-- ── Lobby ── -->
+    ${fpLabel('LOBBY', 148, 10, 290, 300, '#f0fdf4', '#4ade80')}
+
+    <!-- ── Bottom-center (non-units) ── -->
+    ${fpLabel('BREAKROOM', 148, 318, 148, 82)}
+    ${fpLabel('MEN', 304, 318, 80, 82)}
+    ${fpLabel('WOMEN', 392, 318, 54, 82)}
+
+    <!-- ── Right column top ── -->
+    ${fpRect('R04', 454, 10, 118, 82)}
+    ${fpRect('R03', 454, 100, 118, 130)}
+
+    <!-- ── Right column middle ── -->
+    ${fpRect('R02', 454, 238, 118, 155)}
+
+    <!-- ── Server Room ── -->
+    ${fpLabel('SERVER\nROOM', 454, 401, 118, 60)}
+
+    <!-- ── Bottom row ── -->
+    ${fpRect('R08', 148, 408, 175, 102)}
+    ${fpRect('R09', 331, 408, 175, 102)}
+    ${fpRect('R01', 580, 408, 108, 102)}
+
+    <!-- entrance -->
+    <text x="295" y="515" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="8" fill="#9ca3af">FRONT ENTRANCE</text>
+  </svg>`;
+}
+
+function renderFloorplans() {
+  const el = document.getElementById('avail-content');
+  if (!el) return;
+
+  const fpDiv = document.getElementById('fp-section');
+  const svg   = fpFloor === 'warehouse' ? warehouseSVG() : officeSVG();
+
+  const legendHtml = `
+    <div class="fp-legend">
+      <div class="fp-legend-item"><div class="fp-legend-dot" style="background:#dcfce7;border:1.5px solid #16a34a"></div>Available</div>
+      <div class="fp-legend-item"><div class="fp-legend-dot" style="background:#ffedd5;border:1.5px solid #f97316"></div>Occupied</div>
+      <div class="fp-legend-item"><div class="fp-legend-dot" style="background:#f3f4f6;border:1.5px solid #d1d5db"></div>No data</div>
+    </div>`;
+
+  if (fpDiv) {
+    fpDiv.innerHTML = `
+      <div class="fp-hd">
+        <div class="fp-title">Floor Plan</div>
+        <div class="fp-tabs">
+          <button class="fp-tab${fpFloor==='warehouse'?' active':''}" onclick="switchFP('warehouse')">Warehouse</button>
+          <button class="fp-tab${fpFloor==='office'?' active':''}"    onclick="switchFP('office')">Office</button>
+        </div>
+      </div>
+      ${legendHtml}
+      <div class="fp-svg-wrap">${svg}</div>`;
+  } else {
+    const section = document.createElement('div');
+    section.className = 'fp-section';
+    section.id = 'fp-section';
+    section.innerHTML = `
+      <div class="fp-hd">
+        <div class="fp-title">Floor Plan</div>
+        <div class="fp-tabs">
+          <button class="fp-tab active" onclick="switchFP('warehouse')">Warehouse</button>
+          <button class="fp-tab"        onclick="switchFP('office')">Office</button>
+        </div>
+      </div>
+      ${legendHtml}
+      <div class="fp-svg-wrap">${svg}</div>`;
+    el.appendChild(section);
+  }
+}
+
+function switchFP(floor) {
+  fpFloor = floor;
+  renderFloorplans();
+}
+
+function showUnitPopup(id) {
+  const u = fpUnits().find(x => x.unit === id);
+  const status   = u ? (u.available ? '✅ Available' : '🔶 Occupied') : '⬜ Unknown';
+  const sf       = u?.sf ? `${Number(u.sf).toLocaleString()} sf` : '';
+  const tenant   = u?.tenant || (u?.available ? 'HOLD' : '');
+  document.getElementById('up-id').textContent     = id;
+  document.getElementById('up-status').innerHTML   = `<b>Status:</b> ${status}`;
+  document.getElementById('up-sf').innerHTML       = sf ? `<b>Size:</b> ${sf}` : '';
+  document.getElementById('up-tenant').innerHTML   = tenant ? `<b>Tenant:</b> ${tenant}` : '';
+  document.getElementById('unit-popup').classList.add('open');
+}
+
+function closeUnitPopup() {
+  document.getElementById('unit-popup').classList.remove('open');
+}
+
+// Close popup when tapping outside
+document.addEventListener('click', e => {
+  const popup = document.getElementById('unit-popup');
+  if (popup?.classList.contains('open') && !popup.contains(e.target) && !e.target.closest('svg')) {
+    closeUnitPopup();
+  }
+});
 
 // ═══════════════════════════════════════════════════════════════
 //  EXPOSE GLOBALS (for onclick= attributes in HTML)
@@ -2096,6 +2324,9 @@ window.overlayClick    = overlayClick;
 window.pickType        = pickType;
 window.switchTab           = switchTab;
 window.triggerAvailSync    = triggerAvailSync;
+window.switchFP            = switchFP;
+window.showUnitPopup       = showUnitPopup;
+window.closeUnitPopup      = closeUnitPopup;
 window.openNewLead         = openNewLead;
 window.openEditLeadDetails = openEditLeadDetails;
 window.openAddLeadEntry    = openAddLeadEntry;
