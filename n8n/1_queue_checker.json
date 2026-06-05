@@ -1,0 +1,161 @@
+{
+  "name": "CW — 1. Queue Checker",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 24, "triggerAtHour": 8 }]
+        }
+      },
+      "id": "cw-node-001",
+      "name": "Every day at 8am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents:runQuery",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"structuredQuery\": {\n    \"from\": [{\"collectionId\": \"leads\"}],\n    \"where\": {\n      \"compositeFilter\": {\n        \"op\": \"AND\",\n        \"filters\": [\n          {\n            \"fieldFilter\": {\n              \"field\": {\"fieldPath\": \"seq_status\"},\n              \"op\": \"EQUAL\",\n              \"value\": {\"stringValue\": \"active\"}\n            }\n          },\n          {\n            \"fieldFilter\": {\n              \"field\": {\"fieldPath\": \"_deleted\"},\n              \"op\": \"NOT_EQUAL\",\n              \"value\": {\"booleanValue\": true}\n            }\n          }\n        ]\n      }\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "cw-node-002",
+      "name": "Get active leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Google Service Account — do-or-wait"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Firestore response and filter leads that are due today or overdue\n// Also skip leads that already have a pending_email queued\n\nconst today = new Date().toISOString().slice(0, 10);\n\nfunction fsVal(field) {\n  if (!field) return null;\n  if (field.stringValue  !== undefined) return field.stringValue;\n  if (field.integerValue !== undefined) return Number(field.integerValue);\n  if (field.doubleValue  !== undefined) return field.doubleValue;\n  if (field.booleanValue !== undefined) return field.booleanValue;\n  if (field.nullValue    !== undefined) return null;\n  if (field.mapValue) {\n    const out = {};\n    for (const [k, v] of Object.entries(field.mapValue.fields || {})) out[k] = fsVal(v);\n    return out;\n  }\n  if (field.arrayValue) return (field.arrayValue.values || []).map(fsVal);\n  return null;\n}\n\nfunction parseDoc(raw) {\n  const nameParts = raw.document.name.split('/');\n  const id = nameParts[nameParts.length - 1];\n  const fields = raw.document.fields || {};\n  const lead = { id };\n  for (const [k, v] of Object.entries(fields)) lead[k] = fsVal(v);\n  return lead;\n}\n\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const body = item.json;\n  if (!body || !body.document) continue; // skip empty rows\n\n  const lead = parseDoc(body);\n\n  // Skip if already has a pending email waiting\n  if (lead.pending_email) continue;\n\n  // Skip if no next_due_date (not yet started — step 0)\n  // Step 0 means never contacted: treat next_due_date = today to fire touch 1\n  const dueDate = lead.next_due_date || today;\n\n  if (dueDate > today) continue; // not due yet\n\n  // Must have email to send to\n  if (!lead.email) continue;\n\n  // Max 5 touches\n  const nextStep = (lead.current_step || 0) + 1;\n  if (nextStep > 5) continue;\n\n  results.push({ json: { ...lead, _nextStep: nextStep } });\n}\n\nreturn results;"
+      },
+      "id": "cw-node-003",
+      "name": "Filter due leads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "has-leads",
+              "leftValue": "={{ $input.all().length }}",
+              "rightValue": 0,
+              "operator": { "type": "number", "operation": "gt" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cw-node-004",
+      "name": "Any due?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": { "batchSize": 1, "options": {} },
+      "id": "cw-node-005",
+      "name": "Loop leads",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1120, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Load templates and render the right one for this lead\n\nconst TEMPLATES = [\n  {\n    step: 1,\n    subject: 'Flexible warehouse space near the ports — {{unit_sf}} sf available at Cubework Fontana',\n    body: 'Hi {{first_name}},\\n\\nI wanted to reach out about a {{unit_sf}} sf unit we have available at Cubework Fontana ({{location}}). {{importer_line}}\\n\\nUnit details:\\n  Unit: {{unit}}{{dock_line}}\\n  Size: {{unit_sf}} sf\\n  Rate: {{rate}}\\n  Included: {{included_items}}{{alt_line}}\\n\\nThe easiest next step is a quick 15-minute tour — I can walk you through the space and how it could work for {{company}}. Would this week work?\\n\\nBest,\\nJustin Cho\\nBusiness Development — Cubework Fontana'\n  },\n  {\n    step: 2,\n    subject: 'Re: Cubework Fontana — {{unit}} still available',\n    body: 'Hi {{first_name}},\\n\\nJust circling back on the unit I mentioned. We still have {{unit}} ({{unit_sf}} sf{{dock_line2}}) available at {{rate}}.{{alt_sentence}}\\n\\nFlexible terms — month-to-month is an option if you need it. Happy to do a quick 15-minute tour whenever works for you.\\n\\nBest,\\nJustin'\n  },\n  {\n    step: 3,\n    subject: \"What's included with your space at Cubework Fontana\",\n    body: 'Hi {{first_name}},\\n\\nWanted to share why a few tenants chose Cubework over cheaper options:\\n\\n• {{included_items}} included — no surprise utility bills.\\n• {{importer_bullet}}\\n• 24/7 access, loading, and security.\\n\\nStill have {{unit}} at {{rate}} — worth a 15-minute look?\\n\\nBest,\\nJustin'\n  },\n  {\n    step: 4,\n    subject: 'Quick question about your space needs — Cubework Fontana',\n    body: 'Hi {{first_name}},\\n\\nQuick question: what would need to be true about a space for it to be worth a tour?\\n\\nAsking because I want to make sure I\\'m not wasting your time — if {{unit}} ({{unit_sf}} sf, {{rate}}) doesn\\'t fit what you need right now, I\\'d rather know.{{alt_sentence}}\\n\\nEither way, happy to give you a straight answer on whether we can make it work.\\n\\nBest,\\nJustin'\n  },\n  {\n    step: 5,\n    subject: 'Last note — Cubework Fontana space for {{company}}',\n    body: \"Hi {{first_name}},\\n\\nI'll keep this short — I've reached out a few times about the {{unit_sf}} sf unit at Cubework Fontana and haven't heard back. Totally fine if the timing isn't right.\\n\\nI'll leave it here. If things change and you're looking for flexible warehouse space near the ports, feel free to reach back out.\\n\\nWishing you and {{company}} the best.\\n\\nJustin Cho\\nBusiness Development — Cubework Fontana\"\n  }\n];\n\nconst lead = $input.first().json;\nconst step = lead._nextStep;\nconst tpl  = TEMPLATES.find(t => t.step === step);\nif (!tpl) throw new Error(`No template for step ${step}`);\n\nfunction merge(str, l) {\n  const dock_line  = l.dock ? ', dock-high access' : '';\n  const dock_line2 = l.dock ? ', dock-high' : '';\n  const alt_line   = l.alt_option ? `\\n  Backup option: ${l.alt_option}` : '';\n  const alt_sentence = l.alt_option ? ` I also have ${l.alt_option} if the current unit isn't the right size.` : '';\n  const importer_line = l.is_importer\n    ? 'Given your importing operations, our location near the LA/Long Beach ports makes container freight straightforward — Cubeship handles shipping and customs so you land freight directly with us.'\n    : 'We offer flexible terms with no long lease commitment required to get in.';\n  const importer_bullet = l.is_importer\n    ? 'Cubeship handles container freight, customs, and last-mile from the same location.'\n    : 'No long lease to get in — month-to-month so you\\'re not locked in.';\n\n  return str\n    .replace(/{{first_name}}/g,     l.first_name || l.contact || 'there')\n    .replace(/{{company}}/g,         l.company     || '')\n    .replace(/{{unit}}/g,            l.unit         || '')\n    .replace(/{{unit_sf}}/g,         l.unit_sf      ? l.unit_sf.toLocaleString() : '')\n    .replace(/{{rate}}/g,            l.rate         || '')\n    .replace(/{{included_items}}/g,  l.included_items || '')\n    .replace(/{{location}}/g,        l.location     || 'Fontana, CA')\n    .replace(/{{dock_line}}/g,       dock_line)\n    .replace(/{{dock_line2}}/g,      dock_line2)\n    .replace(/{{alt_line}}/g,        alt_line)\n    .replace(/{{alt_sentence}}/g,    alt_sentence)\n    .replace(/{{importer_line}}/g,   importer_line)\n    .replace(/{{importer_bullet}}/g, importer_bullet);\n}\n\nconst pending_email = {\n  to:          lead.email,\n  subject:     merge(tpl.subject, lead),\n  body:        merge(tpl.body, lead),\n  step,\n  drafted_at:  new Date().toISOString()\n};\n\nreturn [{ json: { ...lead, pending_email } }];"
+      },
+      "id": "cw-node-006",
+      "name": "Render template",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Firestore PATCH body for pending_email field\nconst lead = $input.first().json;\nconst pe   = lead.pending_email;\n\nfunction toFsStr(v) { return { stringValue: String(v) }; }\nfunction toFsInt(v) { return { integerValue: String(v) }; }\n\nconst patchBody = {\n  fields: {\n    pending_email: {\n      mapValue: {\n        fields: {\n          to:         toFsStr(pe.to),\n          subject:    toFsStr(pe.subject),\n          body:       toFsStr(pe.body),\n          step:       toFsInt(pe.step),\n          drafted_at: toFsStr(pe.drafted_at)\n        }\n      }\n    }\n  }\n};\n\nreturn [{ json: { leadId: lead.id, patchBody } }];"
+      },
+      "id": "cw-node-007",
+      "name": "Build patch body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 200]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/leads/{{ $json.leadId }}?updateMask.fieldPaths=pending_email",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.patchBody) }}",
+        "options": {}
+      },
+      "id": "cw-node-008",
+      "name": "Write pending_email to Firestore",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 200],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Google Service Account — do-or-wait"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every day at 8am": {
+      "main": [[{ "node": "Get active leads", "type": "main", "index": 0 }]]
+    },
+    "Get active leads": {
+      "main": [[{ "node": "Filter due leads", "type": "main", "index": 0 }]]
+    },
+    "Filter due leads": {
+      "main": [[{ "node": "Any due?", "type": "main", "index": 0 }]]
+    },
+    "Any due?": {
+      "main": [
+        [{ "node": "Loop leads", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Loop leads": {
+      "main": [
+        [{ "node": "Render template", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Render template": {
+      "main": [[{ "node": "Build patch body", "type": "main", "index": 0 }]]
+    },
+    "Build patch body": {
+      "main": [[{ "node": "Write pending_email to Firestore", "type": "main", "index": 0 }]]
+    },
+    "Write pending_email to Firestore": {
+      "main": [[{ "node": "Loop leads", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "cw-workflow-001"
+}

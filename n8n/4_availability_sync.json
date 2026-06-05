@@ -1,0 +1,139 @@
+{
+  "name": "CW — 4. Availability Sync (2720 Pellissier)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 24, "triggerAtHour": 7 }]
+        }
+      },
+      "id": "av-001",
+      "name": "Daily 7am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [180, 200]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "availability-sync",
+        "options": {}
+      },
+      "id": "av-002",
+      "name": "On-demand webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [180, 340],
+      "webhookId": "availability-sync"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/drives/b!PTPG93ABykGTyTN3FFoe4VuDiG3EWClHnEUTFYmwDlPniwOA1KHERaEuw4tmPJCD/items/01QOQ5WQTZZGGIUUUMG5F3FIFVDNEZFKJT",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOAuth2Api",
+        "options": {}
+      },
+      "id": "av-003",
+      "name": "Get file metadata",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [420, 270],
+      "credentials": {
+        "microsoftOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Microsoft OAuth2 — Cubework Outlook"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/drives/b!PTPG93ABykGTyTN3FFoe4VuDiG3EWClHnEUTFYmwDlPniwOA1KHERaEuw4tmPJCD/items/01QOQ5WQTZZGGIUUUMG5F3FIFVDNEZFKJT/workbook/worksheets",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOAuth2Api",
+        "options": {}
+      },
+      "id": "av-004",
+      "name": "List worksheets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [640, 270],
+      "credentials": {
+        "microsoftOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Microsoft OAuth2 — Cubework Outlook"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Find the main unit-status worksheet (first sheet or one containing 'Unit #')\nconst meta      = $('Get file metadata').first().json;\nconst sheets    = $('List worksheets').first().json.value || [];\n\n// Use the first worksheet by default\nconst targetSheet = sheets[0]?.name || 'Sheet1';\nconst sheetEncoded = encodeURIComponent(targetSheet);\n\nreturn [{ json: {\n  sheetName: targetSheet,\n  sheetEncoded,\n  lastModified: meta.lastModifiedDateTime\n}}];"
+      },
+      "id": "av-005",
+      "name": "Pick sheet",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 270]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://graph.microsoft.com/v1.0/drives/b!PTPG93ABykGTyTN3FFoe4VuDiG3EWClHnEUTFYmwDlPniwOA1KHERaEuw4tmPJCD/items/01QOQ5WQTZZGGIUUUMG5F3FIFVDNEZFKJT/workbook/worksheets/{{ $json.sheetEncoded }}/usedRange(valuesOnly=true)",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOAuth2Api",
+        "options": {}
+      },
+      "id": "av-006",
+      "name": "Read sheet data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1080, 270],
+      "credentials": {
+        "microsoftOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Microsoft OAuth2 — Cubework Outlook"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the Excel rows into a clean availability object\n\nconst rows         = $('Read sheet data').first().json.values || [];\nconst lastModified = $('Pick sheet').first().json.lastModified;\nconst now          = new Date().toISOString();\n\n// Find rows that look like unit data rows\n// Pattern: first cell is a unit ID like A01, B01, C01..., R01..., DOCK01..., P01...\nconst unitPattern = /^([A-Z]\\d{2}|DOCK\\d+|P\\d{2})$/i;\n\nconst units = [];\nlet currentHeader = null;\n\nfor (const row of rows) {\n  const col0 = String(row[0] || '').trim();\n  const col1 = String(row[1] || '').trim();\n  const col2 = String(row[2] || '').trim();\n  const col3 = String(row[3] || '').trim();\n  const col4 = String(row[4] || '').trim();\n\n  // Detect header row\n  if (col0 === 'Unit #' && col1 === 'Unit Type') {\n    currentHeader = { unitType: col1, sf: col2, status: col3, company: col4 };\n    continue;\n  }\n\n  // Parse unit row\n  if (unitPattern.test(col0) && currentHeader) {\n    const sfNum = Number(String(col2).replace(/[^0-9]/g, '')) || 0;\n    units.push({\n      unit:    col0.toUpperCase(),\n      type:    col1 || (col0.startsWith('R') ? 'OFFICE' : col0.startsWith('DOCK') ? 'DOCK' : col0.startsWith('P') ? 'TRAILER' : 'WH'),\n      sf:      sfNum,\n      status:  col3,\n      tenant:  col4 || null,\n      available: col3 === 'Vacant'\n    });\n  }\n}\n\n// Build summary by type\nfunction summarise(type) {\n  const group = units.filter(u => u.type === type);\n  const avail = group.filter(u => u.available);\n  const totalSf = group.reduce((s, u) => s + u.sf, 0);\n  const availSf = avail.reduce((s, u) => s + u.sf, 0);\n  return {\n    total_units:  group.length,\n    avail_units:  avail.length,\n    total_sf:     totalSf,\n    avail_sf:     availSf,\n    avail_pct:    totalSf > 0 ? Math.round(availSf / totalSf * 1000) / 10 : 0,\n    available:    avail.map(u => ({ unit: u.unit, sf: u.sf, tenant: u.tenant }))\n  };\n}\n\nconst wh      = summarise('WH');\nconst office  = summarise('OFFICE');\nconst dock    = summarise('DOCK');\nconst trailer = summarise('TRAILER');\n\n// Build Firestore document fields\nfunction toFsStr(v) { return { stringValue: String(v) }; }\nfunction toFsInt(v) { return { integerValue: String(Math.round(v)) }; }\nfunction toFsDbl(v) { return { doubleValue: v }; }\nfunction toFsBool(v){ return { booleanValue: v }; }\nfunction toFsNull() { return { nullValue: null }; }\n\nfunction unitToFs(u) {\n  return {\n    mapValue: {\n      fields: {\n        unit:      toFsStr(u.unit),\n        type:      toFsStr(u.type),\n        sf:        toFsInt(u.sf),\n        status:    toFsStr(u.status),\n        tenant:    u.tenant ? toFsStr(u.tenant) : toFsNull(),\n        available: toFsBool(u.available)\n      }\n    }\n  };\n}\n\nfunction summaryToFs(s) {\n  return {\n    mapValue: {\n      fields: {\n        total_units: toFsInt(s.total_units),\n        avail_units: toFsInt(s.avail_units),\n        total_sf:    toFsInt(s.total_sf),\n        avail_sf:    toFsInt(s.avail_sf),\n        avail_pct:   toFsDbl(s.avail_pct)\n      }\n    }\n  };\n}\n\nconst patchBody = {\n  fields: {\n    property:        toFsStr('2720 Pellissier'),\n    address:         toFsStr('2720 Pellissier Place, City of Industry, CA 90601'),\n    yardi_url:       toFsStr('https://apps.commercialcafe.com/dealmanager/content/#/app/property/356D10A0-0AF9-4FBD-BF37-031CB028FB87/floorplan'),\n    sharepoint_url:  toFsStr('https://cubework365.sharepoint.com/sites/Cubework_PropertyManagement/Shared%20Documents/Pellissier%202720%2C%20CA/Property%20Associates%20Weekly%20Report/2720%20Pellissier.xlsx'),\n    sheet_last_modified: toFsStr(lastModified),\n    synced_at:       toFsStr(now),\n    wh:              summaryToFs(wh),\n    office:          summaryToFs(office),\n    dock:            summaryToFs(dock),\n    parking:         summaryToFs(trailer),\n    units: {\n      arrayValue: { values: units.map(unitToFs) }\n    }\n  }\n};\n\nreturn [{ json: { patchBody } }];"
+      },
+      "id": "av-007",
+      "name": "Parse availability",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 270]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/availability/pellissier-2720",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.patchBody) }}",
+        "options": {}
+      },
+      "id": "av-008",
+      "name": "Write to Firestore",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1520, 270]
+    }
+  ],
+  "connections": {
+    "Daily 7am":        { "main": [[{ "node": "Get file metadata", "type": "main", "index": 0 }]] },
+    "On-demand webhook":{ "main": [[{ "node": "Get file metadata", "type": "main", "index": 0 }]] },
+    "Get file metadata":{ "main": [[{ "node": "List worksheets",   "type": "main", "index": 0 }]] },
+    "List worksheets":  { "main": [[{ "node": "Pick sheet",        "type": "main", "index": 0 }]] },
+    "Pick sheet":       { "main": [[{ "node": "Read sheet data",   "type": "main", "index": 0 }]] },
+    "Read sheet data":  { "main": [[{ "node": "Parse availability","type": "main", "index": 0 }]] },
+    "Parse availability":{"main": [[{ "node": "Write to Firestore","type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "cw-workflow-004"
+}

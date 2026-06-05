@@ -1,0 +1,31 @@
+{
+  "cadence_days": { "1": 4, "2": 6, "3": 7, "4": 9 },
+
+  "touches": [
+    {
+      "step": 1,
+      "subject": "Flexible warehouse space near the ports — {{unit_sf}} sf available at Cubework Fontana",
+      "body": "Hi {{first_name}},\n\nI wanted to reach out about a {{unit_sf}} sf unit we have available at Cubework Fontana ({{location}}). {{#importer}}Given your importing operations, our location near the LA/Long Beach ports makes container freight straightforward — we can handle the shipping and customs through our Cubeship service so you land freight directly with us.{{/importer}}{{^importer}}We offer flexible terms with no long lease commitment required to get in.{{/importer}}\n\nUnit details:\n  Unit: {{unit}}{{#dock}} (dock-high access){{/dock}}\n  Size: {{unit_sf}} sf\n  Rate: {{rate}}\n  Included: {{included_items}}{{#alt_option}}\n  Backup option: {{alt_option}}{{/alt_option}}\n\nThe easiest next step is a quick 15-minute tour — I can walk you through the space and how it could work for {{company}}. Would this week work?\n\nBest,\nJustin Cho\nBusiness Development — Cubework Fontana"
+    },
+    {
+      "step": 2,
+      "subject": "Re: Cubework Fontana — {{unit}} still available",
+      "body": "Hi {{first_name}},\n\nJust circling back on the unit I mentioned. We still have {{unit}} ({{unit_sf}} sf{{#dock}}, dock-high{{/dock}}) available at {{rate}}.{{#alt_option}} I also have {{alt_option}} if the size isn't quite the right fit.{{/alt_option}}\n\nFlexible terms — month-to-month is an option if you need it. Happy to do a quick 15-minute tour whenever works for you.\n\nBest,\nJustin"
+    },
+    {
+      "step": 3,
+      "subject": "What's included with your space at Cubework Fontana",
+      "body": "Hi {{first_name}},\n\nWanted to share a bit more context on why a few tenants specifically chose Cubework over cheaper alternatives they were looking at:\n\n{{included_items}} are included — no surprise utility bills at the end of the month.\n{{#importer}}Cubeship handles container freight, customs, and last-mile from the same location.{{/importer}}{{^importer}}No long lease to get in — month-to-month available so you're not locked in.{{/importer}}\n24/7 access, loading, and security.\n\nStill have {{unit}} at {{rate}} — worth a 15-minute look?\n\nBest,\nJustin"
+    },
+    {
+      "step": 4,
+      "subject": "Quick question about your space needs — Cubework Fontana",
+      "body": "Hi {{first_name}},\n\nQuick question: what's the one thing that would need to be true about a space for it to be worth a tour?\n\nAsking because I want to make sure I'm not wasting your time — and if {{unit}} ({{unit_sf}} sf, {{rate}}) doesn't fit what you need right now, I'd rather know.{{#alt_option}} I also have {{alt_option}} if the current unit isn't the right size.{{/alt_option}}\n\nEither way, happy to give you a straight answer on whether we can make it work.\n\nBest,\nJustin"
+    },
+    {
+      "step": 5,
+      "subject": "Last note — Cubework Fontana space for {{company}}",
+      "body": "Hi {{first_name}},\n\nI'll keep this short — I've reached out a few times about the {{unit_sf}} sf unit at Cubework Fontana and haven't heard back. Totally fine if the timing isn't right or if it's not a fit.\n\nI'll leave it here. If things change and you're looking for flexible warehouse space near the ports, feel free to reach back out — I'm usually quick to respond.\n\nWishing you and {{company}} the best.\n\nJustin Cho\nBusiness Development — Cubework Fontana"
+    }
+  ]
+}

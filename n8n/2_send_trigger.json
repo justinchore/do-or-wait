@@ -1,0 +1,177 @@
+{
+  "name": "CW — 2. Send & Update",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "minutes", "minutesInterval": 5 }]
+        }
+      },
+      "id": "cw-s-001",
+      "name": "Every 5 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents:runQuery",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"structuredQuery\": {\n    \"from\": [{\"collectionId\": \"leads\"}],\n    \"where\": {\n      \"fieldFilter\": {\n        \"field\": {\"fieldPath\": \"seq_status\"},\n        \"op\": \"EQUAL\",\n        \"value\": {\"stringValue\": \"send_approved\"}\n      }\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "cw-s-002",
+      "name": "Get approved leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Google Service Account — do-or-wait"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "function fsVal(field) {\n  if (!field) return null;\n  if (field.stringValue  !== undefined) return field.stringValue;\n  if (field.integerValue !== undefined) return Number(field.integerValue);\n  if (field.doubleValue  !== undefined) return field.doubleValue;\n  if (field.booleanValue !== undefined) return field.booleanValue;\n  if (field.nullValue    !== undefined) return null;\n  if (field.mapValue) {\n    const out = {};\n    for (const [k, v] of Object.entries(field.mapValue.fields || {})) out[k] = fsVal(v);\n    return out;\n  }\n  if (field.arrayValue) return (field.arrayValue.values || []).map(fsVal);\n  return null;\n}\n\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const body = item.json;\n  if (!body || !body.document) continue;\n  const nameParts = body.document.name.split('/');\n  const id = nameParts[nameParts.length - 1];\n  const fields = body.document.fields || {};\n  const lead = { id };\n  for (const [k, v] of Object.entries(fields)) lead[k] = fsVal(v);\n  if (lead.pending_email && lead.email) results.push({ json: lead });\n}\n\nreturn results;"
+      },
+      "id": "cw-s-003",
+      "name": "Parse approved",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {},
+          "conditions": [
+            {
+              "id": "has-approved",
+              "leftValue": "={{ $input.all().length }}",
+              "rightValue": 0,
+              "operator": { "type": "number", "operation": "gt" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cw-s-004",
+      "name": "Any approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": { "batchSize": 1, "options": {} },
+      "id": "cw-s-005",
+      "name": "Loop approved",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1120, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.microsoft.com/v1.0/users/{{ $env.OUTLOOK_USER_ID }}/sendMail",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": {\n    \"subject\": {{ JSON.stringify($json.pending_email.subject) }},\n    \"body\": {\n      \"contentType\": \"Text\",\n      \"content\": {{ JSON.stringify($json.pending_email.body) }}\n    },\n    \"toRecipients\": [\n      {\n        \"emailAddress\": {\n          \"address\": {{ JSON.stringify($json.pending_email.to) }}\n        }\n      }\n    ]\n  },\n  \"saveToSentItems\": true\n}",
+        "options": {}
+      },
+      "id": "cw-s-006",
+      "name": "Send via Graph API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 200],
+      "credentials": {
+        "microsoftOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Microsoft OAuth2 — Cubework Outlook"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Calculate next_due_date and build the Firestore update\nconst lead = $('Loop approved').first().json;\nconst stepJustSent = lead.pending_email.step;\n\n// Cadence in days: after sending step N, wait this many days before step N+1\nconst CADENCE = { 1: 4, 2: 6, 3: 7, 4: 9 };\nconst daysUntilNext = CADENCE[stepJustSent];\n\nconst today = new Date();\nlet next_due_date = null;\nif (daysUntilNext && stepJustSent < 5) {\n  const nextDate = new Date(today);\n  nextDate.setDate(nextDate.getDate() + daysUntilNext);\n  next_due_date = nextDate.toISOString().slice(0, 10);\n}\n\nfunction toFsStr(v) { return { stringValue: String(v) }; }\nfunction toFsInt(v) { return { integerValue: String(v) }; }\nfunction toFsNull()  { return { nullValue: null }; }\n\nconst patchFields = {\n  current_step:    toFsInt(stepJustSent),\n  last_touch_date: toFsStr(today.toISOString().slice(0, 10)),\n  seq_status:      toFsStr(stepJustSent >= 5 ? 'closed' : 'active'),\n  pending_email:   toFsNull()\n};\n\nif (next_due_date) patchFields.next_due_date = toFsStr(next_due_date);\n\nreturn [{\n  json: {\n    leadId: lead.id,\n    patchBody: { fields: patchFields },\n    updateMask: Object.keys(patchFields).join('&updateMask.fieldPaths=')\n  }\n}];"
+      },
+      "id": "cw-s-007",
+      "name": "Calc next date & build patch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 200]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/leads/{{ $json.leadId }}?updateMask.fieldPaths={{ $json.updateMask }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.patchBody) }}",
+        "options": {}
+      },
+      "id": "cw-s-008",
+      "name": "Update Firestore lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 200],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Google Service Account — do-or-wait"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 5 minutes": {
+      "main": [[{ "node": "Get approved leads", "type": "main", "index": 0 }]]
+    },
+    "Get approved leads": {
+      "main": [[{ "node": "Parse approved", "type": "main", "index": 0 }]]
+    },
+    "Parse approved": {
+      "main": [[{ "node": "Any approved?", "type": "main", "index": 0 }]]
+    },
+    "Any approved?": {
+      "main": [
+        [{ "node": "Loop approved", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Loop approved": {
+      "main": [
+        [{ "node": "Send via Graph API", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Send via Graph API": {
+      "main": [[{ "node": "Calc next date & build patch", "type": "main", "index": 0 }]]
+    },
+    "Calc next date & build patch": {
+      "main": [[{ "node": "Update Firestore lead", "type": "main", "index": 0 }]]
+    },
+    "Update Firestore lead": {
+      "main": [[{ "node": "Loop approved", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "cw-workflow-002"
+}

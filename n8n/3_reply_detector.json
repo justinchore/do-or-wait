@@ -1,0 +1,209 @@
+{
+  "name": "CW — 3. Reply Detector",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "minutes", "minutesInterval": 30 }]
+        }
+      },
+      "id": "cw-r-001",
+      "name": "Every 30 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Compute the datetime 35 minutes ago (a small buffer over the 30-min interval)\n// to avoid missing emails right at the boundary\nconst dt = new Date();\ndt.setMinutes(dt.getMinutes() - 35);\nreturn [{ json: { since: dt.toISOString() } }];"
+      },
+      "id": "cw-r-002",
+      "name": "Compute lookback window",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://graph.microsoft.com/v1.0/users/{{ $env.OUTLOOK_USER_ID }}/mailFolders/inbox/messages?$filter=receivedDateTime ge {{ $json.since }}&$select=from,subject,receivedDateTime,id&$top=50",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOAuth2Api",
+        "options": {}
+      },
+      "id": "cw-r-003",
+      "name": "Get recent inbox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300],
+      "credentials": {
+        "microsoftOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Microsoft OAuth2 — Cubework Outlook"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract unique sender emails from the inbox response\nconst body = $input.first().json;\nconst messages = body.value || [];\nif (messages.length === 0) return [];\n\nconst senders = [...new Set(\n  messages.map(m => m.from?.emailAddress?.address?.toLowerCase()).filter(Boolean)\n)];\n\nreturn [{ json: { senders } }];"
+      },
+      "id": "cw-r-004",
+      "name": "Extract senders",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {},
+          "conditions": [
+            {
+              "id": "has-senders",
+              "leftValue": "={{ $json.senders.length }}",
+              "rightValue": 0,
+              "operator": { "type": "number", "operation": "gt" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cw-r-005",
+      "name": "Any emails?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents:runQuery",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"structuredQuery\": {\n    \"from\": [{\"collectionId\": \"leads\"}],\n    \"where\": {\n      \"compositeFilter\": {\n        \"op\": \"AND\",\n        \"filters\": [\n          {\n            \"fieldFilter\": {\n              \"field\": {\"fieldPath\": \"seq_status\"},\n              \"op\": \"NOT_EQUAL\",\n              \"value\": {\"stringValue\": \"replied\"}\n            }\n          },\n          {\n            \"fieldFilter\": {\n              \"field\": {\"fieldPath\": \"email\"},\n              \"op\": \"NOT_EQUAL\",\n              \"value\": {\"stringValue\": \"\"}\n            }\n          }\n        ]\n      }\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "cw-r-006",
+      "name": "Get active leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 200],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Google Service Account — do-or-wait"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Cross-match senders against lead emails\n// Returns one item per matched lead\n\nfunction fsVal(field) {\n  if (!field) return null;\n  if (field.stringValue  !== undefined) return field.stringValue;\n  if (field.integerValue !== undefined) return Number(field.integerValue);\n  if (field.booleanValue !== undefined) return field.booleanValue;\n  return null;\n}\n\nconst senders = $('Extract senders').first().json.senders;\nconst leadDocs = $('Get active leads').all();\n\nconst matched = [];\nfor (const item of leadDocs) {\n  const body = item.json;\n  if (!body || !body.document) continue;\n  const nameParts = body.document.name.split('/');\n  const id = nameParts[nameParts.length - 1];\n  const email = fsVal(body.document.fields?.email)?.toLowerCase();\n  if (email && senders.includes(email)) {\n    matched.push({ json: { leadId: id, email } });\n  }\n}\n\nreturn matched;"
+      },
+      "id": "cw-r-007",
+      "name": "Find matching leads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {},
+          "conditions": [
+            {
+              "id": "has-matches",
+              "leftValue": "={{ $input.all().length }}",
+              "rightValue": 0,
+              "operator": { "type": "number", "operation": "gt" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cw-r-008",
+      "name": "Any matches?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1780, 200]
+    },
+    {
+      "parameters": { "batchSize": 1, "options": {} },
+      "id": "cw-r-009",
+      "name": "Loop matches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [2000, 100]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/leads/{{ $json.leadId }}?updateMask.fieldPaths=seq_status&updateMask.fieldPaths=replied_at",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"seq_status\":  { \"stringValue\": \"replied\" },\n    \"replied_at\":  { \"stringValue\": \"{{ new Date().toISOString() }}\" }\n  }\n}",
+        "options": {}
+      },
+      "id": "cw-r-010",
+      "name": "Mark replied in Firestore",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2220, 100],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Google Service Account — do-or-wait"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 30 minutes": {
+      "main": [[{ "node": "Compute lookback window", "type": "main", "index": 0 }]]
+    },
+    "Compute lookback window": {
+      "main": [[{ "node": "Get recent inbox", "type": "main", "index": 0 }]]
+    },
+    "Get recent inbox": {
+      "main": [[{ "node": "Extract senders", "type": "main", "index": 0 }]]
+    },
+    "Extract senders": {
+      "main": [[{ "node": "Any emails?", "type": "main", "index": 0 }]]
+    },
+    "Any emails?": {
+      "main": [
+        [{ "node": "Get active leads", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Get active leads": {
+      "main": [[{ "node": "Find matching leads", "type": "main", "index": 0 }]]
+    },
+    "Find matching leads": {
+      "main": [[{ "node": "Any matches?", "type": "main", "index": 0 }]]
+    },
+    "Any matches?": {
+      "main": [
+        [{ "node": "Loop matches", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Loop matches": {
+      "main": [
+        [{ "node": "Mark replied in Firestore", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Mark replied in Firestore": {
+      "main": [[{ "node": "Loop matches", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "cw-workflow-003"
+}

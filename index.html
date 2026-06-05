@@ -496,6 +496,43 @@
     .cc-reminder { margin-top:16px; border:1.5px dashed var(--cc-ink); padding:9px 13px; font-size:.8rem; background:rgba(200,80,15,.05); font-family:'IBM Plex Sans',sans-serif; color:var(--cc-ink); }
     .cc-reminder b { font-family:'IBM Plex Mono',monospace; letter-spacing:.5px; }
 
+    /* ── Availability view ───────────────────── */
+    .avail-header { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:16px; flex-wrap:wrap; }
+    .avail-title { font-size:16px; font-weight:800; }
+    .avail-meta  { font-size:12px; color:var(--text2); margin-top:3px; }
+    .avail-meta b { color:var(--text); }
+    .avail-actions { display:flex; gap:7px; flex-shrink:0; flex-wrap:wrap; }
+    .avail-link { padding:6px 12px; border-radius:8px; border:1.5px solid var(--border); background:var(--surface); font-size:12px; font-weight:600; color:var(--text); text-decoration:none; display:inline-flex; align-items:center; gap:4px; transition:background .15s; cursor:pointer; font-family:inherit; }
+    .avail-link:hover { background:var(--bg); }
+    .avail-refresh { background:var(--text); color:#fff; border-color:transparent; }
+    .avail-refresh:hover { background:#1f2937; }
+    .avail-refresh.spinning { opacity:.6; pointer-events:none; }
+
+    .avail-summary { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:20px; }
+    @media(max-width:500px){ .avail-summary { grid-template-columns:1fr 1fr; } }
+    .avail-stat-card { background:var(--surface); border-radius:10px; padding:12px 14px; box-shadow:var(--shadow); }
+    .avail-stat-label { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--text2); margin-bottom:4px; }
+    .avail-stat-val   { font-size:22px; font-weight:800; line-height:1; }
+    .avail-stat-sub   { font-size:11px; color:var(--text2); margin-top:4px; }
+    .avail-stat-card.highlight { border-left:3px solid var(--do); }
+
+    .avail-section { margin-bottom:16px; }
+    .avail-section-hd { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.6px; color:var(--text2); margin-bottom:8px; padding-bottom:6px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+    .avail-section-pct { font-size:11px; font-weight:700; padding:2px 8px; border-radius:20px; }
+    .avail-section-pct.high { background:#dcfce7; color:#15803d; }
+    .avail-section-pct.low  { background:#f3f4f6; color:var(--text2); }
+
+    .avail-unit-list { display:flex; flex-direction:column; gap:7px; }
+    .avail-unit { background:var(--surface); border-radius:10px; padding:12px 14px; box-shadow:var(--shadow); display:flex; align-items:center; gap:12px; }
+    .avail-unit-id { font-size:15px; font-weight:800; min-width:52px; }
+    .avail-unit-sf { font-size:14px; font-weight:600; flex:1; }
+    .avail-unit-sf span { font-size:11px; color:var(--text2); font-weight:400; }
+    .avail-unit-note { font-size:11px; color:var(--text2); background:var(--bg); padding:2px 8px; border-radius:20px; }
+    .avail-unit-tenant { font-size:12px; color:var(--text2); }
+
+    .avail-all-occupied { font-size:13px; color:var(--text2); font-style:italic; padding:10px 0; }
+    .avail-loading { text-align:center; padding:60px 20px; color:var(--text2); font-size:14px; }
+
     /* ── Print ──────────────────────────────── */
     .print-hd { display: none; }
     @media print {
@@ -544,6 +581,7 @@
     <button class="tab-btn active" data-tab="tasks" onclick="switchTab('tasks')">📋 Tasks</button>
     <button class="tab-btn" data-tab="leads" onclick="switchTab('leads')">🎯 Leads</button>
     <button class="tab-btn" data-tab="playbook" onclick="switchTab('playbook')">📞 Playbook</button>
+    <button class="tab-btn" data-tab="avail" onclick="switchTab('avail')">🏭 Avail</button>
   </div>
 
   <!-- Tasks view -->
@@ -740,6 +778,11 @@
       <button class="add-topic-btn" onclick="openNewLead()">＋ New lead</button>
     </div>
 
+  </div>
+
+  <!-- Availability view -->
+  <div id="avail-view" style="display:none">
+    <div id="avail-content" style="max-width:1100px;margin:0 auto;padding:16px;"></div>
   </div>
 
 </div><!-- /#app (closed here instead of below) -->
@@ -1896,9 +1939,142 @@ function switchTab(tab) {
   document.getElementById('tasks-view').style.display    = tab === 'tasks'    ? '' : 'none';
   document.getElementById('leads-view').style.display    = tab === 'leads'    ? '' : 'none';
   document.getElementById('playbook-view').style.display = tab === 'playbook' ? '' : 'none';
+  document.getElementById('avail-view').style.display    = tab === 'avail'    ? '' : 'none';
   document.querySelectorAll('.tab-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.tab === tab);
   });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  AVAILABILITY
+// ═══════════════════════════════════════════════════════════════
+let availData = null;
+let unsubAvail = null;
+
+// n8n on-demand webhook URL — fill in after importing workflow 4
+const AVAIL_WEBHOOK = 'REPLACE_WITH_N8N_WEBHOOK_URL';
+
+// Start Firestore listener for availability
+unsubAvail = onSnapshot(doc(db, 'availability', 'pellissier-2720'), snap => {
+  if (snap.exists()) {
+    availData = snap.data();
+    renderAvailability();
+  } else {
+    availData = null;
+    renderAvailability();
+  }
+});
+
+function renderAvailability() {
+  const el = document.getElementById('avail-content');
+  if (!el) return;
+
+  if (!availData) {
+    el.innerHTML = `
+      <div class="avail-loading">
+        <div style="font-size:2rem;margin-bottom:12px">🏭</div>
+        <div style="font-weight:700;margin-bottom:6px">No availability data yet</div>
+        <div style="margin-bottom:16px">Import and activate Workflow 4 in n8n to start syncing.</div>
+        <button class="avail-link avail-refresh" onclick="triggerAvailSync()">⟳ Sync now</button>
+      </div>`;
+    return;
+  }
+
+  const d = availData;
+  const sheetDate = d.sheet_last_modified
+    ? new Date(d.sheet_last_modified).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })
+    : '—';
+  const syncDate = d.synced_at
+    ? new Date(d.synced_at).toLocaleDateString('en-US', { month:'short', day:'numeric' }) + ' ' +
+      new Date(d.synced_at).toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' })
+    : '—';
+
+  const wh  = d.wh     || {};
+  const off = d.office || {};
+  const dk  = d.dock   || {};
+  const prk = d.parking|| {};
+
+  // Available units
+  const whUnits  = (d.units || []).filter(u => u.type === 'WH'     && u.available);
+  const offUnits = (d.units || []).filter(u => u.type === 'OFFICE' && u.available);
+
+  function unitCard(u) {
+    const sf = u.sf ? Number(u.sf).toLocaleString() : '—';
+    return `<div class="avail-unit">
+      <div class="avail-unit-id">${esc(u.unit)}</div>
+      <div class="avail-unit-sf">${sf} sf <span>· ${u.type}</span></div>
+      ${u.tenant && u.tenant !== 'HOLD' ? `<div class="avail-unit-tenant">${esc(u.tenant)}</div>` : ''}
+      <div class="avail-unit-note">HOLD</div>
+    </div>`;
+  }
+
+  function pct(v) {
+    const n = Number(v) || 0;
+    return `<span class="avail-section-pct ${n >= 30 ? 'high' : 'low'}">${n}% avail</span>`;
+  }
+
+  el.innerHTML = `
+    <div class="avail-header">
+      <div>
+        <div class="avail-title">🏭 ${esc(d.property || '2720 Pellissier')}</div>
+        <div class="avail-meta">Sheet updated: <b>${sheetDate}</b> · Last synced: ${syncDate}</div>
+      </div>
+      <div class="avail-actions">
+        <a class="avail-link" href="${esc(d.yardi_url || '#')}" target="_blank" rel="noopener">Yardi ↗</a>
+        <a class="avail-link" href="${esc(d.sharepoint_url || '#')}" target="_blank" rel="noopener">SharePoint ↗</a>
+        <button class="avail-link avail-refresh" id="avail-refresh-btn" onclick="triggerAvailSync()">⟳ Refresh</button>
+      </div>
+    </div>
+
+    <div class="avail-summary">
+      <div class="avail-stat-card highlight">
+        <div class="avail-stat-label">WH Available</div>
+        <div class="avail-stat-val">${Number(wh.avail_sf || 0).toLocaleString()}</div>
+        <div class="avail-stat-sub">sf · ${wh.avail_units || 0} unit${wh.avail_units !== 1 ? 's' : ''}</div>
+      </div>
+      <div class="avail-stat-card">
+        <div class="avail-stat-label">Office Available</div>
+        <div class="avail-stat-val">${Number(off.avail_sf || 0).toLocaleString()}</div>
+        <div class="avail-stat-sub">sf · ${off.avail_units || 0} unit${off.avail_units !== 1 ? 's' : ''}</div>
+      </div>
+      <div class="avail-stat-card">
+        <div class="avail-stat-label">Docks Available</div>
+        <div class="avail-stat-val">${dk.avail_units || 0}</div>
+        <div class="avail-stat-sub">of ${dk.total_units || 0} total</div>
+      </div>
+      <div class="avail-stat-card">
+        <div class="avail-stat-label">Parking Available</div>
+        <div class="avail-stat-val">${prk.avail_units || 0}</div>
+        <div class="avail-stat-sub">of ${prk.total_units || 0} total</div>
+      </div>
+    </div>
+
+    <div class="avail-section">
+      <div class="avail-section-hd">Warehouse ${pct(wh.avail_pct)}</div>
+      ${whUnits.length
+        ? `<div class="avail-unit-list">${whUnits.map(unitCard).join('')}</div>`
+        : `<div class="avail-all-occupied">All warehouse units occupied</div>`}
+    </div>
+
+    <div class="avail-section">
+      <div class="avail-section-hd">Office ${pct(off.avail_pct)}</div>
+      ${offUnits.length
+        ? `<div class="avail-unit-list">${offUnits.map(unitCard).join('')}</div>`
+        : `<div class="avail-all-occupied">All office units occupied</div>`}
+    </div>`;
+}
+
+async function triggerAvailSync() {
+  const btn = document.getElementById('avail-refresh-btn');
+  if (btn) { btn.textContent = '⟳ Syncing…'; btn.classList.add('spinning'); }
+  try {
+    await fetch(AVAIL_WEBHOOK, { method: 'POST' });
+    // onSnapshot will update the UI automatically when Firestore changes
+  } catch(e) {
+    console.error('Sync trigger failed:', e);
+    if (btn) { btn.textContent = '⚠ Failed'; btn.classList.remove('spinning'); }
+    setTimeout(() => { if (btn) { btn.textContent = '⟳ Refresh'; btn.classList.remove('spinning'); } }, 2000);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1919,6 +2095,7 @@ window.saveModal       = saveModal;
 window.overlayClick    = overlayClick;
 window.pickType        = pickType;
 window.switchTab           = switchTab;
+window.triggerAvailSync    = triggerAvailSync;
 window.openNewLead         = openNewLead;
 window.openEditLeadDetails = openEditLeadDetails;
 window.openAddLeadEntry    = openAddLeadEntry;
