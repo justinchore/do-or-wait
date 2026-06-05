@@ -96,7 +96,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://ailinker.item.com/webhook-test/availability-sync",
+        "url": "https://ailinker.item.com/webhook/availability-sync",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={ \"propId\": \"{{ $('Prep PA patch').first().json.propId }}\" }",
