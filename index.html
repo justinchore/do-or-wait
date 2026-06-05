@@ -841,6 +841,9 @@
   <!-- Availability view -->
   <div id="avail-view" style="display:none">
     <div id="avail-content" style="max-width:1100px;margin:0 auto;padding:16px;"></div>
+    <div style="max-width:1100px;margin:0 auto;padding:0 16px 24px;">
+      <button class="add-topic-btn" onclick="openAddLocation()">＋ Add Location</button>
+    </div>
   </div>
 
 </div><!-- /#app (closed here instead of below) -->
@@ -884,6 +887,29 @@
   <div class="unit-popup-row" id="up-status"></div>
   <div class="unit-popup-row" id="up-sf"></div>
   <div class="unit-popup-row" id="up-tenant"></div>
+</div>
+
+<!-- Add Location modal -->
+<div class="overlay" id="addloc-overlay" onclick="if(event.target===this)closeAddLocation()">
+  <div class="modal">
+    <h3>Add Location</h3>
+    <div class="modal-sub" style="margin-bottom:14px">Paste the SharePoint weekly report URL — everything else is auto-resolved.</div>
+    <div class="field"><label>Property Name *</label><input id="al-name" type="text" placeholder="e.g. 4800 Fontana" autocomplete="off"/></div>
+    <div class="field"><label>Address</label><input id="al-address" type="text" placeholder="e.g. 4800 Fontana Ave, Fontana, CA" autocomplete="off"/></div>
+    <div class="field"><label>SharePoint File URL *</label><input id="al-sp" type="url" placeholder="Paste full URL from browser address bar"/></div>
+    <div class="field"><label>Yardi URL</label><input id="al-yardi" type="url" placeholder="Paste from CommercialCafe"/></div>
+    <div class="modal-section">Property Associate (optional)</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="field"><label>PA Name</label><input id="al-pa-name" type="text" placeholder="Huy Nguyen" autocomplete="off"/></div>
+      <div class="field"><label>PA Phone</label><input id="al-pa-phone" type="tel" placeholder="909-767-3596" autocomplete="off"/></div>
+    </div>
+    <div class="field"><label>PA Email</label><input id="al-pa-email" type="email" placeholder="huy@cubework.com" autocomplete="off"/></div>
+    <div id="addloc-status" style="font-size:13px;color:var(--text2);margin-top:8px;min-height:20px;"></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeAddLocation()">Cancel</button>
+      <button class="btn dark" id="addloc-submit" onclick="submitAddLocation()">Add Location</button>
+    </div>
+  </div>
 </div>
 
 <!-- PA modal -->
@@ -2361,6 +2387,67 @@ document.addEventListener('click', e => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+//  ADD LOCATION
+// ═══════════════════════════════════════════════════════════════
+function openAddLocation() {
+  ['al-name','al-address','al-sp','al-yardi','al-pa-name','al-pa-phone','al-pa-email']
+    .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  document.getElementById('addloc-status').textContent = '';
+  document.getElementById('addloc-submit').disabled = false;
+  document.getElementById('addloc-submit').textContent = 'Add Location';
+  document.getElementById('addloc-overlay').classList.add('open');
+  setTimeout(() => document.getElementById('al-name').focus(), 180);
+}
+
+function closeAddLocation() {
+  document.getElementById('addloc-overlay').classList.remove('open');
+}
+
+async function submitAddLocation() {
+  const name  = document.getElementById('al-name').value.trim();
+  const sp    = document.getElementById('al-sp').value.trim();
+  if (!name) { document.getElementById('al-name').focus(); return; }
+  if (!sp)   { document.getElementById('al-sp').focus();   return; }
+
+  const btn    = document.getElementById('addloc-submit');
+  const status = document.getElementById('addloc-status');
+  btn.disabled = true;
+  btn.textContent = 'Adding…';
+  status.textContent = 'Resolving SharePoint file…';
+  status.style.color = 'var(--text2)';
+
+  const payload = {
+    property:       name,
+    address:        document.getElementById('al-address').value.trim(),
+    sharepoint_url: sp,
+    yardi_url:      document.getElementById('al-yardi').value.trim(),
+    pa: {
+      name:  document.getElementById('al-pa-name').value.trim(),
+      phone: document.getElementById('al-pa-phone').value.trim(),
+      email: document.getElementById('al-pa-email').value.trim()
+    }
+  };
+
+  try {
+    const res  = await fetch(ADD_LOCATION_WEBHOOK, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || `Error ${res.status}`);
+    status.textContent = `✅ "${name}" added — syncing availability…`;
+    status.style.color = '#16a34a';
+    setTimeout(() => closeAddLocation(), 2000);
+  } catch(e) {
+    status.textContent = '⚠ ' + e.message;
+    status.style.color = '#dc2626';
+    btn.disabled = false;
+    btn.textContent = 'Add Location';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  PROPERTY ASSOCIATE
 // ═══════════════════════════════════════════════════════════════
 function openEditPA(propId, e) {
@@ -2435,6 +2522,9 @@ window.switchFP            = switchFP;
 window.showUnitPopup       = showUnitPopup;
 window.closeUnitPopup      = closeUnitPopup;
 window.toggleAvailCard     = toggleAvailCard;
+window.openAddLocation     = openAddLocation;
+window.closeAddLocation    = closeAddLocation;
+window.submitAddLocation   = submitAddLocation;
 window.openEditPA          = openEditPA;
 window.closePAModal        = closePAModal;
 window.savePA              = savePA;
