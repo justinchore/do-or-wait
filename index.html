@@ -533,6 +533,28 @@
     .avail-all-occupied { font-size:13px; color:var(--text2); font-style:italic; padding:10px 0; }
     .avail-loading { text-align:center; padding:60px 20px; color:var(--text2); font-size:14px; }
 
+    /* ── Location cards ──────────────────────── */
+    .loc-card { background:var(--surface); border-radius:var(--radius); box-shadow:var(--shadow); margin-bottom:12px; overflow:hidden; }
+    .loc-card-hd {
+      display:flex; align-items:flex-start; justify-content:space-between;
+      padding:14px 16px; cursor:pointer; gap:10px;
+    }
+    .loc-card-hd:hover { background:var(--bg); }
+    .loc-hd-left { flex:1; min-width:0; }
+    .loc-name { font-size:15px; font-weight:800; margin-bottom:3px; }
+    .loc-addr { font-size:12px; color:var(--text2); }
+    .loc-chips { display:flex; flex-wrap:wrap; gap:5px; margin-top:7px; }
+    .loc-chip { font-size:11px; font-weight:600; padding:2px 8px; border-radius:20px; }
+    .loc-chip.avail { background:#dcfce7; color:#15803d; }
+    .loc-chip.full  { background:#f3f4f6; color:var(--text2); }
+    .loc-meta { font-size:11px; color:var(--text2); margin-top:5px; opacity:.7; }
+    .loc-hd-right { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+    .loc-chevron { font-size:12px; color:var(--text2); transition:transform .2s; }
+    .loc-card.open .loc-chevron { transform:rotate(180deg); }
+    .loc-body { display:none; border-top:1px solid var(--border); padding:16px; }
+    .loc-card.open .loc-body { display:block; }
+    .loc-actions { display:flex; gap:7px; flex-wrap:wrap; margin-bottom:14px; }
+
     /* ── Floorplan ───────────────────────────── */
     .fp-section { margin-top:20px; }
     .fp-hd { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; flex-wrap:wrap; gap:8px; }
@@ -1983,28 +2005,28 @@ function switchTab(tab) {
 // ═══════════════════════════════════════════════════════════════
 //  AVAILABILITY
 // ═══════════════════════════════════════════════════════════════
-let availData = null;
-let unsubAvail = null;
+const availMap  = {};          // propId → data
+let unsubAvail   = null;
+const expandedAvailProps = new Set(['pellissier-2720']); // open by default
+const fpFloors   = {};          // propId → 'warehouse' | 'office'
 
 // n8n on-demand webhook URL — fill in after importing workflow 4
 const AVAIL_WEBHOOK = 'REPLACE_WITH_N8N_WEBHOOK_URL';
 
-// Start Firestore listener for availability
-unsubAvail = onSnapshot(doc(db, 'availability', 'pellissier-2720'), snap => {
-  if (snap.exists()) {
-    availData = snap.data();
-    renderAvailability();
-  } else {
-    availData = null;
-    renderAvailability();
-  }
+// Listen to ALL availability docs (scales to multiple locations)
+unsubAvail = onSnapshot(collection(db, 'availability'), snap => {
+  snap.forEach(d => { availMap[d.id] = d.data(); });
+  snap.docChanges().forEach(c => { if (c.type === 'removed') delete availMap[c.doc.id]; });
+  renderAvailability();
 });
 
 function renderAvailability() {
   const el = document.getElementById('avail-content');
   if (!el) return;
 
-  if (!availData) {
+  const props = Object.keys(availMap);
+
+  if (!props.length) {
     el.innerHTML = `
       <div class="avail-loading">
         <div style="font-size:2rem;margin-bottom:12px">🏭</div>
@@ -2015,23 +2037,63 @@ function renderAvailability() {
     return;
   }
 
-  const d = availData;
+  el.innerHTML = props.map(id => renderLocCard(id, availMap[id])).join('');
+  setTimeout(() => props.forEach(id => { if (expandedAvailProps.has(id)) renderFloorplans(id); }), 0);
+}
+
+function renderLocCard(propId, d) {
+  const isOpen    = expandedAvailProps.has(propId);
+  const wh        = d.wh     || {};
+  const off       = d.office || {};
+  const dk        = d.dock   || {};
+  const prk       = d.parking|| {};
+  const whAvail   = Number(wh.avail_sf  || 0);
+  const offAvail  = Number(off.avail_sf || 0);
+  const dkAvail   = Number(dk.avail_units  || 0);
+  const prkAvail  = Number(prk.avail_units || 0);
+
   const sheetDate = d.sheet_last_modified
     ? new Date(d.sheet_last_modified).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })
-    : '—';
-  const syncDate = d.synced_at
-    ? new Date(d.synced_at).toLocaleDateString('en-US', { month:'short', day:'numeric' }) + ' ' +
-      new Date(d.synced_at).toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' })
-    : '—';
+    : null;
+  const syncDate  = d.synced_at
+    ? new Date(d.synced_at).toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' }) + ' ' +
+      new Date(d.synced_at).toLocaleDateString('en-US', { month:'short', day:'numeric' })
+    : null;
 
+  const chips = [
+    whAvail  ? `<span class="loc-chip avail">WH ${whAvail.toLocaleString()} sf</span>` : `<span class="loc-chip full">WH full</span>`,
+    offAvail ? `<span class="loc-chip avail">Office ${offAvail.toLocaleString()} sf</span>` : `<span class="loc-chip full">Office full</span>`,
+    dkAvail  ? `<span class="loc-chip avail">${dkAvail} dock${dkAvail>1?'s':''}</span>` : '',
+    prkAvail ? `<span class="loc-chip avail">${prkAvail} parking</span>` : '',
+  ].filter(Boolean).join('');
+
+  const body = isOpen ? renderLocBody(propId, d) : '';
+
+  return `
+  <div class="loc-card${isOpen ? ' open' : ''}" id="loc-${propId}">
+    <div class="loc-card-hd" onclick="toggleAvailCard('${propId}')">
+      <div class="loc-hd-left">
+        <div class="loc-name">🏭 ${esc(d.property || propId)}</div>
+        ${d.address ? `<div class="loc-addr">${esc(d.address)}</div>` : ''}
+        <div class="loc-chips">${chips}</div>
+        ${sheetDate ? `<div class="loc-meta">Sheet: ${sheetDate}${syncDate ? ' · Synced: ' + syncDate : ''}</div>` : ''}
+      </div>
+      <div class="loc-hd-right">
+        <span class="loc-chevron">▼</span>
+      </div>
+    </div>
+    <div class="loc-body" id="loc-body-${propId}">${body}</div>
+  </div>`;
+}
+
+function renderLocBody(propId, d) {
   const wh  = d.wh     || {};
   const off = d.office || {};
   const dk  = d.dock   || {};
   const prk = d.parking|| {};
 
-  // Available units
-  const whUnits  = (d.units || []).filter(u => u.type === 'WH'     && u.available);
-  const offUnits = (d.units || []).filter(u => u.type === 'OFFICE' && u.available);
+  const whUnits  = (d.units||[]).filter(u => u.type === 'WH'     && u.available);
+  const offUnits = (d.units||[]).filter(u => u.type === 'OFFICE' && u.available);
 
   function unitCard(u) {
     const sf = u.sf ? Number(u.sf).toLocaleString() : '—';
@@ -2048,66 +2110,74 @@ function renderAvailability() {
     return `<span class="avail-section-pct ${n >= 30 ? 'high' : 'low'}">${n}% avail</span>`;
   }
 
-  el.innerHTML = `
-    <div class="avail-header">
-      <div>
-        <div class="avail-title">🏭 ${esc(d.property || '2720 Pellissier')}</div>
-        <div class="avail-meta">Sheet updated: <b>${sheetDate}</b> · Last synced: ${syncDate}</div>
-      </div>
-      <div class="avail-actions">
-        <a class="avail-link" href="${esc(d.yardi_url || '#')}" target="_blank" rel="noopener">Yardi ↗</a>
-        <a class="avail-link" href="${esc(d.sharepoint_url || '#')}" target="_blank" rel="noopener">SharePoint ↗</a>
-        <button class="avail-link avail-refresh" id="avail-refresh-btn" onclick="triggerAvailSync()">⟳ Refresh</button>
-      </div>
+  return `
+    <!-- Actions -->
+    <div class="loc-actions">
+      ${d.yardi_url     ? `<a class="avail-link" href="${esc(d.yardi_url)}" target="_blank" rel="noopener">Yardi ↗</a>` : ''}
+      ${d.sharepoint_url? `<a class="avail-link" href="${esc(d.sharepoint_url)}" target="_blank" rel="noopener">SharePoint ↗</a>` : ''}
+      <button class="avail-link avail-refresh" id="refresh-${propId}" onclick="triggerAvailSync('${propId}')">⟳ Refresh</button>
     </div>
 
+    <!-- Stats -->
     <div class="avail-summary">
       <div class="avail-stat-card highlight">
         <div class="avail-stat-label">WH Available</div>
-        <div class="avail-stat-val">${Number(wh.avail_sf || 0).toLocaleString()}</div>
-        <div class="avail-stat-sub">sf · ${wh.avail_units || 0} unit${wh.avail_units !== 1 ? 's' : ''}</div>
+        <div class="avail-stat-val">${Number(wh.avail_sf||0).toLocaleString()}</div>
+        <div class="avail-stat-sub">sf · ${wh.avail_units||0} unit${wh.avail_units!==1?'s':''}</div>
       </div>
       <div class="avail-stat-card">
-        <div class="avail-stat-label">Office Available</div>
-        <div class="avail-stat-val">${Number(off.avail_sf || 0).toLocaleString()}</div>
-        <div class="avail-stat-sub">sf · ${off.avail_units || 0} unit${off.avail_units !== 1 ? 's' : ''}</div>
+        <div class="avail-stat-label">Office</div>
+        <div class="avail-stat-val">${Number(off.avail_sf||0).toLocaleString()}</div>
+        <div class="avail-stat-sub">sf available</div>
       </div>
       <div class="avail-stat-card">
-        <div class="avail-stat-label">Docks Available</div>
-        <div class="avail-stat-val">${dk.avail_units || 0}</div>
-        <div class="avail-stat-sub">of ${dk.total_units || 0} total</div>
+        <div class="avail-stat-label">Docks</div>
+        <div class="avail-stat-val">${dk.avail_units||0}</div>
+        <div class="avail-stat-sub">of ${dk.total_units||0}</div>
       </div>
       <div class="avail-stat-card">
-        <div class="avail-stat-label">Parking Available</div>
-        <div class="avail-stat-val">${prk.avail_units || 0}</div>
-        <div class="avail-stat-sub">of ${prk.total_units || 0} total</div>
+        <div class="avail-stat-label">Parking</div>
+        <div class="avail-stat-val">${prk.avail_units||0}</div>
+        <div class="avail-stat-sub">of ${prk.total_units||0}</div>
       </div>
     </div>
 
+    <!-- Available units -->
     <div class="avail-section">
       <div class="avail-section-hd">Warehouse ${pct(wh.avail_pct)}</div>
-      ${whUnits.length
-        ? `<div class="avail-unit-list">${whUnits.map(unitCard).join('')}</div>`
-        : `<div class="avail-all-occupied">All warehouse units occupied</div>`}
+      ${whUnits.length ? `<div class="avail-unit-list">${whUnits.map(unitCard).join('')}</div>` : `<div class="avail-all-occupied">All warehouse units occupied</div>`}
     </div>
-
     <div class="avail-section">
       <div class="avail-section-hd">Office ${pct(off.avail_pct)}</div>
-      ${offUnits.length
-        ? `<div class="avail-unit-list">${offUnits.map(unitCard).join('')}</div>`
-        : `<div class="avail-all-occupied">All office units occupied</div>`}
-    </div>`;
+      ${offUnits.length ? `<div class="avail-unit-list">${offUnits.map(unitCard).join('')}</div>` : `<div class="avail-all-occupied">All office units occupied</div>`}
+    </div>
 
-  // Render floorplan after content is in DOM
-  setTimeout(() => renderFloorplans(), 0);
+    <!-- Floorplan injected here -->
+    <div id="fp-section-${propId}"></div>`;
 }
 
-async function triggerAvailSync() {
-  const btn = document.getElementById('avail-refresh-btn');
+function toggleAvailCard(propId) {
+  if (expandedAvailProps.has(propId)) {
+    expandedAvailProps.delete(propId);
+    const card = document.getElementById(`loc-${propId}`);
+    const body = document.getElementById(`loc-body-${propId}`);
+    if (card) card.classList.remove('open');
+    if (body) body.innerHTML = '';
+  } else {
+    expandedAvailProps.add(propId);
+    const card = document.getElementById(`loc-${propId}`);
+    const body = document.getElementById(`loc-body-${propId}`);
+    if (card) card.classList.add('open');
+    if (body) body.innerHTML = renderLocBody(propId, availMap[propId] || {});
+    setTimeout(() => renderFloorplans(propId), 0);
+  }
+}
+
+async function triggerAvailSync(propId) {
+  const btn = document.getElementById(propId ? `refresh-${propId}` : 'avail-refresh-btn');
   if (btn) { btn.textContent = '⟳ Syncing…'; btn.classList.add('spinning'); }
   try {
     await fetch(AVAIL_WEBHOOK, { method: 'POST' });
-    // onSnapshot will update the UI automatically when Firestore changes
   } catch(e) {
     console.error('Sync trigger failed:', e);
     if (btn) { btn.textContent = '⚠ Failed'; btn.classList.remove('spinning'); }
@@ -2118,37 +2188,37 @@ async function triggerAvailSync() {
 // ═══════════════════════════════════════════════════════════════
 //  FLOORPLAN
 // ═══════════════════════════════════════════════════════════════
-let fpFloor = 'warehouse'; // 'warehouse' | 'office'
+// fpFloors is already declared above as {}
 
-function fpUnits() { return availData?.units || []; }
+function fpUnitsFor(propId) { return availMap[propId]?.units || []; }
 
-function fpFill(id) {
-  const u = fpUnits().find(x => x.unit === id);
+function fpFill(id, units) {
+  const u = units.find(x => x.unit === id);
   if (!u) return '#f3f4f6';
   return u.available ? '#dcfce7' : '#ffedd5';
 }
-function fpStroke(id) {
-  const u = fpUnits().find(x => x.unit === id);
+function fpStroke(id, units) {
+  const u = units.find(x => x.unit === id);
   if (!u) return '#d1d5db';
   return u.available ? '#16a34a' : '#f97316';
 }
-function fpTextColor(id) {
-  const u = fpUnits().find(x => x.unit === id);
+function fpTextColor(id, units) {
+  const u = units.find(x => x.unit === id);
   if (!u) return '#6b7280';
   return u.available ? '#166534' : '#9a3412';
 }
 
 // Generate one unit rectangle + label
-function fpRect(id, x, y, w, h) {
-  const fill   = fpFill(id);
-  const stroke = fpStroke(id);
-  const tc     = fpTextColor(id);
+function fpRect(id, x, y, w, h, units, propId) {
+  const fill   = fpFill(id, units);
+  const stroke = fpStroke(id, units);
+  const tc     = fpTextColor(id, units);
   const cx = x + w/2, cy = y + h/2;
   const fs = Math.min(13, Math.max(8, w / 5));
-  const u  = fpUnits().find(x => x.unit === id);
+  const u  = units.find(x => x.unit === id);
   const sf = u?.sf ? `${Number(u.sf).toLocaleString()}` : '';
   const showSf = sf && h > 38 && w > 55;
-  return `<g onclick="showUnitPopup('${id}')" style="cursor:pointer">
+  return `<g onclick="showUnitPopup('${propId||''}','${id}')" style="cursor:pointer">
     <rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${fill}" stroke="${stroke}" stroke-width="1.5" rx="3"/>
     <text x="${cx}" y="${cy + (showSf ? -6 : 4)}" text-anchor="middle" dominant-baseline="middle"
           font-family="Inter,system-ui,sans-serif" font-size="${fs}" font-weight="700" fill="${tc}">${id}</text>
@@ -2165,124 +2235,68 @@ function fpLabel(txt, x, y, w, h, bg='#f9fafb', tc='#9ca3af') {
           font-family="Inter,system-ui,sans-serif" font-size="9" font-weight="600" fill="${tc}" letter-spacing=".5">${txt}</text>`;
 }
 
-function warehouseSVG() {
+function warehouseSVG(units, propId) {
+  const r = (id,x,y,w,h) => fpRect(id,x,y,w,h,units,propId);
   return `<svg viewBox="0 0 790 510" xmlns="http://www.w3.org/2000/svg">
-    <!-- ── D units row ── -->
-    ${fpRect('D05', 10, 10, 105, 82)}
-    ${fpRect('D03', 123, 10, 115, 82)}
-    ${fpRect('D04', 246, 10, 113, 82)}
-    ${fpRect('D02', 367, 10, 200, 82)}
-    ${fpRect('D01', 575, 10, 135, 82)}
-
-    <!-- hallway -->
+    ${r('D05',10,10,105,82)} ${r('D03',123,10,115,82)} ${r('D04',246,10,113,82)}
+    ${r('D02',367,10,200,82)} ${r('D01',575,10,135,82)}
     <rect x="10" y="100" width="700" height="14" fill="#e5e7eb" rx="2"/>
-    <text x="355" y="110" text-anchor="middle" dominant-baseline="middle"
-          font-family="Inter,system-ui,sans-serif" font-size="8" fill="#9ca3af" letter-spacing="1">HALLWAY</text>
-
-    <!-- ── B01 ── -->
-    ${fpRect('B01', 10, 122, 468, 378)}
-
-    <!-- ── C column ── -->
-    ${fpRect('C05', 486, 122, 132, 76)}
-    ${fpRect('C04', 486, 198, 132, 76)}
-    ${fpRect('C03', 486, 274, 132, 76)}
-    ${fpRect('C02', 486, 350, 132, 76)}
-    ${fpRect('C01', 486, 426, 132, 74)}
-
-    <!-- ── A column ── -->
-    ${fpRect('A02', 626, 122, 154, 95)}
-    ${fpRect('A01', 626, 225, 154, 275)}
-
-    <!-- exit marker -->
+    <text x="355" y="110" text-anchor="middle" dominant-baseline="middle" font-family="Inter,system-ui,sans-serif" font-size="8" fill="#9ca3af" letter-spacing="1">HALLWAY</text>
+    ${r('B01',10,122,468,378)}
+    ${r('C05',486,122,132,76)} ${r('C04',486,198,132,76)} ${r('C03',486,274,132,76)}
+    ${r('C02',486,350,132,76)} ${r('C01',486,426,132,74)}
+    ${r('A02',626,122,154,95)} ${r('A01',626,225,154,275)}
     <text x="770" y="55" text-anchor="end" font-family="Inter,system-ui,sans-serif" font-size="8" fill="#9ca3af">EXIT ↑</text>
   </svg>`;
 }
 
-function officeSVG() {
+function officeSVG(units, propId) {
+  const r = (id,x,y,w,h) => fpRect(id,x,y,w,h,units,propId);
   return `<svg viewBox="0 0 700 520" xmlns="http://www.w3.org/2000/svg">
-    <!-- ── Left column ── -->
-    ${fpRect('R05', 10, 10, 130, 115)}
-    ${fpRect('R06', 10, 133, 130, 195)}
-    ${fpRect('R07', 10, 336, 130, 125)}
-
-    <!-- ── Lobby ── -->
-    ${fpLabel('LOBBY', 148, 10, 290, 300, '#f0fdf4', '#4ade80')}
-
-    <!-- ── Bottom-center (non-units) ── -->
-    ${fpLabel('BREAKROOM', 148, 318, 148, 82)}
-    ${fpLabel('MEN', 304, 318, 80, 82)}
-    ${fpLabel('WOMEN', 392, 318, 54, 82)}
-
-    <!-- ── Right column top ── -->
-    ${fpRect('R04', 454, 10, 118, 82)}
-    ${fpRect('R03', 454, 100, 118, 130)}
-
-    <!-- ── Right column middle ── -->
-    ${fpRect('R02', 454, 238, 118, 155)}
-
-    <!-- ── Server Room ── -->
-    ${fpLabel('SERVER\nROOM', 454, 401, 118, 60)}
-
-    <!-- ── Bottom row ── -->
-    ${fpRect('R08', 148, 408, 175, 102)}
-    ${fpRect('R09', 331, 408, 175, 102)}
-    ${fpRect('R01', 580, 408, 108, 102)}
-
-    <!-- entrance -->
+    ${r('R05',10,10,130,115)} ${r('R06',10,133,130,195)} ${r('R07',10,336,130,125)}
+    ${fpLabel('LOBBY',148,10,290,300,'#f0fdf4','#4ade80')}
+    ${fpLabel('BREAKROOM',148,318,148,82)} ${fpLabel('MEN',304,318,80,82)} ${fpLabel('WOMEN',392,318,54,82)}
+    ${r('R04',454,10,118,82)} ${r('R03',454,100,118,130)} ${r('R02',454,238,118,155)}
+    ${fpLabel('SERVER',454,401,118,60)}
+    ${r('R08',148,408,175,102)} ${r('R09',331,408,175,102)} ${r('R01',580,408,108,102)}
     <text x="295" y="515" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="8" fill="#9ca3af">FRONT ENTRANCE</text>
   </svg>`;
 }
 
-function renderFloorplans() {
-  const el = document.getElementById('avail-content');
+function renderFloorplans(propId) {
+  const el = document.getElementById(`fp-section-${propId}`);
   if (!el) return;
-
-  const fpDiv = document.getElementById('fp-section');
-  const svg   = fpFloor === 'warehouse' ? warehouseSVG() : officeSVG();
-
-  const legendHtml = `
-    <div class="fp-legend">
-      <div class="fp-legend-item"><div class="fp-legend-dot" style="background:#dcfce7;border:1.5px solid #16a34a"></div>Available</div>
-      <div class="fp-legend-item"><div class="fp-legend-dot" style="background:#ffedd5;border:1.5px solid #f97316"></div>Occupied</div>
-      <div class="fp-legend-item"><div class="fp-legend-dot" style="background:#f3f4f6;border:1.5px solid #d1d5db"></div>No data</div>
-    </div>`;
-
-  if (fpDiv) {
-    fpDiv.innerHTML = `
-      <div class="fp-hd">
-        <div class="fp-title">Floor Plan</div>
-        <div class="fp-tabs">
-          <button class="fp-tab${fpFloor==='warehouse'?' active':''}" onclick="switchFP('warehouse')">Warehouse</button>
-          <button class="fp-tab${fpFloor==='office'?' active':''}"    onclick="switchFP('office')">Office</button>
-        </div>
+  const units  = fpUnitsFor(propId);
+  const floor  = fpFloors[propId] || 'warehouse';
+  // Only show floor plan for known properties — add more here as needed
+  const hasFP  = propId === 'pellissier-2720';
+  if (!hasFP) return;
+  const svg    = floor === 'warehouse' ? warehouseSVG(units, propId) : officeSVG(units, propId);
+  const legend = `<div class="fp-legend">
+    <div class="fp-legend-item"><div class="fp-legend-dot" style="background:#dcfce7;border:1.5px solid #16a34a"></div>Available</div>
+    <div class="fp-legend-item"><div class="fp-legend-dot" style="background:#ffedd5;border:1.5px solid #f97316"></div>Occupied</div>
+    <div class="fp-legend-item"><div class="fp-legend-dot" style="background:#f3f4f6;border:1.5px solid #d1d5db"></div>No data</div>
+  </div>`;
+  el.innerHTML = `<div class="fp-section">
+    <div class="fp-hd">
+      <div class="fp-title">Floor Plan</div>
+      <div class="fp-tabs">
+        <button class="fp-tab${floor==='warehouse'?' active':''}" onclick="switchFP('${propId}','warehouse')">Warehouse</button>
+        <button class="fp-tab${floor==='office'?' active':''}"    onclick="switchFP('${propId}','office')">Office</button>
       </div>
-      ${legendHtml}
-      <div class="fp-svg-wrap">${svg}</div>`;
-  } else {
-    const section = document.createElement('div');
-    section.className = 'fp-section';
-    section.id = 'fp-section';
-    section.innerHTML = `
-      <div class="fp-hd">
-        <div class="fp-title">Floor Plan</div>
-        <div class="fp-tabs">
-          <button class="fp-tab active" onclick="switchFP('warehouse')">Warehouse</button>
-          <button class="fp-tab"        onclick="switchFP('office')">Office</button>
-        </div>
-      </div>
-      ${legendHtml}
-      <div class="fp-svg-wrap">${svg}</div>`;
-    el.appendChild(section);
-  }
+    </div>
+    ${legend}
+    <div class="fp-svg-wrap">${svg}</div>
+  </div>`;
 }
 
-function switchFP(floor) {
-  fpFloor = floor;
-  renderFloorplans();
+function switchFP(propId, floor) {
+  fpFloors[propId] = floor;
+  renderFloorplans(propId);
 }
 
-function showUnitPopup(id) {
-  const u = fpUnits().find(x => x.unit === id);
+function showUnitPopup(propId, id) {
+  const u = fpUnitsFor(propId).find(x => x.unit === id);
   const status   = u ? (u.available ? '✅ Available' : '🔶 Occupied') : '⬜ Unknown';
   const sf       = u?.sf ? `${Number(u.sf).toLocaleString()} sf` : '';
   const tenant   = u?.tenant || (u?.available ? 'HOLD' : '');
@@ -2327,6 +2341,7 @@ window.triggerAvailSync    = triggerAvailSync;
 window.switchFP            = switchFP;
 window.showUnitPopup       = showUnitPopup;
 window.closeUnitPopup      = closeUnitPopup;
+window.toggleAvailCard     = toggleAvailCard;
 window.openNewLead         = openNewLead;
 window.openEditLeadDetails = openEditLeadDetails;
 window.openAddLeadEntry    = openAddLeadEntry;
