@@ -893,10 +893,18 @@
 <div class="overlay" id="addloc-overlay" onclick="if(event.target===this)closeAddLocation()">
   <div class="modal">
     <h3>Add Location</h3>
-    <div class="modal-sub" style="margin-bottom:14px">Paste the SharePoint weekly report URL — everything else is auto-resolved.</div>
+    <div class="modal-sub" style="margin-bottom:8px">Paste the SharePoint weekly report URL — everything else is auto-resolved.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);width:100%;margin-bottom:2px;">Quick fill</div>
+      <button class="loc-ql" onclick="autofillLocation('banana-fontana',event)">11179 Banana Fontana</button>
+    </div>
     <div class="field"><label>Property Name *</label><input id="al-name" type="text" placeholder="e.g. 4800 Fontana" autocomplete="off"/></div>
     <div class="field"><label>Address</label><input id="al-address" type="text" placeholder="e.g. 4800 Fontana Ave, Fontana, CA" autocomplete="off"/></div>
-    <div class="field"><label>SharePoint File URL *</label><input id="al-sp" type="url" placeholder="Paste full URL from browser address bar"/></div>
+    <div class="field">
+      <label>SharePoint File URL *</label>
+      <input id="al-sp" type="url" placeholder="https://cubework365.sharepoint.com/sites/.../Weekly Report/filename.xlsx"/>
+      <div style="font-size:11px;color:var(--text2);margin-top:4px;">⚠ Paste the file path URL, not the "open in browser" link. In SharePoint, navigate to the file in the document library and copy the URL from the address bar — it should end in <b>.xlsx</b></div>
+    </div>
     <div class="field"><label>Yardi URL</label><input id="al-yardi" type="url" placeholder="Paste from CommercialCafe"/></div>
     <div class="modal-section">Property Associate (optional)</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
@@ -2239,16 +2247,20 @@ function toggleAvailCard(propId) {
 async function triggerAvailSync(propId) {
   const btn = document.getElementById(`refresh-${propId}`);
   if (btn) { btn.textContent = '⟳ Syncing…'; btn.classList.add('spinning'); }
+  const resetBtn = () => { if (btn) { btn.textContent = '⟳'; btn.classList.remove('spinning'); } };
+  const timeout  = setTimeout(resetBtn, 30000); // always reset after 30s
   try {
     await fetch(AVAIL_WEBHOOK, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ propId })
     });
+    // Card re-renders via onSnapshot when n8n writes back — that also resets the button
   } catch(e) {
+    clearTimeout(timeout);
     console.error('Sync trigger failed:', e);
     if (btn) { btn.textContent = '⚠'; btn.classList.remove('spinning'); }
-    setTimeout(() => { if (btn) { btn.textContent = '⟳'; } }, 3000);
+    setTimeout(resetBtn, 3000);
   }
 }
 
@@ -2389,6 +2401,31 @@ document.addEventListener('click', e => {
 // ═══════════════════════════════════════════════════════════════
 //  ADD LOCATION
 // ═══════════════════════════════════════════════════════════════
+const LOCATION_PRESETS = {
+  'banana-fontana': {
+    property:       '11179 Banana Fontana',
+    address:        '11179 Banana Ave, Fontana, CA 92337',
+    sharepoint_url: 'https://cubework365.sharepoint.com/:x:/r/sites/Cubework_PropertyManagement/_layouts/15/Doc.aspx?sourcedoc=%7B0B3499A2-FE5B-4ECC-8417-1346DADB2C76%7D&file=Banana%2C%20Fontana%20PA%20Weekly%20Report.xlsx&action=default&mobileredirect=true',
+    yardi_url:      'https://apps.commercialcafe.com/dealmanager/content/#/app/property/9F88670B-D43B-49C6-972A-C4BFE38A337D/stackingplan',
+    pa_name:        'Keith Arline',
+    pa_phone:       '',
+    pa_email:       'keith.arline@cubework.com'
+  }
+};
+
+function autofillLocation(key, e) {
+  e.stopPropagation();
+  const p = LOCATION_PRESETS[key];
+  if (!p) return;
+  document.getElementById('al-name').value    = p.property;
+  document.getElementById('al-address').value = p.address;
+  document.getElementById('al-sp').value      = p.sharepoint_url;
+  document.getElementById('al-yardi').value   = p.yardi_url;
+  document.getElementById('al-pa-name').value  = p.pa_name;
+  document.getElementById('al-pa-phone').value = p.pa_phone;
+  document.getElementById('al-pa-email').value = p.pa_email;
+}
+
 function openAddLocation() {
   ['al-name','al-address','al-sp','al-yardi','al-pa-name','al-pa-phone','al-pa-email']
     .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
@@ -2523,6 +2560,7 @@ window.showUnitPopup       = showUnitPopup;
 window.closeUnitPopup      = closeUnitPopup;
 window.toggleAvailCard     = toggleAvailCard;
 window.openAddLocation     = openAddLocation;
+window.autofillLocation    = autofillLocation;
 window.closeAddLocation    = closeAddLocation;
 window.submitAddLocation   = submitAddLocation;
 window.openEditPA          = openEditPA;

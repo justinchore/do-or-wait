@@ -5,7 +5,7 @@
       "parameters": {
         "httpMethod": "POST",
         "path": "add-location",
-        "options": { "responseMode": "responseNode" }
+        "options": {}
       },
       "id": "al-001", "name": "Webhook",
       "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [200, 300],
