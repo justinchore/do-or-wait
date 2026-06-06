@@ -2174,12 +2174,13 @@ function renderLocBody(propId, d) {
   const offUnits = (d.units||[]).filter(u => u.type === 'OFFICE' && u.available);
 
   function unitCard(u) {
-    const sf = u.sf ? Number(u.sf).toLocaleString() : '—';
+    const sf   = u.sf ? Number(u.sf).toLocaleString() : '—';
+    const hold = u.status && u.status.toLowerCase().includes('hold');
     return `<div class="avail-unit">
       <div class="avail-unit-id">${esc(u.unit)}</div>
       <div class="avail-unit-sf">${sf} sf <span>· ${u.type}</span></div>
       ${u.tenant && u.tenant !== 'HOLD' ? `<div class="avail-unit-tenant">${esc(u.tenant)}</div>` : ''}
-      <div class="avail-unit-note">HOLD</div>
+      ${hold ? '<div class="avail-unit-note">HOLD</div>' : ''}
     </div>`;
   }
 
