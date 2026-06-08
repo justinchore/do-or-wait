@@ -74,11 +74,11 @@ After `Save config`, wire: `Save config → Save PA to availability → Get prop
 This makes adding a location also immediately sync its availability data.
 
 ### 2. Parse + build patch — ✅ DONE (rewritten 2026-06-08)
-The sync reads the **`BOT - NEW ACTIVE LICENSEE`** tab, which is consistent across all locations (the "Pick data sheet" node already prioritizes it). The parser was rewritten to handle the real variations found in the live CA sheets:
+The sync reads the licensee tab. **Tab names vary** ("BOT - NEW ACTIVE LICENSEE" at Pellissier, "BOT - Active Licensee Lists" at Reyes, etc.), so "Pick data sheet" matches by PATTERN — first worksheet whose name contains "LICENSEE", then "ALL UNITS", then starts-with "BOT", else sheet[0]. (Exact-name matching was the bug that left Reyes with zero units — it fell back to the wrong sheet.) The parser was rewritten to handle the real variations found in the live CA sheets:
 
 - **Type normalization** — buckets units whether the sheet uses codes (`WH`/`OFFICE`/`DOCK`/`TRAILER`, e.g. Pellissier) or words (`Warehouse`/`Office`/`Dedicated`/`Shared`/`Trailer/Truck`/`Small Vehicle`, e.g. Reyes/Walnut). The OLD code only matched `WH`, so spelled-out sheets summed to **zero** units per category — that was the core bug.
 - **Broad unit pattern** `/^[A-Z]{1,5}\d{1,4}(?:[A-Z]|-[A-Z0-9]{1,3})?$/i` — matches `A1`, `A01`, `A12B`, `A31-A`, `B01-A`, `C01-A`, `R101`, `DOCK01`, `DOCK 14`, `DD01`, `P01`.
-- `available = (status === 'vacant')`; adds a `hold` boolean (status or tenant cell contains "hold").
+- **A unit on hold counts as available**: `isHold = status/tenant contains "hold"`; `available = (status === 'vacant') || isHold`. Hold is kept as a separate boolean only for display (the Hold pill + notes), but holds are bucketed as available everywhere (summaries + filters).
 
 Full node code: **`n8n/parse_build_patch.node.js`** (paste into the node's JS Code field). Tested against real Pellissier / Reyes / Walnut rows — every category returns correct non-zero counts and all edge-case unit IDs are captured. The reference copy `4_availability_sync.json` (node `av-009`) is already updated to match.
 
@@ -118,7 +118,7 @@ All CA PA Weekly Report workbooks share a consistent **`BOT - NEW ACTIVE LICENSE
 ## App structure (index.html key functions)
 - `renderAvailability()` — loops `availMap`, calls `renderLocCard()` per property
 - `renderLocCard(propId, d)` — collapsible card. Collapsed shows: availability chips, PA name+phone, Yardi/SP links, ⟳ refresh
-- `renderLocBody(propId, d)` — expanded: stats grid, filter chips (Available/Hold/Occupied/All, default Available via `availFilter[propId]`), per-section unit row lists (WH/Office/Dock; Parking is count-only in the stats grid), floor plan. Rows are compact; clicking a row expands tenant/owner/phone/email/poc/notes.
+- `renderLocBody(propId, d)` — expanded: stats grid, filter chips (Available/Occupied/All, default Available via `availFilter[propId]`; no Hold filter — holds are available), per-section unit row lists (WH/Office/Dock; Parking is count-only in the stats grid), floor plan. Rows are compact; clicking a row expands tenant/owner/phone/email/poc/notes. `isAvail(u) = u.available || u.hold`.
 - `setAvailFilter(propId, f, ev)` — sets the unit filter and re-renders the body
 - `toggleUnitDetail(key, ev)` — expands/collapses a unit's detail panel
 - `renderFloorplans(propId)` — SVG floorplan. Currently only `pellissier-2720` has one. Banana Fontana needs one built.

@@ -46,8 +46,8 @@ for (const row of rows) {
   const sf = Number(String(c2).replace(/[^0-9]/g, '')) || 0;
   const type = normType(c1, unitId);
   const statusNorm = c3.toLowerCase();
-  const available = statusNorm === 'vacant';
   const isHold = /hold/.test(statusNorm) || /hold/.test(c4.toLowerCase());
+  const available = statusNorm === 'vacant' || isHold;   // a unit on hold still counts as available
   const tenant = (statusNorm === 'occupied' && c4) ? c4 : null;
   units.push({
     unit: unitId, type, sf, status: c3, tenant,

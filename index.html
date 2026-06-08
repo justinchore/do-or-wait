@@ -2341,11 +2341,11 @@ function renderLocBody(propId, d) {
     occupied:  ['#f3f4f6', '#4b5563', 'Occupied'],
     hold:      ['#ffedd5', '#9a3412', 'Hold']
   };
-  const statusOf = u => u.hold ? 'hold' : (u.available ? 'available' : 'occupied');
+  const isAvail = u => (u.available || u.hold); // a unit on hold still counts as available
+  const statusOf = u => u.hold ? 'hold' : (isAvail(u) ? 'available' : 'occupied');
   const passes = u => filter === 'all' ? true
-                    : filter === 'available' ? u.available
-                    : filter === 'hold' ? u.hold
-                    : (!u.available && !u.hold); // occupied
+                    : filter === 'available' ? isAvail(u)
+                    : !isAvail(u); // occupied
 
   let n = 0;
   function row(u) {
@@ -2413,7 +2413,7 @@ function renderLocBody(propId, d) {
     </div>
 
     <div style="display:flex;gap:6px;margin:0 0 12px;">
-      ${chip('available','Available')}${chip('hold','Hold')}${chip('occupied','Occupied')}${chip('all','All')}
+      ${chip('available','Available')}${chip('occupied','Occupied')}${chip('all','All')}
     </div>
 
     ${section('Warehouse','WH',wh.avail_pct)}
@@ -2520,12 +2520,12 @@ function fpUnitsFor(propId) { return availMap[propId]?.units || []; }
 function fpFill(id, units) {
   const u = units.find(x => x.unit === id);
   if (!u) return '#f3f4f6';
-  return u.available ? '#dcfce7' : '#ffedd5';
+  return (u.available || u.hold) ? '#dcfce7' : '#ffedd5';
 }
 function fpStroke(id, units) {
   const u = units.find(x => x.unit === id);
   if (!u) return '#d1d5db';
-  return u.available ? '#16a34a' : '#f97316';
+  return (u.available || u.hold) ? '#16a34a' : '#f97316';
 }
 function fpTextColor(id, units) {
   const u = units.find(x => x.unit === id);
