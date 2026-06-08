@@ -1072,7 +1072,7 @@
 // ═══════════════════════════════════════════════════════════════
 import { initializeApp }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getFirestore, collection, doc, setDoc, onSnapshot }
+import { getFirestore, collection, doc, getDoc, setDoc, deleteDoc, onSnapshot }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js';
@@ -2421,7 +2421,11 @@ function renderLocBody(propId, d) {
     ${section('Dock','DOCK',dk.avail_pct)}
 
     <!-- Floorplan injected here -->
-    <div id="fp-section-${propId}"></div>`;
+    <div id="fp-section-${propId}"></div>
+
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);text-align:right;">
+      <button onclick="removeLocation('${propId}',event)" style="font-size:12px;color:#b91c1c;background:transparent;border:1px solid #fecaca;border-radius:8px;padding:5px 11px;cursor:pointer;">Remove location</button>
+    </div>`;
 }
 
 function setAvailFilter(propId, f, ev) {
@@ -2442,6 +2446,31 @@ function toggleUnitDetail(key, ev) {
   const open = el.style.display === 'block';
   el.style.display = open ? 'none' : 'block';
   if (ch) ch.style.transform = open ? '' : 'rotate(180deg)';
+}
+
+async function removeLocation(propId, ev) {
+  if (ev) ev.stopPropagation();
+  const name = (availMap[propId] && availMap[propId].property) || propId;
+  if (!confirm(`Remove "${name}" from the dashboard?\n\nThis deletes its availability data and removes it from the location config. The SharePoint sheet is not touched.`)) return;
+  setSyncing(true);
+  try {
+    // 1. remove the entry from config/properties (single doc with a properties[] array)
+    const cfgRef = doc(db, 'config', 'properties');
+    const snap = await getDoc(cfgRef);
+    if (snap.exists()) {
+      const arr = (snap.data().properties || []).filter(p => p.id !== propId);
+      await setDoc(cfgRef, { properties: arr }, { merge: true });
+    }
+    // 2. delete the availability doc — the card disappears via onSnapshot
+    await deleteDoc(doc(db, 'availability', propId));
+    expandedAvailProps.delete(propId);
+    delete availFilter[propId];
+  } catch (e) {
+    console.error('Remove location failed:', e);
+    alert('Remove failed: ' + e.message);
+  } finally {
+    setSyncing(false);
+  }
 }
 
 function toggleAvailCard(propId) {
@@ -2857,6 +2886,7 @@ window.closeUnitPopup      = closeUnitPopup;
 window.toggleAvailCard     = toggleAvailCard;
 window.setAvailFilter      = setAvailFilter;
 window.toggleUnitDetail    = toggleUnitDetail;
+window.removeLocation      = removeLocation;
 window.openAddLocation     = openAddLocation;
 window.autofillLocation    = autofillLocation;
 window.closeAddLocation    = closeAddLocation;
