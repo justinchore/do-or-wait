@@ -903,6 +903,12 @@
     <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;">
       <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);width:100%;margin-bottom:2px;">Quick fill</div>
       <button class="loc-ql" onclick="autofillLocation('banana-fontana',event)">11179 Banana Fontana</button>
+      <button class="loc-ql" onclick="autofillLocation('reyes-compton',event)">Reyes Compton</button>
+      <button class="loc-ql" onclick="autofillLocation('terminal-west-sac',event)">Terminal West Sac</button>
+      <button class="loc-ql" onclick="autofillLocation('fresno-g-street',event)">Fresno G Street</button>
+      <button class="loc-ql" onclick="autofillLocation('machlin-walnut',event)">Walnut</button>
+      <button class="loc-ql" onclick="autofillLocation('airport-ontario',event)">Airport Ontario</button>
+      <button class="loc-ql" onclick="autofillLocation('la-mirada',event)">La Mirada</button>
     </div>
     <div class="field"><label>Property Name *</label><input id="al-name" type="text" placeholder="e.g. 4800 Fontana" autocomplete="off"/></div>
     <div class="field"><label>Address</label><input id="al-address" type="text" placeholder="e.g. 4800 Fontana Ave, Fontana, CA" autocomplete="off"/></div>
@@ -2570,6 +2576,72 @@ const LOCATION_PRESETS = {
     pa_name:            'Keith Arline',
     pa_phone:           '',
     pa_email:           'keith.arline@cubework.com'
+  },
+  'reyes-compton': {
+    property:       'Reyes Compton',
+    address:        '19201 S. Reyes Ave, Rancho Dominguez, CA 90221',
+    sharepoint_url:     'https://cubework365.sharepoint.com/:x:/r/sites/Cubework_PropertyManagement/_layouts/15/Doc.aspx?sourcedoc=%7B5729C745-9A44-48C6-893A-E687AA808111%7D&file=Reyes%20Compton%2C%20CA.xlsx&action=default&mobileredirect=true',
+    yardi_url:          '',
+    available_statuses: 'Vacant,',
+    hold_statuses:      'HOLD,Hold',
+    pa_name:            '',
+    pa_phone:           '',
+    pa_email:           ''
+  },
+  'terminal-west-sac': {
+    property:       '1630 Terminal West Sacramento',
+    address:        '1630 Terminal Street, West Sacramento, CA 95691',
+    sharepoint_url:     'https://cubework365.sharepoint.com/:x:/r/sites/Cubework_PropertyManagement/_layouts/15/Doc.aspx?sourcedoc=%7B00014AA8-0BDF-458C-844B-89399D957BAE%7D&file=1630%20Terminal%20Street%20West%20Sacramento.xlsx&action=default&mobileredirect=true',
+    yardi_url:          '',
+    available_statuses: 'Vacant,',
+    hold_statuses:      'HOLD,Hold',
+    pa_name:            'Ramon Ontiveros',
+    pa_phone:           '',
+    pa_email:           ''
+  },
+  'fresno-g-street': {
+    property:       '1931 G Street Fresno',
+    address:        '1931 G Street, Fresno, CA 93706',
+    sharepoint_url:     'https://cubework365.sharepoint.com/:x:/r/sites/Cubework_PropertyManagement/_layouts/15/Doc.aspx?sourcedoc=%7BD134A7DA-E177-4422-80A2-00049927C77B%7D&file=Fresno%20CA.xlsx&action=default&mobileredirect=true',
+    yardi_url:          '',
+    available_statuses: 'Vacant,',
+    hold_statuses:      'HOLD,Hold',
+    pa_name:            'Destiny Valencuela',
+    pa_phone:           '',
+    pa_email:           ''
+  },
+  'machlin-walnut': {
+    property:       '218 Machlin Walnut',
+    address:        '218 Machlin Ct, Walnut, CA 91789',
+    sharepoint_url:     'https://cubework365.sharepoint.com/:x:/r/sites/Cubework_PropertyManagement/_layouts/15/Doc.aspx?sourcedoc=%7BEF6BCC03-BE22-4E7D-B06E-D6770C6FC3FD%7D&file=Walnut%20CA.xlsx&action=default&mobileredirect=true&DefaultItemOpen=1',
+    yardi_url:          '',
+    available_statuses: 'Vacant,',
+    hold_statuses:      'HOLD,Hold',
+    pa_name:            '',
+    pa_phone:           '',
+    pa_email:           ''
+  },
+  'airport-ontario': {
+    property:       '3950 Airport Ontario',
+    address:        '3950 E Airport Dr, Ontario, CA 91761',
+    sharepoint_url:     'https://cubework365.sharepoint.com/:x:/r/sites/Cubework_PropertyManagement/_layouts/15/Doc.aspx?sourcedoc=%7B51D4D0ED-3ABC-411E-8850-D8B370794A48%7D&file=Airport%2C%20Ontario%20CA%20(Data%20to%20be%20updated).xlsx&action=default&mobileredirect=true',
+    yardi_url:          '',
+    available_statuses: 'Vacant,',
+    hold_statuses:      'HOLD,Hold',
+    pa_name:            '',
+    pa_phone:           '',
+    pa_email:           ''
+  },
+  'la-mirada': {
+    property:       '15910 Valley View La Mirada',
+    address:        '15910-15912 Valley View Ave, La Mirada, CA 90638',
+    sharepoint_url:     'https://cubework365.sharepoint.com/:x:/r/sites/Cubework_PropertyManagement/_layouts/15/Doc.aspx?sourcedoc=%7BF6D81B28-74A4-4AB1-9CC1-B8018752DF60%7D&file=La%20Mirada%20CA.xlsx&action=default&mobileredirect=true&DefaultItemOpen=1%3Fweb%3D1',
+    yardi_url:          '',
+    available_statuses: 'Vacant,',
+    hold_statuses:      'HOLD,Hold',
+    pa_name:            '',
+    pa_phone:           '',
+    pa_email:           ''
   }
 };
 

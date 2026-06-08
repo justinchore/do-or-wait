@@ -71,61 +71,17 @@ Webhook1 → Parse URL + generate ID → Resolve SharePoint file
 After `Save config`, wire: `Save config → Save PA to availability → Get property config`  
 This makes adding a location also immediately sync its availability data.
 
-### 2. Update "Parse + build patch" code
-Current code has two bugs:
-- **Unit pattern too narrow**: `/^([A-Z]\d{2}|DOCK\s*\d+|P\d{2})$/i` — doesn't match DD01-DD14 (Banana Fontana docks)
-- **Availability check hardcoded**: `available: col3 === 'Vacant'` — ignores empty-status vacant units
+### 2. Parse + build patch — ✅ DONE (rewritten 2026-06-08)
+The sync reads the **`BOT - NEW ACTIVE LICENSEE`** tab, which is consistent across all locations (the "Pick data sheet" node already prioritizes it). The parser was rewritten to handle the real variations found in the live CA sheets:
 
-**Replace with:**
-```javascript
-const prop = $('Pick data sheet').first().json;
-const rows = $input.first().json.values || [];
-const now  = new Date().toISOString();
+- **Type normalization** — buckets units whether the sheet uses codes (`WH`/`OFFICE`/`DOCK`/`TRAILER`, e.g. Pellissier) or words (`Warehouse`/`Office`/`Dedicated`/`Shared`/`Trailer/Truck`/`Small Vehicle`, e.g. Reyes/Walnut). The OLD code only matched `WH`, so spelled-out sheets summed to **zero** units per category — that was the core bug.
+- **Broad unit pattern** `/^[A-Z]{1,5}\d{1,4}(?:[A-Z]|-[A-Z0-9]{1,3})?$/i` — matches `A1`, `A01`, `A12B`, `A31-A`, `B01-A`, `C01-A`, `R101`, `DOCK01`, `DOCK 14`, `DD01`, `P01`.
+- `available = (status === 'vacant')`; adds a `hold` boolean (status or tenant cell contains "hold").
 
-// Per-location parser config with defaults
-const availStatuses = (prop.available_statuses || 'Vacant,vacant,').split(',').map(s => s.trim().toLowerCase());
-const holdStatuses  = (prop.hold_statuses      || 'HOLD,Hold,hold').split(',').map(s => s.trim().toLowerCase());
+Full node code: **`n8n/parse_build_patch.node.js`** (paste into the node's JS Code field). Tested against real Pellissier / Reyes / Walnut rows — every category returns correct non-zero counts and all edge-case unit IDs are captured. The reference copy `4_availability_sync.json` (node `av-009`) is already updated to match.
 
-// Broad pattern handles A01, DD01, R01, DOCK01, E07 etc.
-const unitPattern = /^[A-Z]{1,5}\d{1,3}$/i;
-
-const units = [];
-let headerLayout = null;
-
-for (const row of rows) {
-  const cells = row.map(c => String(c===null||c===undefined?'':c).trim());
-  const [col0,col1,col2,col3='',col4=''] = cells;
-
-  if (col0==='Unit #' && col1==='Unit Type' && col2==='Unit SF') { headerLayout='A'; continue; }
-  if ((col0==='Unit status'||col0==='Unit Status') && col1==='Company Name') { headerLayout='B'; continue; }
-
-  if (headerLayout==='A') {
-    const unitId = col0.replace(/\s+/g,'').toUpperCase();
-    if (!unitPattern.test(unitId)) continue;
-    const sfNum   = Number(String(col2).replace(/[^0-9]/g,''))||0;
-    const uType   = col1.toUpperCase() || (unitId.startsWith('R')?'OFFICE':unitId.startsWith('DD')||unitId.startsWith('DOCK')?'DOCK':unitId.startsWith('P')?'PARKING':'WH');
-    const sNorm   = col3.trim().toLowerCase();
-    const isAvail = availStatuses.includes(sNorm) || (col3.trim()==='' && !col4.trim());
-    units.push({ unit:unitId, type:uType, sf:sfNum, status:col3||'', tenant:(col4&&!holdStatuses.includes(col4.toLowerCase()))?col4:null, available:isAvail });
-  } else if (headerLayout==='B') {
-    const status=col0, company=col1;
-    if (!status && !company) continue;
-    const sNorm   = status.trim().toLowerCase();
-    const isAvail = availStatuses.includes(sNorm) || (status.trim()==='' && !company.trim());
-    if (!isAvail && !['occupied'].includes(sNorm) && !company) continue;
-    units.push({ unit:'', type:'WH', sf:0, status:status, tenant:(!isAvail&&company&&!holdStatuses.includes(company.toLowerCase()))?company:null, available:isAvail });
-  }
-}
-// ... rest of summarise/patchBody code stays the same
-```
-
-### 3. Update "Build updated config" code
-Add `available_statuses` and `hold_statuses` to the new Firestore entry:
-```javascript
-available_statuses: toStr(prop.available_statuses || 'Vacant,'),
-hold_statuses:      toStr(prop.hold_statuses      || 'HOLD,Hold'),
-```
-Add these inside `newEntry.mapValue.fields`.
+### 3. ~~Update "Build updated config" code~~ — NO LONGER NEEDED
+The parser self-normalizes statuses, so per-location `available_statuses`/`hold_statuses` config is obsolete. Skip.
 
 ### 4. Update "Find property" code
 Current code tries `$('Prep PA patch')` which no longer exists. Replace with:
@@ -135,10 +91,11 @@ const propId = $('Webhook').first().json.body?.propId
             || '';
 ```
 
-### 5. Add `available_statuses` and `hold_statuses` to existing Firestore entries
-In Firebase Console → Firestore → `config/properties` → add to Pellissier and Banana Fontana:
-- Pellissier: `available_statuses = "Vacant,"`, `hold_statuses = "HOLD,Hold"`
-- Banana Fontana: `available_statuses = "Vacant,"`, `hold_statuses = "HOLD,Hold"`
+### 5. ~~Add `available_statuses`/`hold_statuses` to Firestore entries~~ — NO LONGER NEEDED
+Obsolete: the rewritten parser normalizes statuses itself, so no per-location status fields are required.
+
+### Source-sheet finding (2026-06-08)
+All CA PA Weekly Report workbooks share a consistent **`BOT - NEW ACTIVE LICENSEE`** tab (Layout A: `Unit # | Unit Type | Unit SF | Unit status | Company Name | ...`, header repeats per Warehouse/Office/Dock/Parking section). This is the canonical data source — NOT the Site Plan / parking-summary tabs (those vary per location and are floor-plan art). The earlier idea of building per-workbook "AppData" formula tabs is unnecessary: the BOT tab already IS the standard. Note: Yardi rent-roll exports (`_validated_` files) are clean too but Yardi is being discontinued, so do not depend on them.
 
 ---
 
@@ -146,7 +103,7 @@ In Firebase Console → Firestore → `config/properties` → add to Pellissier 
 | propId | Property | Notes |
 |--------|----------|-------|
 | `pellissier-2720` | 2720 Pellissier, City of Industry | Working. R-units = OFFICE. DOCK units = DOCK |
-| `11179-banana-fontana` | 11179 Banana, Fontana | Added. DD-units = DOCK. Parser needs unit pattern fix |
+| `11179-banana-fontana` | 11179 Banana, Fontana | Added. DD-units = DOCK. Parser now handles DD01-DD14 (fixed 2026-06-08) |
 
 ### Banana Fontana unit structure (from SharePoint)
 - WH: A01-A09, B01-B05, C01-C03, D01-D04, E01-E07

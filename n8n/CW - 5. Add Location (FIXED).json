@@ -1,0 +1,565 @@
+{
+  "name": "CW — 5. Add Location",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "availability-sync",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "6e514205-7019-47f2-8320-58a23d5c8ab6",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        384,
+        224
+      ],
+      "webhookId": "availability-sync"
+    },
+    {
+      "parameters": {
+        "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/config/properties",
+        "options": {}
+      },
+      "id": "d66fc715-f2a9-4661-a912-2a4a15e38126",
+      "name": "Get property config",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        608,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// propId arrives from EITHER the availability-sync webhook OR the\n// add-location chain. Only one of those nodes runs per execution, so we\n// read each inside try/catch (referencing an unexecuted node throws).\nlet propId = '';\ntry { propId = $('Webhook').first().json.body?.propId || ''; } catch (e) {}\nif (!propId) { try { propId = $('Build updated config').first().json?.propId || ''; } catch (e) {} }\nif (!propId) throw new Error('No propId found');\n\nfunction fsVal(field) {\n  if (!field) return null;\n  if (field.stringValue  !== undefined) return field.stringValue;\n  if (field.booleanValue !== undefined) return field.booleanValue;\n  if (field.integerValue !== undefined) return Number(field.integerValue);\n  if (field.mapValue) {\n    const out = {};\n    for (const [k,v] of Object.entries(field.mapValue.fields||{})) out[k] = fsVal(v);\n    return out;\n  }\n  return null;\n}\n\nconst doc = $input.first().json;\nconst arr = doc.fields?.properties?.arrayValue?.values || [];\n\nconst match = arr.map(item => {\n  const m = item.mapValue?.fields || {};\n  return {\n    id:             fsVal(m.id)             || '',\n    driveId:        fsVal(m.driveId)        || '',\n    itemId:         fsVal(m.itemId)         || '',\n    property:       fsVal(m.property)       || '',\n    address:        fsVal(m.address)        || '',\n    yardi_url:      fsVal(m.yardi_url)      || '',\n    sharepoint_url: fsVal(m.sharepoint_url) || ''\n  };\n}).find(p => p.id === propId);\n\nif (!match) throw new Error(`Property \"${propId}\" not found in config`);\n\nreturn [{ json: match }];\n"
+      },
+      "id": "561a1854-f95e-41f1-a681-e40309b0384e",
+      "name": "Find property",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        832,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const prop = $('Find property').first().json;\nconst meta = $input.first().json;\nreturn [{ json: { ...prop, lastModified: meta.lastModifiedDateTime } }];"
+      },
+      "id": "dde919c4-618c-45e9-8076-b4f628060a3e",
+      "name": "Merge metadata",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1264,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const prop   = $('Merge metadata').first().json;\nconst sheets = $input.first().json.value || [];\n\nconst PRIORITY = ['BOT - NEW ACTIVE LICENSEE', 'ALL UNITS', 'BOT'];\nlet targetSheet = null;\nfor (const name of PRIORITY) {\n  const found = sheets.find(s => s.name.trim().toUpperCase() === name.toUpperCase());\n  if (found) { targetSheet = found.name; break; }\n}\nif (!targetSheet) targetSheet = sheets[1]?.name || sheets[0]?.name || 'Sheet1';\n\nreturn [{ json: { ...prop, sheetName: targetSheet, sheetEncoded: encodeURIComponent(targetSheet) } }];"
+      },
+      "id": "4bb7d789-8b38-4954-b7a0-0ae7f183e311",
+      "name": "Pick data sheet",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1712,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const prop = $('Pick data sheet').first().json;\nconst rows = $input.first().json.values || [];\nconst now  = new Date().toISOString();\n\n// Reads the \"BOT - NEW ACTIVE LICENSEE\" tab (Layout A). Header repeats per\n// section (Warehouse / Office / Dock / Parking); each section restarts it.\nconst unitPattern = /^[A-Z]{1,5}\\d{1,4}(?:[A-Z]|-[A-Z0-9]{1,3})?$/i;\n\nfunction normType(typeText, unitId) {\n  const t = String(typeText || '').toUpperCase();\n  if (/OFFICE/.test(t)) return 'OFFICE';\n  if (/DOCK|DEDICAT|SHARED/.test(t)) return 'DOCK';\n  if (/TRAILER|TRUCK|VEHICLE|PARK/.test(t)) return 'TRAILER';\n  if (/WAREHOUSE|^WH$|^W$/.test(t)) return 'WH';\n  const u = unitId.toUpperCase();           // fallback: infer from unit-ID prefix\n  if (u.startsWith('R')) return 'OFFICE';\n  if (u.startsWith('DOCK') || u.startsWith('DD')) return 'DOCK';\n  if (u.startsWith('P') || u.startsWith('Y')) return 'TRAILER';\n  return 'WH';\n}\n\nconst units = [];\nlet inTable = false;\nfor (const row of rows) {\n  const cells = row.map(c => String(c===null||c===undefined?'':c).trim());\n  const [c0,c1,c2,c3='',c4=''] = cells;\n  if (c0==='Unit #' && c1==='Unit Type') { inTable = true; continue; }\n  if (!inTable) continue;\n  const unitId = c0.replace(/\\s+/g,'').toUpperCase();   // \"DOCK 14\" -> \"DOCK14\"\n  if (!unitPattern.test(unitId)) continue;              // skip blanks / \"WAREHOUSE SPACE\" labels\n  const sf = Number(String(c2).replace(/[^0-9]/g,''))||0;\n  const type = normType(c1, unitId);\n  const statusNorm = c3.toLowerCase();\n  const available = statusNorm === 'vacant';\n  const isHold = /hold/.test(statusNorm) || /hold/.test(c4.toLowerCase());\n  const tenant = (statusNorm==='occupied' && c4) ? c4 : null;\n  units.push({ unit:unitId, type, sf, status:c3, tenant, available, hold:isHold });\n}\n\nfunction summarise(type) {\n  const g=units.filter(u=>u.type===type), a=g.filter(u=>u.available);\n  const ts=g.reduce((s,u)=>s+u.sf,0), as=a.reduce((s,u)=>s+u.sf,0);\n  return { total_units:g.length, avail_units:a.length, total_sf:ts, avail_sf:as, avail_pct:ts>0?Math.round(as/ts*1000)/10:0 };\n}\n\nconst wh=summarise('WH'), off=summarise('OFFICE'), dock=summarise('DOCK'), trailer=summarise('TRAILER');\n\nconst toStr=v=>({stringValue:String(v)}), toInt=v=>({integerValue:String(Math.round(v))}),\n      toDbl=v=>({doubleValue:v}), toBool=v=>({booleanValue:v}), toNull=()=>({nullValue:null});\n\nconst summFs=s=>({mapValue:{fields:{total_units:toInt(s.total_units),avail_units:toInt(s.avail_units),total_sf:toInt(s.total_sf),avail_sf:toInt(s.avail_sf),avail_pct:toDbl(s.avail_pct)}}});\nconst unitFs=u=>({mapValue:{fields:{unit:toStr(u.unit),type:toStr(u.type),sf:toInt(u.sf),status:toStr(u.status),tenant:u.tenant?toStr(u.tenant):toNull(),available:toBool(u.available),hold:toBool(u.hold)}}});\n\nconst patchBody = { fields: {\n  property:            toStr(prop.property||prop.id),\n  address:             toStr(prop.address||''),\n  yardi_url:           toStr(prop.yardi_url||''),\n  sharepoint_url:      toStr(prop.sharepoint_url||''),\n  sheet_last_modified: toStr(prop.lastModified||''),\n  synced_at:           toStr(now),\n  wh:      summFs(wh),  office: summFs(off),\n  dock:    summFs(dock), parking: summFs(trailer),\n  units: { arrayValue: { values: units.map(unitFs) } }\n}};\n\nreturn [{ json: { propId: prop.id, patchBody } }];\n"
+      },
+      "id": "73426df9-a1f9-4eb0-b658-584e5c9418e7",
+      "name": "Parse + build patch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2144,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.microsoft.com/v1.0/drives/{{ $json.driveId }}/items/{{ $json.itemId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {}
+      },
+      "id": "fb802bc1-7a4b-42c8-b432-f09c600b0b97",
+      "name": "Get file metadata1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1056,
+        224
+      ],
+      "credentials": {
+        "microsoftOAuth2Api": {
+          "id": "A3ZyY4XtVcBv1yU3",
+          "name": "Microsoft account 3"
+        },
+        "oAuth2Api": {
+          "id": "yA4MMh3TXmKCSDGY",
+          "name": "n8n-cubework"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.microsoft.com/v1.0/drives/{{ $json.driveId }}/items/{{ $json.itemId }}/workbook/worksheets",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {}
+      },
+      "id": "3dfd1d88-0f4d-4ddd-bcf0-1a2b64f9038f",
+      "name": "List worksheets1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1488,
+        224
+      ],
+      "credentials": {
+        "microsoftOAuth2Api": {
+          "id": "A3ZyY4XtVcBv1yU3",
+          "name": "Microsoft account 3"
+        },
+        "oAuth2Api": {
+          "id": "yA4MMh3TXmKCSDGY",
+          "name": "n8n-cubework"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.microsoft.com/v1.0/drives/{{ $json.driveId }}/items/{{ $json.itemId }}/workbook/worksheets/{{ $json.sheetEncoded }}/usedRange(valuesOnly=true)",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {}
+      },
+      "id": "652b0ab8-dec3-4074-93c9-0474e39aecf6",
+      "name": "Read sheet data1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1936,
+        224
+      ],
+      "credentials": {
+        "microsoftOAuth2Api": {
+          "id": "A3ZyY4XtVcBv1yU3",
+          "name": "Microsoft account 3"
+        },
+        "oAuth2Api": {
+          "id": "yA4MMh3TXmKCSDGY",
+          "name": "n8n-cubework"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/availability/{{ $json.propId }}?updateMask.fieldPaths=property&updateMask.fieldPaths=address&updateMask.fieldPaths=yardi_url&updateMask.fieldPaths=sharepoint_url&updateMask.fieldPaths=sheet_last_modified&updateMask.fieldPaths=synced_at&updateMask.fieldPaths=wh&updateMask.fieldPaths=office&updateMask.fieldPaths=dock&updateMask.fieldPaths=parking&updateMask.fieldPaths=units",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.patchBody) }}",
+        "options": {}
+      },
+      "id": "6b42a7f3-dd20-4e5a-b74d-4715e8e82281",
+      "name": "Write to Firestore1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2368,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst raw  = (body.sharepoint_url || '').trim();\nif (!raw) throw new Error('sharepoint_url is required');\nif (!body.property) throw new Error('property name is required');\n\nconst propId = body.property.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');\n\n// Detect sharing links (/:x:/s/, /:x:/r/ etc.)\nconst isSharingLink = /\\/:[a-z]+:\\/[sr]\\//i.test(raw);\n\nif (isSharingLink) {\n  const b64      = Buffer.from(raw).toString('base64').replace(/=/g,'').replace(/\\+/g,'-').replace(/\\//g,'_');\n  const shareId  = 'u!' + b64;\n  const resolveUrl = `https://graph.microsoft.com/v1.0/shares/${shareId}/driveItem`;\n  return [{ json: { ...body, propId, resolveUrl } }];\n}\n\n// Direct file path URL\nconst originMatch = raw.match(/^(https?:\\/\\/[^\\/]+)/);\nif (!originMatch) throw new Error('Invalid SharePoint URL');\nconst origin   = originMatch[1];\nconst pathname = raw.slice(origin.length).split('?')[0];\nconst rawParts = pathname.split('/').filter(Boolean);\nconst parts    = rawParts.map(p => { try { return decodeURIComponent(p); } catch(e) { return p; } });\nconst sitesIdx = parts.indexOf('sites');\nif (sitesIdx < 0) throw new Error('Could not find /sites/ in SharePoint URL');\n\nconst siteRelPath     = '/' + parts.slice(0, sitesIdx + 2).join('/');\nconst encodedFilePath = rawParts.slice(sitesIdx + 2).join('/');\nconst resolveUrl      = `https://graph.microsoft.com/v1.0/sites/${origin.replace('https://','')}}:${siteRelPath}:/drive/root:/${encodedFilePath}`;\n\nreturn [{ json: { ...body, propId, resolveUrl } }];"
+      },
+      "id": "a957846f-01ae-4b85-b13c-92bc6ab4c0e2",
+      "name": "Parse URL + generate ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1168,
+        1088
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.resolveUrl }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {}
+      },
+      "id": "05ef131c-c6f0-451c-8446-be505851dab7",
+      "name": "Resolve SharePoint file",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -960,
+        1088
+      ],
+      "credentials": {
+        "microsoftOAuth2Api": {
+          "id": "A3ZyY4XtVcBv1yU3",
+          "name": "Microsoft account 3"
+        },
+        "oAuth2Api": {
+          "id": "yA4MMh3TXmKCSDGY",
+          "name": "n8n-cubework"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $('Parse URL + generate ID').first().json;\nconst item = $input.first().json;\nconst driveId = item.parentReference?.driveId || '';\nconst itemId  = item.id || '';\nif (!driveId || !itemId) throw new Error('Could not resolve driveId/itemId from SharePoint URL');\nreturn [{ json: { ...prev, driveId, itemId } }];"
+      },
+      "id": "49c7832a-12fa-4381-b45c-b446f24d4e5b",
+      "name": "Extract file IDs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -736,
+        1088
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/config/properties",
+        "options": {}
+      },
+      "id": "3368a4cf-43ec-45ef-8cf4-8f0aa0ef3ffb",
+      "name": "Read current config",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -512,
+        1088
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const prop   = $('Extract file IDs').first().json;\nconst config = $input.first().json;\n\nconst toStr = v => ({ stringValue: String(v || '') });\n\nconst arr = config.fields?.properties?.arrayValue?.values || [];\n\n// Prevent duplicate IDs\nif (arr.some(it => it.mapValue?.fields?.id?.stringValue === prop.propId)) {\n  throw new Error(`Location \"${prop.propId}\" already exists in config. Edit it in Firestore directly.`);\n}\n\nconst newEntry = {\n  mapValue: {\n    fields: {\n      id:             toStr(prop.propId),\n      driveId:        toStr(prop.driveId),\n      itemId:         toStr(prop.itemId),\n      property:       toStr(prop.property),\n      address:        toStr(prop.address),\n      yardi_url:      toStr(prop.yardi_url),\n      sharepoint_url: toStr(prop.sharepoint_url)\n    }\n  }\n};\n\nconst updatedValues = [...arr, newEntry];\nconst patchBody = { fields: { properties: { arrayValue: { values: updatedValues } } } };\n\nreturn [{ json: { propId: prop.propId, pa: prop.pa || null, patchBody } }];"
+      },
+      "id": "5faf73e8-25b1-4edf-8105-8976d841c08b",
+      "name": "Build updated config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -288,
+        1088
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/config/properties?updateMask.fieldPaths=properties",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.patchBody) }}",
+        "options": {}
+      },
+      "id": "425d5d4a-2642-44ae-a5a0-5fc29159c193",
+      "name": "Save config",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -80,
+        1088
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/availability/{{ $('Build updated config').first().json.propId }}?updateMask.fieldPaths=pa",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"pa\": {\n      \"mapValue\": {\n        \"fields\": {\n          \"name\":  { \"stringValue\": \"={{ ($('Build updated config').first().json.pa || {}).name  || '' }}\" },\n          \"phone\": { \"stringValue\": \"={{ ($('Build updated config').first().json.pa || {}).phone || '' }}\" },\n          \"email\": { \"stringValue\": \"={{ ($('Build updated config').first().json.pa || {}).email || '' }}\" }\n        }\n      }\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "da91fa77-9e90-4e9e-9cd8-d60d33ddd7a7",
+      "name": "Save PA to availability",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        592,
+        976
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "add-location",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "3da23376-fbc3-4011-9040-3376ad87e211",
+      "name": "Webhook1",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1392,
+        1088
+      ],
+      "webhookId": "add-location"
+    }
+  ],
+  "pinData": {
+    "Webhook1": [
+      {
+        "json": {
+          "headers": {
+            "host": "ailinker.item.com",
+            "x-real-ip": "172.70.206.131",
+            "x-forwarded-for": "172.70.206.131",
+            "x-forwarded-proto": "https",
+            "origin": "https://ailinker.item.com",
+            "connection": "upgrade",
+            "content-length": "546",
+            "content-type": "application/json",
+            "cf-ray": "a07a52e0d85a0908-LAX",
+            "cf-ew-via": "15",
+            "cdn-loop": "cloudflare; loops=1",
+            "cf-worker": "jchoustin91.workers.dev",
+            "cf-visitor": "{\"scheme\":\"https\"}",
+            "accept-encoding": "gzip, br"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "property": "11179 Banana Fontana",
+            "address": "11179 Banana Ave, Fontana, CA 92337",
+            "sharepoint_url": "https://cubework365.sharepoint.com/:x:/r/sites/Cubework_PropertyManagement/_layouts/15/Doc.aspx?sourcedoc=%7B0B3499A2-FE5B-4ECC-8417-1346DADB2C76%7D&file=Banana%2C%20Fontana%20PA%20Weekly%20Report.xlsx&action=default&mobileredirect=true",
+            "yardi_url": "https://apps.commercialcafe.com/dealmanager/content/#/app/property/9F88670B-D43B-49C6-972A-C4BFE38A337D/stackingplan",
+            "pa": {
+              "name": "Keith Arline",
+              "phone": "",
+              "email": "keith.arline@cubework.com"
+            }
+          },
+          "webhookUrl": "https://ailinker.item.com/webhook/add-location",
+          "executionMode": "production"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Get property config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get property config": {
+      "main": [
+        [
+          {
+            "node": "Find property",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find property": {
+      "main": [
+        [
+          {
+            "node": "Get file metadata1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge metadata": {
+      "main": [
+        [
+          {
+            "node": "List worksheets1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick data sheet": {
+      "main": [
+        [
+          {
+            "node": "Read sheet data1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse + build patch": {
+      "main": [
+        [
+          {
+            "node": "Write to Firestore1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get file metadata1": {
+      "main": [
+        [
+          {
+            "node": "Merge metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List worksheets1": {
+      "main": [
+        [
+          {
+            "node": "Pick data sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read sheet data1": {
+      "main": [
+        [
+          {
+            "node": "Parse + build patch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write to Firestore1": {
+      "main": [
+        []
+      ]
+    },
+    "Parse URL + generate ID": {
+      "main": [
+        [
+          {
+            "node": "Resolve SharePoint file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve SharePoint file": {
+      "main": [
+        [
+          {
+            "node": "Extract file IDs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract file IDs": {
+      "main": [
+        [
+          {
+            "node": "Read current config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read current config": {
+      "main": [
+        [
+          {
+            "node": "Build updated config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build updated config": {
+      "main": [
+        [
+          {
+            "node": "Save config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save config": {
+      "main": [
+        [
+          {
+            "node": "Save PA to availability",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save PA to availability": {
+      "main": [
+        [
+          {
+            "node": "Get property config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook1": {
+      "main": [
+        [
+          {
+            "node": "Parse URL + generate ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "5c112683-b1b2-4833-be9e-0616aa62daf1",
+  "meta": {
+    "instanceId": "576f1552f658e6ccbe293a5c310c12c03fc3f516211957ae27ecb76646f5be19"
+  },
+  "id": "j9oYMeMn1dEJblDv",
+  "tags": []
+}
