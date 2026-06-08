@@ -29,6 +29,8 @@ Task threads. Fields: `title`, `archived`, `entries[]`, `createdAt`
 ### `leads/{id}`
 Sales leads. Thread structure + lead-specific fields: `company`, `first_name`, `email`, `contact`, `segment`, `stage`, `location`, `sqft`, `leaseLength`, `moveIn`, `unit`, `unit_sf`, `dock`, `rate`, `included_items`, `alt_option`, `is_importer`, `current_step`, `last_touch_date`, `next_due_date`, `seq_status`, `pending_email` (written by n8n when email ready to approve)
 
+**Waitlist fields** (a lead can be put on the waitlist to watch for matching space): `wl_on` (bool), `wl_regions` (array of state codes, e.g. `["CA"]`), `wl_type` (`any`/`WH`/`OFFICE`/`DOCK`/`TRAILER`), `wl_sf_min`, `wl_sf_max`. The "⏳ Waitlist" lead filter shows only `wl_on` leads. On an expanded waitlisted lead, **🔎 Check matches** (`checkWaitlist(leadId)`) scans `availMap` client-side for available-or-hold units in the watched region(s) matching type + size, and renders the hits inline (`renderWaitlistBlock`). No n8n involved — it reads the already-synced availability data.
+
 ### `availability/{propId}`
 Written by n8n after syncing each property's SharePoint file. Fields: `property`, `address`, `yardi_url`, `sharepoint_url`, `sheet_last_modified`, `synced_at`, `wh{}`, `office{}`, `dock{}`, `parking{}`, `units[]`, `pa{name,phone,email}`
 

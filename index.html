@@ -799,6 +799,7 @@
       <button class="lf-btn"        data-stage="contacted" onclick="setLeadFilter('contacted')">Contacted</button>
       <button class="lf-btn"        data-stage="toured"    onclick="setLeadFilter('toured')">Toured</button>
       <button class="lf-btn"        data-stage="proposal"  onclick="setLeadFilter('proposal')">Proposal</button>
+      <button class="lf-btn"        data-stage="waitlist"  onclick="setLeadFilter('waitlist')">⏳ Waitlist</button>
     </div>
 
     <!-- New leads strip (compact chips) -->
@@ -1057,6 +1058,32 @@
         <input type="checkbox" id="lf-is-importer" />
         Importer (for email sequence)
       </label>
+    </div>
+
+    <div class="modal-section">Waitlist</div>
+    <label class="check-row" style="padding:4px 0;">
+      <input type="checkbox" id="lf-wl-on" />
+      Add to waitlist — watch region(s) for matching space
+    </label>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="field">
+        <label>Watch region(s)</label>
+        <select id="lf-wl-regions" multiple size="3"></select>
+      </div>
+      <div class="field">
+        <label>Space type</label>
+        <select id="lf-wl-type">
+          <option value="any">Any</option>
+          <option value="WH">Warehouse</option>
+          <option value="OFFICE">Office</option>
+          <option value="DOCK">Dock</option>
+          <option value="TRAILER">Parking / Trailer</option>
+        </select>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="field"><label>Min sq ft</label><input id="lf-wl-sfmin" type="number" placeholder="e.g. 2000" autocomplete="off" /></div>
+      <div class="field"><label>Max sq ft</label><input id="lf-wl-sfmax" type="number" placeholder="e.g. 6000" autocomplete="off" /></div>
     </div>
 
     <div class="modal-foot">
@@ -1864,7 +1891,9 @@ function renderLeadsSection() {
   const closed  = ['won','lost'];
   const active  = leads.filter(l => !l.archived && !closed.includes(l.stage || 'cold'));
   const wonlost = leads.filter(l => l.archived || closed.includes(l.stage || 'cold'));
-  const filtered = leadFilter === 'all' ? active : active.filter(l => (l.stage||'cold') === leadFilter);
+  const filtered = leadFilter === 'all' ? active
+    : leadFilter === 'waitlist' ? active.filter(l => l.wl_on)
+    : active.filter(l => (l.stage||'cold') === leadFilter);
 
   const newL  = filtered.filter(l => !l.entries.length);
   const doL   = filtered.filter(l =>  l.entries.length && currentStatus(l) === 'do').sort(byOrder);
@@ -1921,6 +1950,60 @@ function renderLeadsSection() {
   }
 }
 
+function renderWaitlistBlock(lead) {
+  const regions = (lead.wl_regions || []).map(s => STATE_NAMES[s] || s).join(', ') || 'any region';
+  const type = (lead.wl_type && lead.wl_type !== 'any') ? lead.wl_type : 'any type';
+  const sizeTxt = (lead.wl_sf_min || lead.wl_sf_max)
+    ? `${(lead.wl_sf_min || 0).toLocaleString()}–${lead.wl_sf_max ? lead.wl_sf_max.toLocaleString() : '∞'} sf`
+    : 'any size';
+  return `<div style="margin:8px 0;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg);">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+        <div style="font-size:12px;color:var(--text2);">⏳ Watching <b>${esc(regions)}</b> · ${esc(type)} · ${esc(sizeTxt)}</div>
+        <button class="btn sm dark" onclick="checkWaitlist('${lead.id}',event)">🔎 Check matches</button>
+      </div>
+      <div id="wl-results-${lead.id}" style="margin-top:8px;"></div>
+    </div>`;
+}
+
+function checkWaitlist(leadId, ev) {
+  if (ev) ev.stopPropagation();
+  const lead = leads.find(l => l.id === leadId);
+  const box  = document.getElementById('wl-results-' + leadId);
+  if (!lead || !box) return;
+
+  const regions = (lead.wl_regions || []).map(s => s.toUpperCase());
+  const wantType = lead.wl_type || 'any';
+  const min = Number(lead.wl_sf_min) || 0;
+  const max = (lead.wl_sf_max != null && lead.wl_sf_max !== '') ? Number(lead.wl_sf_max) : Infinity;
+  const sized = min > 0 || max !== Infinity;
+
+  const matches = [];
+  Object.keys(availMap).forEach(pid => {
+    const d = availMap[pid];
+    if (regions.length && !regions.includes(stateOf(d))) return;
+    (d.units || []).forEach(u => {
+      if (!(u.available || u.hold)) return;                 // holds count as available
+      if (wantType !== 'any' && u.type !== wantType) return;
+      const sf = Number(u.sf) || 0;
+      if (sized && !(sf >= min && sf <= max)) return;
+      matches.push({ property: d.property || pid, unit: u.unit, sf, type: u.type, hold: !!u.hold, tenant: u.tenant });
+    });
+  });
+
+  if (!matches.length) {
+    box.innerHTML = `<div style="font-size:12px;color:var(--text2);">No matches right now in ${esc(regions.map(s => STATE_NAMES[s] || s).join(', ') || 'any region')}.</div>`;
+    return;
+  }
+  matches.sort((a, b) => a.property.localeCompare(b.property) || a.sf - b.sf);
+  box.innerHTML = `<div style="font-size:12px;font-weight:700;color:#166534;margin-bottom:4px;">✓ ${matches.length} match${matches.length !== 1 ? 'es' : ''}</div>`
+    + matches.map(m => `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:12px;border-top:1px solid var(--border);">
+        <span style="font-weight:700;min-width:130px;">${esc(m.property)}</span>
+        <span style="min-width:58px;">${esc(m.unit)}</span>
+        <span style="color:var(--text2);flex:1;">${m.sf ? m.sf.toLocaleString() + ' sf' : '—'} · ${esc(m.type)}</span>
+        ${m.hold ? `<span style="font-size:10px;padding:1px 7px;border-radius:20px;background:#ffedd5;color:#9a3412;">Hold</span>` : ''}
+      </div>`).join('');
+}
+
 function renderLeadCard(lead) {
   const status  = currentStatus(lead);
   const isOpen  = expandedLeadIds.has(lead.id);
@@ -1946,6 +2029,7 @@ function renderLeadCard(lead) {
             ${lead.archived ? 'Archived' : allRes ? 'Done' : stage.label}
           </span>
           <span class="badge" style="background:${seg.bg};color:${seg.color};border:1px solid ${seg.color}30">${seg.label}</span>
+          ${lead.wl_on ? `<span class="badge" style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d">⏳ Waitlist</span>` : ''}
           ${esc(lead.company)}
         </div>
         <div class="card-snippet">${last ? esc(last.text) : ''}</div>
@@ -1961,6 +2045,7 @@ function renderLeadCard(lead) {
     <div class="thread">
       ${lead.pending_email ? renderEmailPreview(lead) : ''}
       ${renderLeadDetails(lead)}
+      ${lead.wl_on ? renderWaitlistBlock(lead) : ''}
       ${lead.entries.map(e => renderLeadEntry(lead, e)).join('')}
       <div class="thread-foot">
         <button class="archive-btn" onclick="toggleArchive('${lead.id}','leads')">
@@ -2124,11 +2209,27 @@ function _clearLeadModal() {
   document.getElementById('lf-stage').value     = 'cold';
   document.getElementById('lf-dock').checked    = false;
   document.getElementById('lf-is-importer').checked = false;
+  document.getElementById('lf-wl-on').checked   = false;
+  document.getElementById('lf-wl-type').value   = 'any';
+  document.getElementById('lf-wl-sfmin').value  = '';
+  document.getElementById('lf-wl-sfmax').value  = '';
+}
+
+// Fill the waitlist region <select> from the states present in availMap (+ any already selected)
+function populateWlRegions(selected) {
+  const sel = document.getElementById('lf-wl-regions');
+  if (!sel) return;
+  const states = new Set(Object.keys(availMap).map(pid => stateOf(availMap[pid])));
+  (selected || []).forEach(s => states.add(s));
+  const arr = [...states].filter(s => s && s !== 'Other').sort();
+  sel.innerHTML = arr.map(s => `<option value="${s}" ${(selected || []).includes(s) ? 'selected' : ''}>${STATE_NAMES[s] || s}</option>`).join('')
+    || `<option disabled>No synced locations yet</option>`;
 }
 
 function openNewLead() {
   editLeadId = null;
   _clearLeadModal();
+  populateWlRegions([]);
   document.getElementById('lm-title').textContent = 'New Lead';
   document.getElementById('lead-overlay').classList.add('open');
   setTimeout(() => document.getElementById('lf-company').focus(), 180);
@@ -2158,6 +2259,11 @@ function openEditLeadDetails(id, e) {
   document.getElementById('lf-alt').value                = lead.alt_option   || '';
   document.getElementById('lf-dock').checked             = !!lead.dock;
   document.getElementById('lf-is-importer').checked      = !!lead.is_importer;
+  document.getElementById('lf-wl-on').checked            = !!lead.wl_on;
+  document.getElementById('lf-wl-type').value            = lead.wl_type   || 'any';
+  document.getElementById('lf-wl-sfmin').value           = lead.wl_sf_min ?? '';
+  document.getElementById('lf-wl-sfmax').value           = lead.wl_sf_max ?? '';
+  populateWlRegions(lead.wl_regions || []);
   document.getElementById('lead-overlay').classList.add('open');
   setTimeout(() => document.getElementById('lf-company').focus(), 180);
 }
@@ -2189,6 +2295,11 @@ async function saveLeadDetails() {
     alt_option:     document.getElementById('lf-alt').value.trim(),
     dock:           document.getElementById('lf-dock').checked,
     is_importer:    document.getElementById('lf-is-importer').checked,
+    wl_on:          document.getElementById('lf-wl-on').checked,
+    wl_regions:     Array.from(document.getElementById('lf-wl-regions').selectedOptions).map(o => o.value),
+    wl_type:        document.getElementById('lf-wl-type').value,
+    wl_sf_min:      document.getElementById('lf-wl-sfmin').value ? Number(document.getElementById('lf-wl-sfmin').value) : null,
+    wl_sf_max:      document.getElementById('lf-wl-sfmax').value ? Number(document.getElementById('lf-wl-sfmax').value) : null,
     // Sequencer fields — preserved if already set by n8n, default to 0/null for new leads
     current_step:   existing?.current_step   ?? 0,
     last_touch_date:existing?.last_touch_date ?? null,
@@ -2949,6 +3060,7 @@ window.leadOverlayClick    = leadOverlayClick;
 window.saveLeadDetails     = saveLeadDetails;
 window.deleteLead          = deleteLead;
 window.toggleLeadCard      = toggleLeadCard;
+window.checkWaitlist       = checkWaitlist;
 window.enableLeadDrag      = enableLeadDrag;
 window.disableLeadDrag     = disableLeadDrag;
 window.leadDragStart       = leadDragStart;
