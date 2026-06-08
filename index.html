@@ -1334,6 +1334,67 @@ async function cardDrop(ev, targetId) {
   for (const t of changed) await saveTopic(t);
 }
 
+// ── Leads drag-to-reorder (parallel to topics) ────────────────
+let leadDragId = null;
+function enableLeadDrag(id)  { const c = document.getElementById('lc-' + id); if (c) c.draggable = true; }
+function disableLeadDrag(id) { const c = document.getElementById('lc-' + id); if (c) c.draggable = false; }
+
+function leadDragStart(ev, id) {
+  leadDragId = id;
+  ev.dataTransfer.effectAllowed = 'move';
+  const c = document.getElementById('lc-' + id);
+  if (c) c.classList.add('dragging');
+}
+
+function leadDragEnd() {
+  document.querySelectorAll('.topic-card.dragging').forEach(c => c.classList.remove('dragging'));
+  document.querySelectorAll('.topic-card.drag-over').forEach(c => c.classList.remove('drag-over'));
+  document.querySelectorAll('.topic-card[draggable="true"]').forEach(c => c.draggable = false);
+  leadDragId = null;
+}
+
+function leadDragOver(ev, overId) {
+  if (!leadDragId || leadDragId === overId) return;
+  const dragged = leads.find(l => l.id === leadDragId);
+  const over    = leads.find(l => l.id === overId);
+  if (!dragged || !over || currentStatus(dragged) !== currentStatus(over)) return; // same column only
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = 'move';
+  ev.currentTarget.classList.add('drag-over');
+}
+
+function leadDragLeave(ev) { ev.currentTarget.classList.remove('drag-over'); }
+
+async function leadDrop(ev, targetId) {
+  ev.preventDefault();
+  ev.currentTarget.classList.remove('drag-over');
+  if (!leadDragId || leadDragId === targetId) return;
+  const dragged = leads.find(l => l.id === leadDragId);
+  const target  = leads.find(l => l.id === targetId);
+  if (!dragged || !target) return;
+  const status = currentStatus(target);
+  if (currentStatus(dragged) !== status) return; // reorder within a column only
+
+  // Current order of this column's active cards
+  const col = leads.filter(l => !l.archived && l.entries.length && currentStatus(l) === status).sort(byOrder);
+  const ids = col.map(l => l.id);
+  ids.splice(ids.indexOf(leadDragId), 1);
+
+  // Insert before/after target depending on drop position
+  const rect  = ev.currentTarget.getBoundingClientRect();
+  const after = ev.clientY > rect.top + rect.height / 2;
+  ids.splice(ids.indexOf(targetId) + (after ? 1 : 0), 0, leadDragId);
+
+  // Reassign sequential orders, persist only what changed
+  const changed = [];
+  ids.forEach((id, i) => {
+    const l = leads.find(x => x.id === id);
+    if (l && l.order !== i) { l.order = i; changed.push(l); }
+  });
+  renderLeadsSection();
+  for (const l of changed) await persistItem(l, 'leads');
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  RENDER
 // ═══════════════════════════════════════════════════════════════
@@ -1800,8 +1861,8 @@ function renderLeadsSection() {
   const filtered = leadFilter === 'all' ? active : active.filter(l => (l.stage||'cold') === leadFilter);
 
   const newL  = filtered.filter(l => !l.entries.length);
-  const doL   = filtered.filter(l =>  l.entries.length && currentStatus(l) === 'do');
-  const waitL = filtered.filter(l =>  l.entries.length && currentStatus(l) === 'wait');
+  const doL   = filtered.filter(l =>  l.entries.length && currentStatus(l) === 'do').sort(byOrder);
+  const waitL = filtered.filter(l =>  l.entries.length && currentStatus(l) === 'wait').sort(byOrder);
 
   // filter buttons
   document.querySelectorAll('.lf-btn').forEach(b => b.classList.toggle('active', b.dataset.stage === leadFilter));
@@ -1865,8 +1926,14 @@ function renderLeadCard(lead) {
   const entryCount = lead.entries.length;
 
   return `
-  <div class="topic-card ${lead.archived ? 'archived' : status}${isOpen ? ' open' : ''}" id="lc-${lead.id}" style="border-left-color:${stage.color}">
+  <div class="topic-card ${lead.archived ? 'archived' : status}${isOpen ? ' open' : ''}" id="lc-${lead.id}" style="border-left-color:${stage.color}"
+       ondragstart="leadDragStart(event,'${lead.id}')" ondragend="leadDragEnd(event)"
+       ondragover="leadDragOver(event,'${lead.id}')" ondragleave="leadDragLeave(event)"
+       ondrop="leadDrop(event,'${lead.id}')">
     <div class="card-summary" onclick="toggleLeadCard('${lead.id}')">
+      ${(lead.archived || ['won','lost'].includes(lead.stage||'cold')) ? '' : `<span class="drag-handle" title="Drag to reorder"
+            onmousedown="enableLeadDrag('${lead.id}')" onmouseup="disableLeadDrag('${lead.id}')"
+            onclick="event.stopPropagation()">⠿</span>`}
       <div class="card-summary-body">
         <div class="card-title">
           <span class="badge" style="background:#f3f4f6;color:${stage.color};border:1px solid ${stage.color}40">
@@ -2678,6 +2745,13 @@ window.leadOverlayClick    = leadOverlayClick;
 window.saveLeadDetails     = saveLeadDetails;
 window.deleteLead          = deleteLead;
 window.toggleLeadCard      = toggleLeadCard;
+window.enableLeadDrag      = enableLeadDrag;
+window.disableLeadDrag     = disableLeadDrag;
+window.leadDragStart       = leadDragStart;
+window.leadDragEnd         = leadDragEnd;
+window.leadDragOver        = leadDragOver;
+window.leadDragLeave       = leadDragLeave;
+window.leadDrop            = leadDrop;
 window.setLeadFilter       = setLeadFilter;
 window.toggleWonLost       = toggleWonLost;
 window.approveEmail        = approveEmail;
