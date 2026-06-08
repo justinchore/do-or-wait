@@ -32,6 +32,8 @@ Sales leads. Thread structure + lead-specific fields: `company`, `first_name`, `
 ### `availability/{propId}`
 Written by n8n after syncing each property's SharePoint file. Fields: `property`, `address`, `yardi_url`, `sharepoint_url`, `sheet_last_modified`, `synced_at`, `wh{}`, `office{}`, `dock{}`, `parking{}`, `units[]`, `pa{name,phone,email}`
 
+Each entry in `units[]` (parsed from the BOT tab): `unit`, `type` (WH/OFFICE/DOCK/TRAILER), `sf`, `status`, `tenant`, `owner`, `phone`, `email`, `poc`, `notes`, `available` (bool), `hold` (bool). owner/phone/email/poc/notes come from BOT-tab cols 6-10 and are null when blank.
+
 ### `config/properties`
 One document. Contains `properties` array — each entry:
 ```
@@ -116,12 +118,14 @@ All CA PA Weekly Report workbooks share a consistent **`BOT - NEW ACTIVE LICENSE
 ## App structure (index.html key functions)
 - `renderAvailability()` — loops `availMap`, calls `renderLocCard()` per property
 - `renderLocCard(propId, d)` — collapsible card. Collapsed shows: availability chips, PA name+phone, Yardi/SP links, ⟳ refresh
-- `renderLocBody(propId, d)` — expanded: stats grid, available unit list, floor plan
+- `renderLocBody(propId, d)` — expanded: stats grid, filter chips (Available/Hold/Occupied/All, default Available via `availFilter[propId]`), per-section unit row lists (WH/Office/Dock; Parking is count-only in the stats grid), floor plan. Rows are compact; clicking a row expands tenant/owner/phone/email/poc/notes.
+- `setAvailFilter(propId, f, ev)` — sets the unit filter and re-renders the body
+- `toggleUnitDetail(key, ev)` — expands/collapses a unit's detail panel
 - `renderFloorplans(propId)` — SVG floorplan. Currently only `pellissier-2720` has one. Banana Fontana needs one built.
 - `triggerAvailSync(propId)` — POSTs `{ propId }` to Cloudflare Worker
 - `submitAddLocation()` — POSTs full location payload to Cloudflare Worker
 - `LOCATION_PRESETS` — quick-fill buttons in Add Location modal. Add entries here for each new location.
-- `unitCard(u)` — shows HOLD badge only if `u.status` contains "hold"
+- unit rows (inside `renderLocBody`) — show a status pill (Available/Occupied/Hold) driven by the `hold`/`available` booleans, not by status text
 
 ## Floorplan SVGs (in renderFloorplans function)
 - `pellissier-2720`: warehouse (D01-D05, B01, C01-C05, A01-A02) + office (R01-R09)  

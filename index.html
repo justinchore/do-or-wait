@@ -2230,6 +2230,7 @@ function switchTab(tab) {
 const availMap  = {};          // propId → data
 let unsubAvail   = null;
 const expandedAvailProps = new Set(['pellissier-2720']); // open by default
+const availFilter = {}; // per-property unit filter: available | hold | occupied | all
 const fpFloors   = {};          // propId → 'warehouse' | 'office'
 
 // n8n on-demand webhook URL — fill in after importing workflow 4
@@ -2332,28 +2333,62 @@ function renderLocBody(propId, d) {
   const off = d.office || {};
   const dk  = d.dock   || {};
   const prk = d.parking|| {};
+  const units = d.units || [];
+  const filter = availFilter[propId] || 'available';
 
-  const whUnits  = (d.units||[]).filter(u => u.type === 'WH'     && u.available);
-  const offUnits = (d.units||[]).filter(u => u.type === 'OFFICE' && u.available);
+  const PILLS = {
+    available: ['#dcfce7', '#166534', 'Available'],
+    occupied:  ['#f3f4f6', '#4b5563', 'Occupied'],
+    hold:      ['#ffedd5', '#9a3412', 'Hold']
+  };
+  const statusOf = u => u.hold ? 'hold' : (u.available ? 'available' : 'occupied');
+  const passes = u => filter === 'all' ? true
+                    : filter === 'available' ? u.available
+                    : filter === 'hold' ? u.hold
+                    : (!u.available && !u.hold); // occupied
 
-  function unitCard(u) {
-    const sf   = u.sf ? Number(u.sf).toLocaleString() : '—';
-    const hold = u.status && u.status.toLowerCase().includes('hold');
-    return `<div class="avail-unit">
-      <div class="avail-unit-id">${esc(u.unit)}</div>
-      <div class="avail-unit-sf">${sf} sf <span>· ${u.type}</span></div>
-      ${u.tenant && u.tenant !== 'HOLD' ? `<div class="avail-unit-tenant">${esc(u.tenant)}</div>` : ''}
-      ${hold ? '<div class="avail-unit-note">HOLD</div>' : ''}
-    </div>`;
+  let n = 0;
+  function row(u) {
+    const [bg, fg, lbl] = PILLS[statusOf(u)];
+    const sf = u.sf ? Number(u.sf).toLocaleString() + ' sf' : '—';
+    const dl = [
+      ['Tenant', u.tenant], ['Owner', u.owner], ['Phone', u.phone],
+      ['Email', u.email], ['Onsite POC', u.poc], ['Notes', u.notes]
+    ].filter(r => r[1]);
+    const hasDetail = dl.length > 0;
+    const key = propId + '-' + (n++);
+    const head = `<div ${hasDetail ? `onclick="toggleUnitDetail('${key}',event)" style="cursor:pointer;` : `style="`}display:flex;align-items:center;gap:10px;padding:8px 10px;">
+        <span style="font-weight:700;font-size:13px;min-width:62px;">${esc(u.unit)}</span>
+        <span style="font-size:12px;color:var(--text2);min-width:92px;">${sf}<span> · ${esc(u.type)}</span></span>
+        <span style="font-size:11px;padding:2px 9px;border-radius:20px;background:${bg};color:${fg};">${lbl}</span>
+        <span style="font-size:12px;color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${u.tenant ? esc(u.tenant) : ''}</span>
+        ${hasDetail ? `<span id="uc-${key}" style="font-size:11px;color:var(--text2);transition:transform .15s;">▾</span>` : ''}
+      </div>`;
+    const detail = hasDetail ? `<div id="ud-${key}" style="display:none;padding:6px 10px 10px;border-top:1px solid var(--border);">
+        ${dl.map(r => `<div style="display:flex;gap:8px;padding:2px 0;font-size:12px;"><span style="color:var(--text2);min-width:80px;">${r[0]}</span><span style="flex:1;">${esc(String(r[1]))}</span></div>`).join('')}
+      </div>` : '';
+    return `<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:6px;">${head}${detail}</div>`;
   }
 
   function pct(v) {
-    const n = Number(v) || 0;
-    return `<span class="avail-section-pct ${n >= 30 ? 'high' : 'low'}">${n}% avail</span>`;
+    const x = Number(v) || 0;
+    return `<span class="avail-section-pct ${x >= 30 ? 'high' : 'low'}">${x}% avail</span>`;
   }
 
+  function section(label, type, summaryPct) {
+    const list = units.filter(u => u.type === type && passes(u));
+    const body = list.length
+      ? list.map(row).join('')
+      : `<div class="avail-all-occupied">${filter === 'available' ? 'No available units' : 'None in this filter'}</div>`;
+    return `<div class="avail-section">
+      <div class="avail-section-hd">${label} ${pct(summaryPct)}</div>
+      ${body}
+    </div>`;
+  }
+
+  const chip = (f, lbl) => `<button onclick="setAvailFilter('${propId}','${f}',event)" style="font-size:12px;padding:4px 12px;border-radius:20px;border:1px solid var(--border);cursor:pointer;background:${filter === f ? 'var(--bg)' : 'transparent'};color:var(--text);font-weight:${filter === f ? '700' : '400'};">${lbl}</button>`;
+
   return `
-    <!-- Stats -->
     <div class="avail-summary">
       <div class="avail-stat-card highlight">
         <div class="avail-stat-label">WH Available</div>
@@ -2363,7 +2398,7 @@ function renderLocBody(propId, d) {
       <div class="avail-stat-card">
         <div class="avail-stat-label">Office</div>
         <div class="avail-stat-val">${Number(off.avail_sf||0).toLocaleString()}</div>
-        <div class="avail-stat-sub">sf available</div>
+        <div class="avail-stat-sub">sf · ${off.avail_units||0} unit${off.avail_units!==1?'s':''}</div>
       </div>
       <div class="avail-stat-card">
         <div class="avail-stat-label">Docks</div>
@@ -2377,18 +2412,36 @@ function renderLocBody(propId, d) {
       </div>
     </div>
 
-    <!-- Available units -->
-    <div class="avail-section">
-      <div class="avail-section-hd">Warehouse ${pct(wh.avail_pct)}</div>
-      ${whUnits.length ? `<div class="avail-unit-list">${whUnits.map(unitCard).join('')}</div>` : `<div class="avail-all-occupied">All warehouse units occupied</div>`}
+    <div style="display:flex;gap:6px;margin:0 0 12px;">
+      ${chip('available','Available')}${chip('hold','Hold')}${chip('occupied','Occupied')}${chip('all','All')}
     </div>
-    <div class="avail-section">
-      <div class="avail-section-hd">Office ${pct(off.avail_pct)}</div>
-      ${offUnits.length ? `<div class="avail-unit-list">${offUnits.map(unitCard).join('')}</div>` : `<div class="avail-all-occupied">All office units occupied</div>`}
-    </div>
+
+    ${section('Warehouse','WH',wh.avail_pct)}
+    ${section('Office','OFFICE',off.avail_pct)}
+    ${section('Dock','DOCK',dk.avail_pct)}
 
     <!-- Floorplan injected here -->
     <div id="fp-section-${propId}"></div>`;
+}
+
+function setAvailFilter(propId, f, ev) {
+  if (ev) ev.stopPropagation();
+  availFilter[propId] = f;
+  const body = document.getElementById('loc-body-' + propId);
+  if (body) {
+    body.innerHTML = renderLocBody(propId, availMap[propId] || {});
+    setTimeout(() => renderFloorplans(propId), 0);
+  }
+}
+
+function toggleUnitDetail(key, ev) {
+  if (ev) ev.stopPropagation();
+  const el = document.getElementById('ud-' + key);
+  const ch = document.getElementById('uc-' + key);
+  if (!el) return;
+  const open = el.style.display === 'block';
+  el.style.display = open ? 'none' : 'block';
+  if (ch) ch.style.transform = open ? '' : 'rotate(180deg)';
 }
 
 function toggleAvailCard(propId) {
@@ -2802,6 +2855,8 @@ window.switchFP            = switchFP;
 window.showUnitPopup       = showUnitPopup;
 window.closeUnitPopup      = closeUnitPopup;
 window.toggleAvailCard     = toggleAvailCard;
+window.setAvailFilter      = setAvailFilter;
+window.toggleUnitDetail    = toggleUnitDetail;
 window.openAddLocation     = openAddLocation;
 window.autofillLocation    = autofillLocation;
 window.closeAddLocation    = closeAddLocation;
