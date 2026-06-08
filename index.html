@@ -164,6 +164,12 @@
     .topic-card.wait { border-left-color: var(--wait); }
     .topic-card.archived { opacity: .5; border-left-color: var(--border); }
     .card-summary { padding: 13px 14px 13px 15px; cursor: pointer; display: flex; align-items: flex-start; gap: 10px; }
+    .drag-handle { cursor: grab; color: var(--text2); opacity: .35; font-size: 15px; line-height: 1.2; flex-shrink: 0; margin-top: 1px; user-select: none; transition: opacity .15s; }
+    .topic-card:hover .drag-handle { opacity: .7; }
+    .drag-handle:active { cursor: grabbing; }
+    .topic-card.dragging { opacity: .45; }
+    .topic-card.drag-over { box-shadow: 0 0 0 2px var(--text) inset; }
+    @media print { .drag-handle { display: none; } }
     .card-summary-body { flex: 1; min-width: 0; }
     .card-title { font-size: 14px; font-weight: 700; line-height: 1.3; margin-bottom: 4px; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; word-break: break-word; overflow-wrap: anywhere; }
     .badge { font-size: 10px; font-weight: 800; letter-spacing: .6px; padding: 2px 7px; border-radius: 20px; flex-shrink: 0; text-transform: uppercase; }
@@ -912,6 +918,11 @@
       <div class="field"><label>PA Phone</label><input id="al-pa-phone" type="tel" placeholder="909-767-3596" autocomplete="off"/></div>
     </div>
     <div class="field"><label>PA Email</label><input id="al-pa-email" type="email" placeholder="huy@cubework.com" autocomplete="off"/></div>
+    <div class="modal-section">Parser Config <span style="font-weight:400;font-size:11px;">(comma-separated status values)</span></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="field"><label>Available statuses</label><input id="al-avail" type="text" placeholder="Vacant," autocomplete="off"/></div>
+      <div class="field"><label>Hold statuses</label><input id="al-hold" type="text" placeholder="HOLD,Hold" autocomplete="off"/></div>
+    </div>
     <div id="addloc-status" style="font-size:13px;color:var(--text2);margin-top:8px;min-height:20px;"></div>
     <div class="modal-foot">
       <button class="btn" onclick="closeAddLocation()">Cancel</button>
@@ -1251,14 +1262,87 @@ function fmtDur(s) { return `${Math.floor(s/60)}:${(s%60).toString().padStart(2,
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 // ═══════════════════════════════════════════════════════════════
+//  ORDERING / DRAG-AND-DROP
+// ═══════════════════════════════════════════════════════════════
+// Sort by explicit `order`; topics without one fall back to creation time.
+function byOrder(a, b) {
+  const ao = (typeof a.order === 'number') ? a.order : Infinity;
+  const bo = (typeof b.order === 'number') ? b.order : Infinity;
+  if (ao !== bo) return ao - bo;
+  return (Date.parse(a.createdAt) || 0) - (Date.parse(b.createdAt) || 0);
+}
+
+let dragId = null;
+
+// Drag only starts from the grip handle, so normal clicks still toggle cards.
+function enableDrag(id) { const c = document.getElementById('tc-' + id); if (c) c.draggable = true; }
+function disableDrag(id) { const c = document.getElementById('tc-' + id); if (c) c.draggable = false; }
+
+function cardDragStart(ev, id) {
+  dragId = id;
+  ev.dataTransfer.effectAllowed = 'move';
+  const c = document.getElementById('tc-' + id);
+  if (c) c.classList.add('dragging');
+}
+
+function cardDragEnd() {
+  document.querySelectorAll('.topic-card.dragging').forEach(c => c.classList.remove('dragging'));
+  document.querySelectorAll('.topic-card.drag-over').forEach(c => c.classList.remove('drag-over'));
+  document.querySelectorAll('.topic-card[draggable="true"]').forEach(c => c.draggable = false);
+  dragId = null;
+}
+
+function cardDragOver(ev, overId) {
+  if (!dragId || dragId === overId) return;
+  const dragged = topics.find(t => t.id === dragId);
+  const over    = topics.find(t => t.id === overId);
+  if (!dragged || !over || currentStatus(dragged) !== currentStatus(over)) return; // same column only
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = 'move';
+  ev.currentTarget.classList.add('drag-over');
+}
+
+function cardDragLeave(ev) { ev.currentTarget.classList.remove('drag-over'); }
+
+async function cardDrop(ev, targetId) {
+  ev.preventDefault();
+  ev.currentTarget.classList.remove('drag-over');
+  if (!dragId || dragId === targetId) return;
+  const dragged = topics.find(t => t.id === dragId);
+  const target  = topics.find(t => t.id === targetId);
+  if (!dragged || !target) return;
+  const status = currentStatus(target);
+  if (currentStatus(dragged) !== status) return; // reorder within a column only
+
+  // Current order of this column's active cards
+  const col = topics.filter(t => !t.archived && currentStatus(t) === status).sort(byOrder);
+  const ids = col.map(t => t.id);
+  ids.splice(ids.indexOf(dragId), 1);
+
+  // Insert before/after target depending on drop position
+  const rect  = ev.currentTarget.getBoundingClientRect();
+  const after = ev.clientY > rect.top + rect.height / 2;
+  ids.splice(ids.indexOf(targetId) + (after ? 1 : 0), 0, dragId);
+
+  // Reassign sequential orders, persist only what changed
+  const changed = [];
+  ids.forEach((id, i) => {
+    const t = topics.find(x => x.id === id);
+    if (t && t.order !== i) { t.order = i; changed.push(t); }
+  });
+  render();
+  for (const t of changed) await saveTopic(t);
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  RENDER
 // ═══════════════════════════════════════════════════════════════
 function render() {
   const active   = t => !t.archived;
   const archived = t =>  t.archived;
   const newTopics  = topics.filter(t => active(t) && currentStatus(t) === 'new');
-  const doActive   = topics.filter(t => active(t) && currentStatus(t) === 'do');
-  const waitActive = topics.filter(t => active(t) && currentStatus(t) === 'wait');
+  const doActive   = topics.filter(t => active(t) && currentStatus(t) === 'do').sort(byOrder);
+  const waitActive = topics.filter(t => active(t) && currentStatus(t) === 'wait').sort(byOrder);
   const doArch     = topics.filter(t => archived(t) && currentStatus(t) === 'do');
   const waitArch   = topics.filter(t => archived(t) && currentStatus(t) === 'wait');
 
@@ -1300,8 +1384,14 @@ function renderCard(topic) {
   const allRes  = allDone(topic);
   const noteCount = topic.entries.reduce((n, e) => n + (e.notes?.length || 0), 0);
   return `
-  <div class="topic-card ${topic.archived ? 'archived' : status}${isOpen ? ' open' : ''}" id="tc-${topic.id}">
+  <div class="topic-card ${topic.archived ? 'archived' : status}${isOpen ? ' open' : ''}" id="tc-${topic.id}"
+       ondragstart="cardDragStart(event,'${topic.id}')" ondragend="cardDragEnd(event)"
+       ondragover="cardDragOver(event,'${topic.id}')" ondragleave="cardDragLeave(event)"
+       ondrop="cardDrop(event,'${topic.id}')">
     <div class="card-summary" onclick="toggleCard('${topic.id}')">
+      ${topic.archived ? '' : `<span class="drag-handle" title="Drag to reorder"
+            onmousedown="enableDrag('${topic.id}')" onmouseup="disableDrag('${topic.id}')"
+            onclick="event.stopPropagation()">⠿</span>`}
       <div class="card-summary-body">
         <div class="card-title">
           <span class="badge ${topic.archived || allRes ? 'done' : status}">
@@ -2406,11 +2496,13 @@ const LOCATION_PRESETS = {
   'banana-fontana': {
     property:       '11179 Banana Fontana',
     address:        '11179 Banana Ave, Fontana, CA 92337',
-    sharepoint_url: 'https://cubework365.sharepoint.com/:x:/s/Cubework_PropertyManagement/IQCimTQLW_7MToQXE0ba2yx2Adkvxq4-RN9vk8JkjVmTfbg?e=vqFPQs',
-    yardi_url:      'https://apps.commercialcafe.com/dealmanager/content/#/app/property/9F88670B-D43B-49C6-972A-C4BFE38A337D/stackingplan',
-    pa_name:        'Keith Arline',
-    pa_phone:       '',
-    pa_email:       'keith.arline@cubework.com'
+    sharepoint_url:     'https://cubework365.sharepoint.com/:x:/s/Cubework_PropertyManagement/IQCimTQLW_7MToQXE0ba2yx2Adkvxq4-RN9vk8JkjVmTfbg?e=vqFPQs',
+    yardi_url:          'https://apps.commercialcafe.com/dealmanager/content/#/app/property/9F88670B-D43B-49C6-972A-C4BFE38A337D/stackingplan',
+    available_statuses: 'Vacant,',
+    hold_statuses:      'HOLD,Hold',
+    pa_name:            'Keith Arline',
+    pa_phone:           '',
+    pa_email:           'keith.arline@cubework.com'
   }
 };
 
@@ -2422,13 +2514,15 @@ function autofillLocation(key, e) {
   document.getElementById('al-address').value = p.address;
   document.getElementById('al-sp').value      = p.sharepoint_url;
   document.getElementById('al-yardi').value   = p.yardi_url;
+  document.getElementById('al-avail').value   = p.available_statuses || 'Vacant,';
+  document.getElementById('al-hold').value    = p.hold_statuses      || 'HOLD,Hold';
   document.getElementById('al-pa-name').value  = p.pa_name;
   document.getElementById('al-pa-phone').value = p.pa_phone;
   document.getElementById('al-pa-email').value = p.pa_email;
 }
 
 function openAddLocation() {
-  ['al-name','al-address','al-sp','al-yardi','al-pa-name','al-pa-phone','al-pa-email']
+  ['al-name','al-address','al-sp','al-yardi','al-pa-name','al-pa-phone','al-pa-email','al-avail','al-hold']
     .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   document.getElementById('addloc-status').textContent = '';
   document.getElementById('addloc-submit').disabled = false;
@@ -2455,10 +2549,12 @@ async function submitAddLocation() {
   status.style.color = 'var(--text2)';
 
   const payload = {
-    property:       name,
-    address:        document.getElementById('al-address').value.trim(),
-    sharepoint_url: sp,
-    yardi_url:      document.getElementById('al-yardi').value.trim(),
+    property:           name,
+    address:            document.getElementById('al-address').value.trim(),
+    sharepoint_url:     sp,
+    yardi_url:          document.getElementById('al-yardi').value.trim(),
+    available_statuses: document.getElementById('al-avail').value.trim() || 'Vacant,',
+    hold_statuses:      document.getElementById('al-hold').value.trim()  || 'HOLD,Hold',
     pa: {
       name:  document.getElementById('al-pa-name').value.trim(),
       phone: document.getElementById('al-pa-phone').value.trim(),
