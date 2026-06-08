@@ -800,6 +800,7 @@
       <button class="lf-btn"        data-stage="toured"    onclick="setLeadFilter('toured')">Toured</button>
       <button class="lf-btn"        data-stage="proposal"  onclick="setLeadFilter('proposal')">Proposal</button>
       <button class="lf-btn"        data-stage="waitlist"  onclick="setLeadFilter('waitlist')">⏳ Waitlist</button>
+      <button class="lf-btn" id="hide-wl-btn" style="margin-left:auto" onclick="toggleHideWaitlist()">Hide ⏳</button>
     </div>
 
     <!-- New leads strip (compact chips) -->
@@ -1859,6 +1860,7 @@ let unsubLeads = null;
 let editLeadId   = null;
 let leadFilter   = 'all';
 let showWonLost  = false;
+let hideWaitlist = false;
 let expandedLeadIds = new Set();
 
 const LEAD_STAGES = {
@@ -1891,9 +1893,10 @@ function renderLeadsSection() {
   const closed  = ['won','lost'];
   const active  = leads.filter(l => !l.archived && !closed.includes(l.stage || 'cold'));
   const wonlost = leads.filter(l => l.archived || closed.includes(l.stage || 'cold'));
-  const filtered = leadFilter === 'all' ? active
+  let filtered = leadFilter === 'all' ? active
     : leadFilter === 'waitlist' ? active.filter(l => l.wl_on)
     : active.filter(l => (l.stage||'cold') === leadFilter);
+  if (hideWaitlist && leadFilter !== 'waitlist') filtered = filtered.filter(l => !l.wl_on);
 
   const newL  = filtered.filter(l => !l.entries.length);
   const doL   = filtered.filter(l =>  l.entries.length && currentStatus(l) === 'do').sort(byOrder);
@@ -2196,6 +2199,13 @@ function setLeadFilter(stage) {
 
 function toggleWonLost() {
   showWonLost = !showWonLost;
+  renderLeadsSection();
+}
+
+function toggleHideWaitlist() {
+  hideWaitlist = !hideWaitlist;
+  const btn = document.getElementById('hide-wl-btn');
+  if (btn) { btn.textContent = hideWaitlist ? 'Show ⏳' : 'Hide ⏳'; btn.classList.toggle('active', hideWaitlist); }
   renderLeadsSection();
 }
 
@@ -3069,6 +3079,7 @@ window.leadDragOver        = leadDragOver;
 window.leadDragLeave       = leadDragLeave;
 window.leadDrop            = leadDrop;
 window.setLeadFilter       = setLeadFilter;
+window.toggleHideWaitlist  = toggleHideWaitlist;
 window.toggleWonLost       = toggleWonLost;
 window.approveEmail        = approveEmail;
 window.skipEmail           = skipEmail;
