@@ -3050,6 +3050,7 @@ let ideaNotes  = [];
 let unsubNotes = null;
 let noteSort   = 'new';   // 'new' | 'old'
 let noteSince  = '';      // YYYY-MM-DD lower bound on createdAt (inclusive)
+const editingNotes = new Set(); // note ids currently in edit mode
 
 unsubNotes = onSnapshot(collection(db, 'notes'), snap => {
   const prevIds = ideaNotes.map(n => n.id).join(',');
@@ -3082,25 +3083,60 @@ function renderNotes() {
 
 function noteCard(n) {
   const created = n.createdAt ? new Date(n.createdAt) : null;
-  const dateStr = created ? created.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) : '';
-  const ta = 'width:100%;min-height:58px;margin:4px 0 12px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:14px;font-family:inherit;line-height:1.45;resize:vertical;box-sizing:border-box;background:var(--bg);color:var(--text);';
-  const lbl = 'font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);';
-  return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px 16px;margin-bottom:12px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-        <span style="font-size:11px;color:var(--text2);">💡 Created ${dateStr}</span>
-        <button onclick="deleteIdeaNote('${n.id}')" style="font-size:11px;color:#b91c1c;background:transparent;border:1px solid #fecaca;border-radius:8px;padding:3px 9px;cursor:pointer;">Delete</button>
+  const edited  = n.updatedAt ? new Date(n.updatedAt) : null;
+  const createdStr = created ? created.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) : '—';
+  const editedStr  = edited ? edited.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) + ', ' + edited.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' }) : '';
+  const showEdited = edited && created && (edited - created) > 60000; // only if edited >1 min after creation
+  const lbl  = 'font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);';
+  const meta = `<div style="font-size:11px;color:var(--text2);">💡 Created ${createdStr}${showEdited ? ` · Edited ${editedStr}` : ''}</div>`;
+  const card = 'background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px 16px;margin-bottom:12px;';
+
+  if (editingNotes.has(n.id)) {
+    const ta = 'width:100%;min-height:64px;margin:4px 0 12px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:14px;font-family:inherit;line-height:1.45;resize:vertical;box-sizing:border-box;background:var(--bg);color:var(--text);';
+    return `<div style="${card}">
+        <div style="margin-bottom:10px;">${meta}</div>
+        <label style="${lbl}">Why does this issue matter?</label>
+        <textarea id="why-${n.id}" placeholder="Why this matters…" style="${ta}">${esc(n.why || '')}</textarea>
+        <label style="${lbl}">What's the fix?</label>
+        <textarea id="fix-${n.id}" placeholder="The fix / idea…" style="${ta}">${esc(n.fix || '')}</textarea>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:4px;">
+          <button class="btn sm" onclick="cancelNote('${n.id}')">Cancel</button>
+          <button class="btn sm dark" onclick="saveIdeaNote('${n.id}')">Save</button>
+        </div>
+      </div>`;
+  }
+
+  const block = (label, val) => `<label style="${lbl}">${label}</label>
+      <div style="font-size:14px;line-height:1.5;white-space:pre-wrap;margin:4px 0 12px;color:${val ? 'var(--text)' : 'var(--text2)'};">${val ? esc(val) : '—'}</div>`;
+  return `<div style="${card}">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;">
+        ${meta}
+        <div style="display:flex;gap:8px;">
+          <button class="btn sm" onclick="editNote('${n.id}')">Edit</button>
+          <button onclick="deleteIdeaNote('${n.id}')" style="font-size:12px;color:#b91c1c;background:transparent;border:1px solid #fecaca;border-radius:8px;padding:4px 10px;cursor:pointer;">Delete</button>
+        </div>
       </div>
-      <label style="${lbl}">Why does this issue matter?</label>
-      <textarea id="why-${n.id}" onchange="saveIdeaNote('${n.id}')" placeholder="Why this matters…" style="${ta}">${esc(n.why || '')}</textarea>
-      <label style="${lbl}">What's the fix?</label>
-      <textarea id="fix-${n.id}" onchange="saveIdeaNote('${n.id}')" placeholder="The fix / idea…" style="${ta}">${esc(n.fix || '')}</textarea>
+      ${block('Why does this issue matter?', n.why)}
+      ${block("What's the fix?", n.fix)}
     </div>`;
 }
 
 async function newIdeaNote() {
   const note = { id: 'n' + Date.now(), why: '', fix: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-  await persistItem(note, 'notes');
-  setTimeout(() => { const t = document.getElementById('why-' + note.id); if (t) t.focus(); }, 80);
+  editingNotes.add(note.id);             // open the new note straight into edit mode
+  await persistItem(note, 'notes');      // onSnapshot adds it and renders it editing
+  setTimeout(() => { const t = document.getElementById('why-' + note.id); if (t) t.focus(); }, 120);
+}
+
+function editNote(id) {
+  editingNotes.add(id);
+  renderNotes();
+  setTimeout(() => { const t = document.getElementById('why-' + id); if (t) t.focus(); }, 40);
+}
+
+function cancelNote(id) {
+  editingNotes.delete(id);
+  renderNotes();
 }
 
 async function saveIdeaNote(id) {
@@ -3110,12 +3146,15 @@ async function saveIdeaNote(id) {
   const fixEl = document.getElementById('fix-' + id);
   const note = { ...n, why: whyEl ? whyEl.value : n.why, fix: fixEl ? fixEl.value : n.fix, updatedAt: new Date().toISOString() };
   const i = ideaNotes.findIndex(x => x.id === id);
-  if (i >= 0) ideaNotes[i] = note;   // keep local copy fresh without forcing a re-render
+  if (i >= 0) ideaNotes[i] = note;
+  editingNotes.delete(id);
+  renderNotes();                         // back to view mode immediately
   await persistItem(note, 'notes');
 }
 
 async function deleteIdeaNote(id) {
   if (!confirm('Delete this note?')) return;
+  editingNotes.delete(id);
   try { await setDoc(doc(db, 'notes', id), { _deleted: true, id }); } catch (e) { console.error(e); }
 }
 
@@ -3153,6 +3192,8 @@ window.overlayClick    = overlayClick;
 window.pickType        = pickType;
 window.switchTab           = switchTab;
 window.newIdeaNote         = newIdeaNote;
+window.editNote            = editNote;
+window.cancelNote          = cancelNote;
 window.saveIdeaNote        = saveIdeaNote;
 window.deleteIdeaNote      = deleteIdeaNote;
 window.setNoteSort         = setNoteSort;
