@@ -540,20 +540,20 @@
     .avail-loading { text-align:center; padding:60px 20px; color:var(--text2); font-size:14px; }
 
     /* ── Location cards ──────────────────────── */
-    .loc-card { background:var(--surface); border-radius:var(--radius); box-shadow:var(--shadow); margin-bottom:12px; overflow:hidden; }
+    .loc-card { background:var(--surface); border-radius:var(--radius); box-shadow:var(--shadow); margin-bottom:8px; overflow:hidden; }
     .loc-card-hd {
       display:flex; align-items:flex-start; justify-content:space-between;
-      padding:14px 16px; cursor:pointer; gap:10px;
+      padding:9px 14px; cursor:pointer; gap:10px;
     }
     .loc-card-hd:hover { background:var(--bg); }
     .loc-hd-left { flex:1; min-width:0; }
-    .loc-name { font-size:15px; font-weight:800; margin-bottom:3px; }
+    .loc-name { font-size:14px; font-weight:800; margin-bottom:2px; }
     .loc-addr { font-size:12px; color:var(--text2); }
-    .loc-chips { display:flex; flex-wrap:wrap; gap:5px; margin-top:7px; }
+    .loc-chips { display:flex; flex-wrap:wrap; gap:5px; margin-top:5px; }
     .loc-chip { font-size:11px; font-weight:600; padding:2px 8px; border-radius:20px; }
     .loc-chip.avail { background:#dcfce7; color:#15803d; }
     .loc-chip.full  { background:#f3f4f6; color:var(--text2); }
-    .loc-meta { font-size:11px; color:var(--text2); margin-top:5px; opacity:.7; }
+    .loc-meta { font-size:11px; color:var(--text2); margin-top:4px; opacity:.7; }
     .loc-hd-right { display:flex; align-items:flex-start; gap:6px; flex-shrink:0; padding-top:2px; }
     .loc-chevron { font-size:12px; color:var(--text2); transition:transform .2s; margin-top:2px; }
     .loc-card.open .loc-chevron { transform:rotate(180deg); }
@@ -561,11 +561,11 @@
     .loc-card.open .loc-body { display:block; }
     .loc-actions { display:flex; gap:7px; flex-wrap:wrap; margin-bottom:14px; }
     /* header quick links */
-    .loc-quick-links { display:flex; gap:5px; flex-wrap:wrap; margin-top:7px; align-items:center; }
+    .loc-quick-links { display:flex; gap:5px; flex-wrap:wrap; margin-top:5px; align-items:center; }
     .loc-ql { font-size:11px; font-weight:600; padding:2px 9px; border-radius:20px; border:1.5px solid var(--border); background:var(--surface); color:var(--text2); text-decoration:none; cursor:pointer; font-family:inherit; transition:all .15s; white-space:nowrap; }
     .loc-ql:hover { background:var(--bg); color:var(--text); border-color:#9ca3af; }
     /* PA row */
-    .loc-pa { display:flex; align-items:center; gap:8px; margin-top:7px; font-size:12px; flex-wrap:wrap; }
+    .loc-pa { display:flex; align-items:center; gap:8px; margin-top:5px; font-size:12px; flex-wrap:wrap; }
     .loc-pa-name { font-weight:700; color:var(--text); }
     .loc-pa-phone { color:var(--text2); }
     .loc-pa-edit { background:none; border:none; font-size:11px; color:var(--text2); cursor:pointer; font-family:inherit; padding:0; text-decoration:underline; text-underline-offset:2px; }
@@ -1084,13 +1084,9 @@
     <div class="modal-section">Waitlist</div>
     <label class="check-row" style="padding:4px 0;">
       <input type="checkbox" id="lf-wl-on" />
-      Add to waitlist — watch region(s) for matching space
+      Add to waitlist — watch chosen locations for matching space
     </label>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-      <div class="field">
-        <label>Watch region(s)</label>
-        <select id="lf-wl-regions" multiple size="3"></select>
-      </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
       <div class="field">
         <label>Space type</label>
         <select id="lf-wl-type">
@@ -1101,11 +1097,10 @@
           <option value="TRAILER">Parking / Trailer</option>
         </select>
       </div>
+      <div class="field"><label>Min sq ft</label><input id="lf-wl-sfmin" type="number" placeholder="2000" autocomplete="off" /></div>
+      <div class="field"><label>Max sq ft</label><input id="lf-wl-sfmax" type="number" placeholder="6000" autocomplete="off" /></div>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-      <div class="field"><label>Min sq ft</label><input id="lf-wl-sfmin" type="number" placeholder="e.g. 2000" autocomplete="off" /></div>
-      <div class="field"><label>Max sq ft</label><input id="lf-wl-sfmax" type="number" placeholder="e.g. 6000" autocomplete="off" /></div>
-    </div>
+    <div style="font-size:12px;color:var(--text2);padding:2px 0 4px;">Pick which locations to watch on the lead card after saving.</div>
 
     <div class="modal-foot">
       <button class="btn" onclick="closeLeadModal()">Cancel</button>
@@ -1881,6 +1876,7 @@ let editLeadId   = null;
 let leadFilter   = 'all';
 let showWonLost  = false;
 let hideWaitlist = false;
+const wlCollapsed = new Set();   // lead ids whose waitlist block is collapsed
 let expandedLeadIds = new Set();
 
 const LEAD_STAGES = {
@@ -1973,58 +1969,101 @@ function renderLeadsSection() {
   }
 }
 
-function renderWaitlistBlock(lead) {
-  const regions = (lead.wl_regions || []).map(s => STATE_NAMES[s] || s).join(', ') || 'any region';
-  const type = (lead.wl_type && lead.wl_type !== 'any') ? lead.wl_type : 'any type';
-  const sizeTxt = (lead.wl_sf_min || lead.wl_sf_max)
-    ? `${(lead.wl_sf_min || 0).toLocaleString()}–${lead.wl_sf_max ? lead.wl_sf_max.toLocaleString() : '∞'} sf`
-    : 'any size';
-  return `<div style="margin:8px 0;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg);">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
-        <div style="font-size:12px;color:var(--text2);">⏳ Watching <b>${esc(regions)}</b> · ${esc(type)} · ${esc(sizeTxt)}</div>
-        <button class="btn sm dark" onclick="checkWaitlist('${lead.id}',event)">🔎 Check matches</button>
-      </div>
-      <div id="wl-results-${lead.id}" style="margin-top:8px;"></div>
-    </div>`;
-}
-
-function checkWaitlist(leadId, ev) {
-  if (ev) ev.stopPropagation();
-  const lead = leads.find(l => l.id === leadId);
-  const box  = document.getElementById('wl-results-' + leadId);
-  if (!lead || !box) return;
-
-  const regions = (lead.wl_regions || []).map(s => s.toUpperCase());
+// Pure matcher: available-or-hold units in the lead's chosen locations, by type + size
+function wlMatches(lead) {
+  const locs = new Set(lead.wl_locations || []);
+  if (!locs.size) return [];
   const wantType = lead.wl_type || 'any';
   const min = Number(lead.wl_sf_min) || 0;
   const max = (lead.wl_sf_max != null && lead.wl_sf_max !== '') ? Number(lead.wl_sf_max) : Infinity;
   const sized = min > 0 || max !== Infinity;
-
-  const matches = [];
-  Object.keys(availMap).forEach(pid => {
+  const out = [];
+  locs.forEach(pid => {
     const d = availMap[pid];
-    if (regions.length && !regions.includes(stateOf(d))) return;
+    if (!d) return;
     (d.units || []).forEach(u => {
       if (!(u.available || u.hold)) return;                 // holds count as available
       if (wantType !== 'any' && u.type !== wantType) return;
       const sf = Number(u.sf) || 0;
       if (sized && !(sf >= min && sf <= max)) return;
-      matches.push({ property: d.property || pid, unit: u.unit, sf, type: u.type, hold: !!u.hold, tenant: u.tenant });
+      out.push({ property: d.property || pid, unit: u.unit, sf, type: u.type, hold: !!u.hold });
     });
   });
+  out.sort((a, b) => a.property.localeCompare(b.property) || a.sf - b.sf);
+  return out;
+}
 
-  if (!matches.length) {
-    box.innerHTML = `<div style="font-size:12px;color:var(--text2);">No matches right now in ${esc(regions.map(s => STATE_NAMES[s] || s).join(', ') || 'any region')}.</div>`;
-    return;
-  }
-  matches.sort((a, b) => a.property.localeCompare(b.property) || a.sf - b.sf);
-  box.innerHTML = `<div style="font-size:12px;font-weight:700;color:#166534;margin-bottom:4px;">✓ ${matches.length} match${matches.length !== 1 ? 'es' : ''}</div>`
-    + matches.map(m => `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:12px;border-top:1px solid var(--border);">
-        <span style="font-weight:700;min-width:130px;">${esc(m.property)}</span>
-        <span style="min-width:58px;">${esc(m.unit)}</span>
-        <span style="color:var(--text2);flex:1;">${m.sf ? m.sf.toLocaleString() + ' sf' : '—'} · ${esc(m.type)}</span>
-        ${m.hold ? `<span style="font-size:10px;padding:1px 7px;border-radius:20px;background:#ffedd5;color:#9a3412;">Hold</span>` : ''}
-      </div>`).join('');
+function renderWaitlistBlock(lead) {
+  const collapsed = wlCollapsed.has(lead.id);
+  const locs = lead.wl_locations || [];
+  const type = (lead.wl_type && lead.wl_type !== 'any') ? lead.wl_type : 'any type';
+  const sizeTxt = (lead.wl_sf_min || lead.wl_sf_max)
+    ? `${(lead.wl_sf_min || 0).toLocaleString()}–${lead.wl_sf_max ? lead.wl_sf_max.toLocaleString() : '∞'} sf`
+    : 'any size';
+  const matches = wlMatches(lead);
+
+  const header = `<div onclick="wlToggleCollapse('${lead.id}')" style="display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;">
+      <div style="font-size:12px;font-weight:700;color:#92400e;">⏳ Waitlist — ${matches.length} match${matches.length !== 1 ? 'es' : ''}
+        <span style="font-weight:400;color:var(--text2);">· ${locs.length} location${locs.length !== 1 ? 's' : ''} · ${esc(type)} · ${esc(sizeTxt)}</span>
+      </div>
+      <span style="font-size:11px;color:var(--text2);">${collapsed ? '▸' : '▾'}</span>
+    </div>`;
+
+  const wrap = inner => `<div style="margin:8px 0;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg);">${inner}</div>`;
+  if (collapsed) return wrap(header);
+
+  const selected = new Set(locs);
+  const options = Object.keys(availMap)
+    .filter(pid => !selected.has(pid))
+    .sort((a, b) => String(availMap[a].property || a).localeCompare(String(availMap[b].property || b)))
+    .map(pid => `<option value="${pid}">${esc(availMap[pid].property || pid)}</option>`).join('');
+  const picker = `<select onchange="wlAddLocation('${lead.id}',this.value)" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);">
+      <option value="">＋ Add location…</option>${options}
+    </select>`;
+  const chips = locs.map(pid => `<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:2px 4px 2px 9px;border-radius:20px;background:var(--surface);border:1px solid var(--border);">
+      ${esc((availMap[pid] && availMap[pid].property) || pid)}
+      <button onclick="wlRemoveLocation('${lead.id}','${pid}')" title="Remove" style="border:none;background:none;cursor:pointer;color:var(--text2);font-size:14px;line-height:1;padding:0 2px;">×</button>
+    </span>`).join('');
+
+  let results;
+  if (!locs.length) results = `<div style="font-size:12px;color:var(--text2);">Add one or more locations to watch.</div>`;
+  else if (!matches.length) results = `<div style="font-size:12px;color:var(--text2);">No matches in the selected location(s) right now.</div>`;
+  else results = `<div style="font-size:12px;font-weight:700;color:#166534;margin-bottom:4px;">✓ ${matches.length} match${matches.length !== 1 ? 'es' : ''}</div>`
+      + matches.map(m => `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:12px;border-top:1px solid var(--border);">
+          <span style="font-weight:700;min-width:130px;">${esc(m.property)}</span>
+          <span style="min-width:58px;">${esc(m.unit)}</span>
+          <span style="color:var(--text2);flex:1;">${m.sf ? m.sf.toLocaleString() + ' sf' : '—'} · ${esc(m.type)}</span>
+          ${m.hold ? `<span style="font-size:10px;padding:1px 7px;border-radius:20px;background:#ffedd5;color:#9a3412;">Hold</span>` : ''}
+        </div>`).join('');
+
+  return wrap(`${header}
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:10px 0;">${picker}${chips}</div>
+      ${results}`);
+}
+
+async function wlAddLocation(leadId, pid) {
+  if (!pid) return;
+  const lead = leads.find(l => l.id === leadId);
+  if (!lead) return;
+  const set = new Set(lead.wl_locations || []); set.add(pid);
+  const updated = { ...lead, wl_locations: [...set], updatedAt: new Date().toISOString() };
+  const i = leads.findIndex(l => l.id === leadId); if (i >= 0) leads[i] = updated;
+  renderLeadsSection();
+  await persistItem(updated, 'leads');
+}
+
+async function wlRemoveLocation(leadId, pid) {
+  const lead = leads.find(l => l.id === leadId);
+  if (!lead) return;
+  const updated = { ...lead, wl_locations: (lead.wl_locations || []).filter(x => x !== pid), updatedAt: new Date().toISOString() };
+  const i = leads.findIndex(l => l.id === leadId); if (i >= 0) leads[i] = updated;
+  renderLeadsSection();
+  await persistItem(updated, 'leads');
+}
+
+function wlToggleCollapse(leadId) {
+  if (wlCollapsed.has(leadId)) wlCollapsed.delete(leadId); else wlCollapsed.add(leadId);
+  renderLeadsSection();
 }
 
 function renderLeadCard(lead) {
@@ -2245,21 +2284,9 @@ function _clearLeadModal() {
   document.getElementById('lf-wl-sfmax').value  = '';
 }
 
-// Fill the waitlist region <select> from the states present in availMap (+ any already selected)
-function populateWlRegions(selected) {
-  const sel = document.getElementById('lf-wl-regions');
-  if (!sel) return;
-  const states = new Set(Object.keys(availMap).map(pid => stateOf(availMap[pid])));
-  (selected || []).forEach(s => states.add(s));
-  const arr = [...states].filter(s => s && s !== 'Other').sort();
-  sel.innerHTML = arr.map(s => `<option value="${s}" ${(selected || []).includes(s) ? 'selected' : ''}>${STATE_NAMES[s] || s}</option>`).join('')
-    || `<option disabled>No synced locations yet</option>`;
-}
-
 function openNewLead() {
   editLeadId = null;
   _clearLeadModal();
-  populateWlRegions([]);
   document.getElementById('lm-title').textContent = 'New Lead';
   document.getElementById('lead-overlay').classList.add('open');
   setTimeout(() => document.getElementById('lf-company').focus(), 180);
@@ -2293,7 +2320,6 @@ function openEditLeadDetails(id, e) {
   document.getElementById('lf-wl-type').value            = lead.wl_type   || 'any';
   document.getElementById('lf-wl-sfmin').value           = lead.wl_sf_min ?? '';
   document.getElementById('lf-wl-sfmax').value           = lead.wl_sf_max ?? '';
-  populateWlRegions(lead.wl_regions || []);
   document.getElementById('lead-overlay').classList.add('open');
   setTimeout(() => document.getElementById('lf-company').focus(), 180);
 }
@@ -2326,7 +2352,7 @@ async function saveLeadDetails() {
     dock:           document.getElementById('lf-dock').checked,
     is_importer:    document.getElementById('lf-is-importer').checked,
     wl_on:          document.getElementById('lf-wl-on').checked,
-    wl_regions:     Array.from(document.getElementById('lf-wl-regions').selectedOptions).map(o => o.value),
+    wl_locations:   existing?.wl_locations || [],   // locations are picked on the lead card
     wl_type:        document.getElementById('lf-wl-type').value,
     wl_sf_min:      document.getElementById('lf-wl-sfmin').value ? Number(document.getElementById('lf-wl-sfmin').value) : null,
     wl_sf_max:      document.getElementById('lf-wl-sfmax').value ? Number(document.getElementById('lf-wl-sfmax').value) : null,
@@ -2484,22 +2510,21 @@ function renderLocCard(propId, d) {
     : null;
 
   const chips = [
-    whAvail  ? `<span class="loc-chip avail">WH ${whAvail.toLocaleString()} sf</span>` : `<span class="loc-chip full">WH full</span>`,
-    offAvail ? `<span class="loc-chip avail">Office ${offAvail.toLocaleString()} sf</span>` : `<span class="loc-chip full">Office full</span>`,
-    dkAvail  ? `<span class="loc-chip avail">${dkAvail} dock${dkAvail>1?'s':''}</span>` : '',
-    prkAvail ? `<span class="loc-chip avail">${prkAvail} parking</span>` : '',
+    (wh.avail_units || whAvail)   ? `<span class="loc-chip avail">WH ${wh.avail_units||0} unit${wh.avail_units!==1?'s':''} · ${whAvail.toLocaleString()} sf</span>`     : `<span class="loc-chip full">WH full</span>`,
+    (off.avail_units || offAvail) ? `<span class="loc-chip avail">Office ${off.avail_units||0} unit${off.avail_units!==1?'s':''} · ${offAvail.toLocaleString()} sf</span>` : `<span class="loc-chip full">Office full</span>`,
+    dkAvail ? `<span class="loc-chip avail">Dock ${dkAvail} avail</span>` : '',
   ].filter(Boolean).join('');
 
   const body = isOpen ? renderLocBody(propId, d) : '';
 
   const pa = d.pa || {};
   const paLine = pa.name
-    ? `<div class="loc-pa">
+    ? `<div class="loc-pa" style="margin-top:0">
         <span class="loc-pa-name">👤 ${esc(pa.name)}</span>
         ${pa.phone ? `<a class="loc-pa-phone" href="tel:${esc(pa.phone)}" onclick="event.stopPropagation()">📞 ${esc(pa.phone)}</a>` : ''}
         <button class="loc-pa-edit" onclick="openEditPA('${propId}',event)">edit</button>
       </div>`
-    : `<div class="loc-pa"><button class="loc-pa-edit" onclick="openEditPA('${propId}',event)">+ Add property associate</button></div>`;
+    : `<div class="loc-pa" style="margin-top:0"><button class="loc-pa-edit" onclick="openEditPA('${propId}',event)">+ Add property associate</button></div>`;
 
   const quickLinks = [
     d.yardi_url      ? `<a class="loc-ql" href="${esc(d.yardi_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Blueprint ↗</a>` : '',
@@ -2515,8 +2540,10 @@ function renderLocCard(propId, d) {
         <div class="loc-name">🏭 ${esc(d.property || propId)}</div>
         ${d.address ? `<div class="loc-addr">${esc(d.address)}</div>` : ''}
         <div class="loc-chips">${chips}</div>
-        ${paLine}
-        <div class="loc-quick-links">${quickLinks}</div>
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:5px;">
+          ${paLine}
+          <div class="loc-quick-links" style="margin-top:0">${quickLinks}</div>
+        </div>
         ${sheetDate ? `<div class="loc-meta">Sheet: ${sheetDate}${syncDate ? ' · Synced: ' + syncDate : ''}</div>` : ''}
       </div>
       <div class="loc-hd-right">
@@ -3233,7 +3260,9 @@ window.leadOverlayClick    = leadOverlayClick;
 window.saveLeadDetails     = saveLeadDetails;
 window.deleteLead          = deleteLead;
 window.toggleLeadCard      = toggleLeadCard;
-window.checkWaitlist       = checkWaitlist;
+window.wlAddLocation       = wlAddLocation;
+window.wlRemoveLocation    = wlRemoveLocation;
+window.wlToggleCollapse    = wlToggleCollapse;
 window.enableLeadDrag      = enableLeadDrag;
 window.disableLeadDrag     = disableLeadDrag;
 window.leadDragStart       = leadDragStart;
