@@ -2006,7 +2006,10 @@ function renderWaitlistBlock(lead) {
       <div style="font-size:12px;font-weight:700;color:#92400e;">⏳ Waitlist — ${matches.length} match${matches.length !== 1 ? 'es' : ''}
         <span style="font-weight:400;color:var(--text2);">· ${locs.length} location${locs.length !== 1 ? 's' : ''} · ${esc(type)} · ${esc(sizeTxt)}</span>
       </div>
-      <span style="font-size:11px;color:var(--text2);">${collapsed ? '▸' : '▾'}</span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        ${locs.length ? `<button onclick="event.stopPropagation();wlRecheck('${lead.id}',event)" title="Re-sync the watched locations and refresh matches" style="font-size:11px;border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:2px 9px;cursor:pointer;color:var(--text);">↻ Check</button>` : ''}
+        <span style="font-size:11px;color:var(--text2);">${collapsed ? '▸' : '▾'}</span>
+      </div>
     </div>`;
 
   const wrap = inner => `<div style="margin:8px 0;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg);">${inner}</div>`;
@@ -2063,6 +2066,17 @@ async function wlRemoveLocation(leadId, pid) {
 
 function wlToggleCollapse(leadId) {
   if (wlCollapsed.has(leadId)) wlCollapsed.delete(leadId); else wlCollapsed.add(leadId);
+  renderLeadsSection();
+}
+
+// Re-sync the watched locations (pull latest from SharePoint) and refresh matches.
+// The list updates instantly against current data, then again when each sync writes back
+// (the availability listener re-renders the leads board).
+function wlRecheck(leadId, ev) {
+  if (ev) ev.stopPropagation();
+  const lead = leads.find(l => l.id === leadId);
+  if (!lead) return;
+  (lead.wl_locations || []).forEach(pid => { try { triggerAvailSync(pid); } catch (e) {} });
   renderLeadsSection();
 }
 
@@ -2424,6 +2438,7 @@ unsubAvail = onSnapshot(collection(db, 'availability'), snap => {
   snap.forEach(d => { availMap[d.id] = d.data(); });
   snap.docChanges().forEach(c => { if (c.type === 'removed') delete availMap[c.doc.id]; });
   renderAvailability();
+  if (typeof renderLeadsSection === 'function') renderLeadsSection(); // keep waitlist matches live when a location syncs
 });
 
 function renderAvailability() {
@@ -3263,6 +3278,7 @@ window.toggleLeadCard      = toggleLeadCard;
 window.wlAddLocation       = wlAddLocation;
 window.wlRemoveLocation    = wlRemoveLocation;
 window.wlToggleCollapse    = wlToggleCollapse;
+window.wlRecheck           = wlRecheck;
 window.enableLeadDrag      = enableLeadDrag;
 window.disableLeadDrag     = disableLeadDrag;
 window.leadDragStart       = leadDragStart;
