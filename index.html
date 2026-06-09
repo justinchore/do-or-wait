@@ -2617,10 +2617,11 @@ function renderLocBody(propId, d) {
   const PILLS = {
     available: ['#dcfce7', '#166534', 'Available'],
     occupied:  ['#f3f4f6', '#4b5563', 'Occupied'],
-    hold:      ['#ffedd5', '#9a3412', 'Hold']
+    hold:      ['#ffedd5', '#9a3412', 'Hold'],
+    sold:      ['#f3e8ff', '#7e22ce', 'Sold']
   };
   const isAvail = u => (u.available || u.hold); // a unit on hold still counts as available
-  const statusOf = u => u.hold ? 'hold' : (isAvail(u) ? 'available' : 'occupied');
+  const statusOf = u => u.hold ? 'hold' : isAvail(u) ? 'available' : (/sold/i.test(u.status || '') ? 'sold' : 'occupied');
   const passes = u => filter === 'all' ? true
                     : filter === 'available' ? isAvail(u)
                     : !isAvail(u); // occupied
