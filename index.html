@@ -2377,6 +2377,15 @@ const availFilter = {}; // per-property unit filter: available | occupied | all
 let availSearch = '';   // Avail tab location search query
 const STATE_NAMES = { CA:'California', NV:'Nevada', AZ:'Arizona', TX:'Texas', WA:'Washington', OR:'Oregon', OH:'Ohio', IL:'Illinois', GA:'Georgia', FL:'Florida', NY:'New York', NJ:'New Jersey', PA:'Pennsylvania', UT:'Utah', CO:'Colorado', NC:'North Carolina' };
 function stateOf(d) { const m = String((d && d.address) || '').match(/,\s*([A-Za-z]{2})\s+\d{5}/); return m ? m[1].toUpperCase() : 'Other'; }
+// Yardi Deal Manager URLs are .../property/{GUID}/{view}; swap the trailing
+// view (floorplan/stackingplan/etc.) to the "spaces" view. Same GUID, so this
+// works for every existing and future yardi_url with no data entry.
+function yardiSpaces(url) {
+  if (!url) return url;
+  return /\/property\/[^/]+\/[^/?#]*$/.test(url)
+    ? url.replace(/(\/property\/[^/]+\/)[^/?#]*$/, '$1spaces')
+    : url.replace(/\/+$/, '') + '/spaces';
+}
 const fpFloors   = {};          // propId → 'warehouse' | 'office'
 
 // n8n on-demand webhook URL — fill in after importing workflow 4
@@ -2493,7 +2502,8 @@ function renderLocCard(propId, d) {
     : `<div class="loc-pa"><button class="loc-pa-edit" onclick="openEditPA('${propId}',event)">+ Add property associate</button></div>`;
 
   const quickLinks = [
-    d.yardi_url      ? `<a class="loc-ql" href="${esc(d.yardi_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Yardi ↗</a>` : '',
+    d.yardi_url      ? `<a class="loc-ql" href="${esc(d.yardi_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Blueprint ↗</a>` : '',
+    d.yardi_url      ? `<a class="loc-ql" href="${esc(yardiSpaces(d.yardi_url))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Spaces ↗</a>` : '',
     d.sharepoint_url ? `<a class="loc-ql" href="${esc(d.sharepoint_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">SharePoint ↗</a>` : '',
     `<button class="loc-ql avail-refresh" id="refresh-${propId}" onclick="event.stopPropagation();triggerAvailSync('${propId}')">⟳</button>`
   ].filter(Boolean).join('');
