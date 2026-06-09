@@ -1,10 +1,12 @@
 # Do or Wait — Project Brief for Claude
 
 ## What this is
-A web app for Justin Cho (Justin.Cho@cubework.com) at Cubework. Three tabs:
+A web app for Justin Cho (Justin.Cho@cubework.com) at Cubework. Tabs:
 1. **Tasks** — DO/WAIT topic threads (digital sticky note system)
 2. **Leads** — Sales pipeline for leasing prospects, same DO/WAIT thread model  
-3. **🏭 Avail** — Real-time availability dashboard for Cubework warehouse locations
+3. **📞 Playbook** — (existing sales playbook view)
+4. **🏭 Avail** — Real-time availability dashboard for Cubework warehouse locations
+5. **💡 Notes** — Ideas/issues notebook (two editable fields per note, filter by date created)
 
 Deployed at: https://justinchore.github.io/do-or-wait/
 Source: `C:\Users\jcho\Documents\Claude\Projects\do_or_wait\index.html` (single HTML file, push to GitHub to deploy)
@@ -31,19 +33,20 @@ Sales leads. Thread structure + lead-specific fields: `company`, `first_name`, `
 
 **Waitlist fields** (a lead can be put on the waitlist to watch for matching space): `wl_on` (bool), `wl_regions` (array of state codes, e.g. `["CA"]`), `wl_type` (`any`/`WH`/`OFFICE`/`DOCK`/`TRAILER`), `wl_sf_min`, `wl_sf_max`. The "⏳ Waitlist" lead filter shows only `wl_on` leads. On an expanded waitlisted lead, **🔎 Check matches** (`checkWaitlist(leadId)`) scans `availMap` client-side for available-or-hold units in the watched region(s) matching type + size, and renders the hits inline (`renderWaitlistBlock`). No n8n involved — it reads the already-synced availability data.
 
+### `notes/{id}`
+Ideas/issues notebook (💡 Notes tab). Fields: `why` (text — "Why does this issue matter?"), `fix` (text — "What's the fix?"), `createdAt`, `updatedAt`, `_deleted` (soft-delete flag). Both text fields are always-editable textareas that save on blur (`saveIdeaNote`). The tab has a Newest/Oldest sort and a "Since" date filter on `createdAt`. `renderNotes` only re-renders on add/delete (not on in-place edits) so typing isn't interrupted.
+
 ### `availability/{propId}`
 Written by n8n after syncing each property's SharePoint file. Fields: `property`, `address`, `yardi_url`, `sharepoint_url`, `sheet_last_modified`, `synced_at`, `wh{}`, `office{}`, `dock{}`, `parking{}`, `units[]`, `pa{name,phone,email}`
 
 Each entry in `units[]` (parsed from the BOT tab): `unit`, `type` (WH/OFFICE/DOCK/TRAILER), `sf`, `status`, `tenant`, `owner`, `phone`, `email`, `poc`, `notes`, `available` (bool), `hold` (bool). owner/phone/email/poc/notes come from BOT-tab cols 6-10 and are null when blank.
 
 ### `config/properties`
-One document. Contains `properties` array — each entry:
+One document. Contains a `properties` array — each entry:
 ```
-id, driveId, itemId, property, address, yardi_url, sharepoint_url,
-available_statuses (string, comma-separated e.g. "Vacant,"),
-hold_statuses (string, comma-separated e.g. "HOLD,Hold")
+id, driveId, itemId, property, address, yardi_url, sharepoint_url
 ```
-Note: `available_statuses` and `hold_statuses` are NOT yet added to Pellissier or Banana Fontana entries — need to add manually in Firestore Console.
+(Some older entries also carry `available_statuses`/`hold_statuses` strings — these are **obsolete and ignored**; the parser normalizes statuses itself. The Add Location form still shows those fields but they have no effect.)
 
 ---
 
@@ -62,18 +65,16 @@ Triggered by: **Webhook1** (path: `add-location`, receives full location payload
 ```
 Webhook1 → Parse URL + generate ID → Resolve SharePoint file 
 → Extract file IDs → Read current config → Build updated config 
-→ Save config → [NOT YET connected to Save PA or to availability sync]
+→ Save config → Save PA to availability → Get property config (→ continues into the sync chain)
 ```
-
-**Save PA to availability** node exists but is disconnected from the main flow.
+Adding a location now also immediately syncs its availability — `Save PA to availability` writes the PA name/phone/email onto the availability doc and then feeds into the sync chain's `Get property config`.
 
 ---
 
-## What needs to be fixed in n8n (priority order)
+## n8n changes (all applied 2026-06-08 — authoritative export: `n8n/5_add_location.json`)
 
-### 1. Connect Add Location chain to trigger availability sync
-After `Save config`, wire: `Save config → Save PA to availability → Get property config`  
-This makes adding a location also immediately sync its availability data.
+### 1. Connect Add Location chain to sync — ✅ DONE
+`Save config → Save PA to availability → Get property config` is wired, so adding a location immediately syncs it.
 
 ### 2. Parse + build patch — ✅ DONE (rewritten 2026-06-08)
 The sync reads the licensee tab. **Tab names vary** ("BOT - NEW ACTIVE LICENSEE" at Pellissier, "BOT - Active Licensee Lists" at Reyes, etc.), so "Pick data sheet" matches by PATTERN — first worksheet whose name contains "LICENSEE", then "ALL UNITS", then starts-with "BOT", else sheet[0]. (Exact-name matching was the bug that left Reyes with zero units — it fell back to the wrong sheet.) The parser was rewritten to handle the real variations found in the live CA sheets:
@@ -87,13 +88,15 @@ Full node code: **`n8n/parse_build_patch.node.js`** (paste into the node's JS Co
 ### 3. ~~Update "Build updated config" code~~ — NO LONGER NEEDED
 The parser self-normalizes statuses, so per-location `available_statuses`/`hold_statuses` config is obsolete. Skip.
 
-### 4. Update "Find property" code
-Current code tries `$('Prep PA patch')` which no longer exists. Replace with:
+### 4. Fix "Find property" code — ✅ DONE
+The dead `$('Prep PA patch')` reference is gone. Because "Find property" now runs from BOTH the availability-sync webhook AND the add-location tail (only one of those nodes executes per run), the propId lookup reads each inside try/catch so the unexecuted node doesn't throw:
 ```javascript
-const propId = $('Webhook').first().json.body?.propId 
-            || $('Build updated config').first().json?.propId 
-            || '';
+let propId = '';
+try { propId = $('Webhook').first().json.body?.propId || ''; } catch (e) {}
+if (!propId) { try { propId = $('Build updated config').first().json?.propId || ''; } catch (e) {} }
+if (!propId) throw new Error('No propId found');
 ```
+Also fixed: "Save PA to availability" was writing a literal `"="` into the PA fields — its jsonBody was rebuilt as a single `JSON.stringify({...})` expression.
 
 ### 5. ~~Add `available_statuses`/`hold_statuses` to Firestore entries~~ — NO LONGER NEEDED
 Obsolete: the rewritten parser normalizes statuses itself, so no per-location status fields are required.
@@ -106,8 +109,12 @@ All CA PA Weekly Report workbooks share a consistent **`BOT - NEW ACTIVE LICENSE
 ## Current locations
 | propId | Property | Notes |
 |--------|----------|-------|
-| `pellissier-2720` | 2720 Pellissier, City of Industry | Working. R-units = OFFICE. DOCK units = DOCK |
-| `11179-banana-fontana` | 11179 Banana, Fontana | Added. DD-units = DOCK. Parser now handles DD01-DD14 (fixed 2026-06-08) |
+| `pellissier-2720` | 2720 Pellissier, City of Industry | Tab uses short type codes (WH/OFFICE/DOCK/TRAILER). R-units = OFFICE |
+| `11179-banana-fontana` | 11179 Banana, Fontana | DD-units = DOCK. Parser handles DD01-DD14 |
+| `reyes-compton` | Reyes, Rancho Dominguez | Licensee tab is named "BOT - Active Licensee Lists" — pattern match handles it; types spelled out (Warehouse/Office/Dedicated/Trailer) |
+| `218-machlin-walnut` | 218 Machlin Ct, Walnut | single-digit (A1) + 3-digit office (R101) unit IDs |
+
+More CA locations (Terminal West Sac, Fresno, Airport Ontario, La Mirada) are being onboarded via the Add Location flow; quick-fill entries live in `LOCATION_PRESETS`. SharePoint links for the CA set are in `sharepoint_location_links.txt`.
 
 ### Banana Fontana unit structure (from SharePoint)
 - WH: A01-A09, B01-B05, C01-C03, D01-D04, E01-E07
@@ -118,7 +125,9 @@ All CA PA Weekly Report workbooks share a consistent **`BOT - NEW ACTIVE LICENSE
 ---
 
 ## App structure (index.html key functions)
-- `renderAvailability()` — loops `availMap`, calls `renderLocCard()` per property
+- `renderAvailability()` — renders a search box + location cards **grouped by state**. `stateOf(d)` parses the 2-letter state from the address (`, ST 99999`); groups are labeled via `STATE_NAMES`, "Other" last.
+- `onAvailSearch(v)` / `applyAvailSearch()` — Avail search box; live-filters cards by name/address/id and hides empty state groups (toggles `display`, no re-render, so it stays snappy)
+- `removeLocation(propId, ev)` — Remove button at the bottom of an expanded card; confirms, strips the entry from `config/properties`, deletes the `availability/{propId}` doc (card vanishes via onSnapshot). Direct Firestore, no n8n; does NOT touch the SharePoint sheet
 - `renderLocCard(propId, d)` — collapsible card. Collapsed shows: availability chips, PA name+phone, Yardi/SP links, ⟳ refresh
 - `renderLocBody(propId, d)` — expanded: stats grid, filter chips (Available/Occupied/All, default Available via `availFilter[propId]`; no Hold filter — holds are available), per-section unit row lists (WH/Office/Dock; Parking is count-only in the stats grid), floor plan. Rows are compact; clicking a row expands tenant/owner/phone/email/poc/notes. `isAvail(u) = u.available || u.hold`.
 - `setAvailFilter(propId, f, ev)` — sets the unit filter and re-renders the body
@@ -128,6 +137,10 @@ All CA PA Weekly Report workbooks share a consistent **`BOT - NEW ACTIVE LICENSE
 - `submitAddLocation()` — POSTs full location payload to Cloudflare Worker
 - `LOCATION_PRESETS` — quick-fill buttons in Add Location modal. Add entries here for each new location.
 - unit rows (inside `renderLocBody`) — show a status pill (Available/Occupied/Hold) driven by the `hold`/`available` booleans, not by status text
+- **Leads** have drag-to-reorder like Tasks (`leadDragStart/Over/Drop`, `order` field, `byOrder` sort), plus `toggleHideWaitlist()` — the "Hide ⏳" toggle in the Leads filter row that drops `wl_on` leads from the Do/Wait board (except when the ⏳ Waitlist filter is active).
+
+### Gotcha — function exposure (ES module scope)
+The `<script type="module">` means functions are NOT global. Any function referenced from an inline `onclick=`/`ondrag*=`/`oninput=` attribute MUST be added to the `window.* = ...` block near the bottom of the module, or it throws "X is not defined" at click time. (This caused the original drag bug — the handlers existed but weren't exposed.) When adding a new inline handler, always add the matching `window.` line.
 
 ## Floorplan SVGs (in renderFloorplans function)
 - `pellissier-2720`: warehouse (D01-D05, B01, C01-C05, A01-A02) + office (R01-R09)  
@@ -145,9 +158,13 @@ Separate from availability. For sending 5-touch follow-up emails to leads. See `
 do_or_wait/
   index.html            ← entire app (push to GitHub to deploy)
   CLAUDE.md             ← this file
+  sharepoint_location_links.txt ← SharePoint URLs for the CA locations (input for presets)
   n8n/
-    4_availability_sync.json   ← reference copy (actual edits done in n8n UI)
-    5_add_location.json        ← reference copy
+    5_add_location.json        ← AUTHORITATIVE combined live workflow (both the availability-sync
+                                  and add-location chains). Import THIS into n8n. Edit by hand here
+                                  (the bash mount is read-only) or in the n8n UI, then re-export.
+    parse_build_patch.node.js  ← clean paste-ready copy of the "Parse + build patch" node code
+    4_availability_sync.json   ← older reference copy of just the sync chain (redundant — 5_add_location.json supersedes it)
     1_queue_checker.json       ← email sequencer
     2_send_trigger.json
     3_reply_detector.json
