@@ -37,7 +37,9 @@ Sales leads. Thread structure + lead-specific fields: `company`, `first_name`, `
 Ideas/issues notebook (💡 Notes tab). Fields: `why` (text — "Why does this issue matter?"), `fix` (text — "What's the fix?"), `createdAt`, `updatedAt`, `_deleted` (soft-delete flag). Notes have a **view mode** (read-only, shows Created + Edited dates, with Edit/Delete buttons) and an **edit mode** (textareas + Save/Cancel). `editingNotes` Set tracks which note ids are open for editing; `editNote`/`cancelNote`/`saveIdeaNote` toggle it. New notes open straight into edit mode. The tab has a Newest/Oldest sort and a "Since" date filter on `createdAt`.
 
 ### `availability/{propId}`
-Written by n8n after syncing each property's SharePoint file. Fields: `property`, `address`, `yardi_url`, `sharepoint_url`, `sheet_last_modified`, `synced_at`, `wh{}`, `office{}`, `dock{}`, `parking{}`, `units[]`, `pa{name,phone,email}`
+Written by n8n after syncing each property's SharePoint file. Fields: `property`, `address`, `yardi_url`, `sharepoint_url`, `sheet_last_modified`, `synced_at`, `wh{}`, `office{}`, `dock{}`, `parking{}`, `units[]`, `pa{name,phone,email}`, `ownership` (`own`/`lease`/`''`), `lease_expiration` (YYYY-MM-DD).
+
+**App-edited fields survive sync**: `pa`, `ownership`, and `lease_expiration` are written directly from the app via Firestore REST PATCH and are NOT in the sync's `updateMask`, so re-syncs don't clobber them. `ownership`/`lease_expiration` are set via the Ownership modal (`openEditOwnership`/`saveOwnership`); the collapsed location card shows an ownership badge (🏢 Owned / 📄 Leased · exp date, red if expired) that opens the modal on click.
 
 Each entry in `units[]` (parsed from the BOT tab): `unit`, `type` (WH/OFFICE/DOCK/TRAILER), `sf`, `status`, `tenant`, `owner`, `phone`, `email`, `poc`, `notes`, `available` (bool), `hold` (bool). owner/phone/email/poc/notes come from BOT-tab cols 6-10 and are null when blank.
 

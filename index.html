@@ -974,6 +974,30 @@
   </div>
 </div>
 
+<!-- Ownership modal -->
+<div class="overlay" id="own-overlay" onclick="if(event.target===this)closeOwnModal()">
+  <div class="modal">
+    <h3>Ownership</h3>
+    <input type="hidden" id="own-prop-id">
+    <div class="field">
+      <label>Own or Lease</label>
+      <select id="own-type" onchange="ownToggleExp()">
+        <option value="">— not set —</option>
+        <option value="own">Own</option>
+        <option value="lease">Lease</option>
+      </select>
+    </div>
+    <div class="field" id="own-exp-field" style="display:none">
+      <label>Lease expiration</label>
+      <input id="own-exp" type="date" />
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeOwnModal()">Cancel</button>
+      <button class="btn dark" onclick="saveOwnership()">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- Lead modal (new lead + edit details) -->
 <div class="overlay" id="lead-overlay" onclick="leadOverlayClick(event)">
   <div class="modal">
@@ -2530,6 +2554,18 @@ function renderLocCard(propId, d) {
     dkAvail ? `<span class="loc-chip avail">Dock ${dkAvail} avail</span>` : '',
   ].filter(Boolean).join('');
 
+  const own = d.ownership;
+  const expRaw = d.lease_expiration;
+  const expDate = expRaw ? new Date(expRaw + 'T00:00:00') : null;
+  const expStr = expDate ? expDate.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) : '';
+  const expired = expDate ? (expDate.getTime() < Date.now()) : false;
+  const ownStyle = 'display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:2px 9px;border-radius:20px;cursor:pointer;';
+  const ownBadge = own === 'own'
+    ? `<span onclick="openEditOwnership('${propId}',event)" style="${ownStyle}background:#e0e7ff;color:#3730a3;">🏢 Owned</span>`
+    : own === 'lease'
+    ? `<span onclick="openEditOwnership('${propId}',event)" style="${ownStyle}background:${expired ? '#fee2e2' : '#fef3c7'};color:${expired ? '#b91c1c' : '#92400e'};">📄 Leased${expStr ? ` · ${expired ? 'EXPIRED ' : 'exp '}${expStr}` : ' · set exp'}</span>`
+    : `<span onclick="openEditOwnership('${propId}',event)" style="${ownStyle}background:var(--bg);color:var(--text2);border:1px dashed var(--border);">＋ Own / Lease</span>`;
+
   const body = isOpen ? renderLocBody(propId, d) : '';
 
   const pa = d.pa || {};
@@ -2554,6 +2590,7 @@ function renderLocCard(propId, d) {
       <div class="loc-hd-left">
         <div class="loc-name">🏭 ${esc(d.property || propId)}</div>
         ${d.address ? `<div class="loc-addr">${esc(d.address)}</div>` : ''}
+        <div style="margin-top:5px;">${ownBadge}</div>
         <div class="loc-chips">${chips}</div>
         <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:5px;">
           ${paLine}
@@ -3095,6 +3132,40 @@ async function savePA() {
   closePAModal();
 }
 
+// ── Ownership (own / lease + lease expiration) ────────────────
+function openEditOwnership(propId, e) {
+  if (e) e.stopPropagation();
+  const d = availMap[propId] || {};
+  document.getElementById('own-prop-id').value = propId;
+  document.getElementById('own-type').value = d.ownership || '';
+  document.getElementById('own-exp').value  = d.lease_expiration || '';
+  ownToggleExp();
+  document.getElementById('own-overlay').classList.add('open');
+}
+function ownToggleExp() {
+  const isLease = document.getElementById('own-type').value === 'lease';
+  document.getElementById('own-exp-field').style.display = isLease ? '' : 'none';
+}
+function closeOwnModal() { document.getElementById('own-overlay').classList.remove('open'); }
+async function saveOwnership() {
+  const propId = document.getElementById('own-prop-id').value;
+  const type   = document.getElementById('own-type').value;
+  const exp    = type === 'lease' ? document.getElementById('own-exp').value : '';
+  const patchBody = { fields: {
+    ownership:        { stringValue: type },
+    lease_expiration: { stringValue: exp }
+  }};
+  setSyncing(true);
+  try {
+    await fetch(
+      `https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/availability/${propId}?updateMask.fieldPaths=ownership&updateMask.fieldPaths=lease_expiration`,
+      { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patchBody) }
+    );
+  } catch (e) { console.error('Save ownership failed:', e); }
+  finally { setSyncing(false); }
+  closeOwnModal();
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  NOTES / IDEAS
 // ═══════════════════════════════════════════════════════════════
@@ -3267,6 +3338,10 @@ window.submitAddLocation   = submitAddLocation;
 window.openEditPA          = openEditPA;
 window.closePAModal        = closePAModal;
 window.savePA              = savePA;
+window.openEditOwnership   = openEditOwnership;
+window.closeOwnModal       = closeOwnModal;
+window.ownToggleExp        = ownToggleExp;
+window.saveOwnership       = saveOwnership;
 window.openNewLead         = openNewLead;
 window.openEditLeadDetails = openEditLeadDetails;
 window.openAddLeadEntry    = openAddLeadEntry;
