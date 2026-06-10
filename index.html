@@ -1325,10 +1325,13 @@ function currentStatus(topic) {
 function allDone(topic) { return topic.entries.length > 0 && topic.entries.every(e => e.done); }
 function fmtDate(iso) {
   const d = new Date(iso), now = new Date();
-  const diff = Math.floor((now - d) / 86400000);
+  // Compare by local calendar day, not a rolling 24h window — so an update
+  // made yesterday evening reads "yesterday" this morning, not "today".
+  const dayStart = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((dayStart(now) - dayStart(d)) / 86400000);
   if (diff === 0) return 'today';
   if (diff === 1) return 'yesterday';
-  if (diff < 7)  return diff + 'd ago';
+  if (diff > 1 && diff < 7) return diff + 'd ago';
   return d.toLocaleDateString('en-US', { month:'short', day:'numeric' });
 }
 function fmtDur(s) { return `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`; }
