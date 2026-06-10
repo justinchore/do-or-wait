@@ -1,0 +1,149 @@
+{
+  "name": "CW — 6. Follow-up Scanner",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 7 * * *" }]
+        }
+      },
+      "id": "cw-f-001",
+      "name": "Every morning 7am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents:runQuery",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"structuredQuery\": {\n    \"from\": [{\"collectionId\": \"leads\"}]\n  }\n}",
+        "options": {}
+      },
+      "id": "cw-f-002",
+      "name": "Get all leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Google Service Account — do-or-wait"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pick the leads worth scanning for a follow-up gap.\n// Rules out anything that isn't an open, contactable lead:\n//   - no email on file                  -> nothing to follow up on\n//   - archived                           -> off the board\n//   - stage won / lost                   -> closed\n//   - seq_status 'replied'               -> they're already engaged\n//   - snoozed into the future            -> the user chose to wait\n// Firestore runQuery returns one item per doc; some carry only a readTime -> skip those.\n\nfunction fsVal(field) {\n  if (!field) return null;\n  if (field.stringValue    !== undefined) return field.stringValue;\n  if (field.integerValue   !== undefined) return Number(field.integerValue);\n  if (field.booleanValue   !== undefined) return field.booleanValue;\n  if (field.timestampValue !== undefined) return field.timestampValue;\n  if (field.nullValue      !== undefined) return null;\n  return null;\n}\n\nconst CLOSED = ['won', 'lost'];\nconst today  = new Date().toISOString().slice(0, 10);\nconst out = [];\n\n// Flatten whether the HTTP node split the runQuery array into items or returned it whole.\nlet rows = [];\nfor (const it of $input.all()) { const j = it.json; if (Array.isArray(j)) rows.push(...j); else rows.push(j); }\n\nfor (const row of rows) {\n  const d = row && row.document;\n  if (!d || !d.name) continue;\n  const f = d.fields || {};\n  const id    = d.name.split('/').pop();\n  const email = (fsVal(f.email) || '').trim().toLowerCase();\n  if (!email) continue;\n  if (fsVal(f.archived) === true) continue;\n  if (CLOSED.includes(fsVal(f.stage) || 'cold')) continue;\n  if (fsVal(f.seq_status) === 'replied') continue;\n  const snooze = fsVal(f.followup_snooze_until) || fsVal(f.snooze_until);\n  if (snooze && String(snooze) >= today) continue;\n\n  out.push({ json: {\n    leadId:    id,\n    email,\n    company:   fsVal(f.company)   || '',\n    createdAt: fsVal(f.createdAt) || null\n  }});\n}\n\nreturn out;"
+      },
+      "id": "cw-f-003",
+      "name": "Select leads to scan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": { "batchSize": 1, "options": {} },
+      "id": "cw-f-004",
+      "name": "Loop leads",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://graph.microsoft.com/v1.0/users/{{ $env.OUTLOOK_USER_ID }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "$search", "value": "=\"participants:{{ $json.email }}\"" },
+            { "name": "$select", "value": "receivedDateTime,sentDateTime,from,subject" },
+            { "name": "$top",    "value": "25" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cw-f-005",
+      "name": "Latest message for lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 300],
+      "continueOnFail": true,
+      "credentials": {
+        "microsoftOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Microsoft OAuth2 — Cubework Outlook"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Find the most recent contact date for this lead in either direction\n// (received from them OR sent to them) and turn it into follow-up fields.\n// Graph $search returns messages across all folders, relevance-ordered, so we\n// scan the hits and keep the newest receivedDateTime / sentDateTime we see.\n// No email history -> fall back to the lead's creation date so a lead that has\n// sat untouched since it was added still surfaces. Rule: cold at >= 3 days.\n\nconst FOLLOWUP_DAYS = 3;\nconst resp = $input.first().json || {};\nconst msgs = Array.isArray(resp.value) ? resp.value : [];\nconst loop = $('Loop leads').item.json;\n\nlet maxMs = null;\nlet everContacted = false;\nfor (const m of msgs) {\n  for (const k of ['receivedDateTime', 'sentDateTime']) {\n    const t = m && m[k] ? Date.parse(m[k]) : NaN;\n    if (!isNaN(t)) { everContacted = true; if (maxMs === null || t > maxMs) maxMs = t; }\n  }\n}\n\nlet fellBackToCreated = false;\nif (maxMs === null && loop.createdAt) {\n  const t = Date.parse(loop.createdAt);\n  if (!isNaN(t)) { maxMs = t; fellBackToCreated = true; }\n}\n\nlet days = maxMs === null ? null : Math.floor((Date.now() - maxMs) / 86400000);\nif (days !== null && days < 0) days = 0;\nconst due      = days !== null && days >= FOLLOWUP_DAYS;\nconst lastDate = maxMs === null ? null : new Date(maxMs).toISOString().slice(0, 10);\n\nconst fields = {\n  last_contact_date:   lastDate === null ? { nullValue: null } : { stringValue: lastDate },\n  days_since_contact:  days === null     ? { nullValue: null } : { integerValue: String(days) },\n  followup_due:        { booleanValue: !!due },\n  followup_contacted:  { booleanValue: !!everContacted },\n  followup_checked_at: { stringValue: new Date().toISOString() }\n};\n\nreturn [{ json: { leadId: loop.leadId, days, due, fellBackToCreated, patchBody: { fields } } }];"
+      },
+      "id": "cw-f-006",
+      "name": "Compute days since contact",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/leads/{{ $json.leadId }}?updateMask.fieldPaths=last_contact_date&updateMask.fieldPaths=days_since_contact&updateMask.fieldPaths=followup_due&updateMask.fieldPaths=followup_contacted&updateMask.fieldPaths=followup_checked_at",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.patchBody) }}",
+        "options": {}
+      },
+      "id": "cw-f-007",
+      "name": "Write follow-up flags",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 300],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Google Service Account — do-or-wait"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every morning 7am": {
+      "main": [[{ "node": "Get all leads", "type": "main", "index": 0 }]]
+    },
+    "Get all leads": {
+      "main": [[{ "node": "Select leads to scan", "type": "main", "index": 0 }]]
+    },
+    "Select leads to scan": {
+      "main": [[{ "node": "Loop leads", "type": "main", "index": 0 }]]
+    },
+    "Loop leads": {
+      "main": [
+        [],
+        [{ "node": "Latest message for lead", "type": "main", "index": 0 }]
+      ]
+    },
+    "Latest message for lead": {
+      "main": [[{ "node": "Compute days since contact", "type": "main", "index": 0 }]]
+    },
+    "Compute days since contact": {
+      "main": [[{ "node": "Write follow-up flags", "type": "main", "index": 0 }]]
+    },
+    "Write follow-up flags": {
+      "main": [[{ "node": "Loop leads", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "cw-workflow-006"
+}

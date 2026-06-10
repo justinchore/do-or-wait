@@ -23,6 +23,18 @@ Source: `C:\Users\jcho\Documents\Claude\Projects\do_or_wait\index.html` (single 
 
 ---
 
+## Architecture decision — stay vanilla single-file (revisit at triggers)
+**Decided 2026-06-10.** Keep `index.html` as one vanilla-JS file with **no framework and no build step**. The push-to-GitHub-Pages deploy simplicity and the ease of editing a single file (incl. by Claude) outweigh the developer-comfort wins a framework would bring. Do **not** migrate to React/Vite or introduce a bundler on a whim.
+
+**When adding any new feature, keep this in mind and weigh whether we've hit a trigger to reconsider:**
+- The file is getting hard to navigate / tooling strains on its size (watch line count — it's the real signal, not the framework itself). First move if so: split the JS into a few **native ES modules** (still no build), not a framework.
+- Another developer joins the project.
+- The `window.*`-exposure footgun (see the ES-module gotcha below) or the manual `esc()` string-templating start causing **repeat** bugs.
+
+**If we ever do migrate**, the chosen path is **Preact + htm loaded from a CDN** — components + reactivity while preserving the zero-build, push-to-deploy workflow. Not full React-with-a-bundler.
+
+---
+
 ## Firestore collections
 
 ### `topics/{id}`
@@ -30,6 +42,8 @@ Task threads. Fields: `title`, `archived`, `entries[]`, `createdAt`
 
 ### `leads/{id}`
 Sales leads. Thread structure + lead-specific fields: `company`, `first_name`, `email`, `contact`, `segment`, `stage`, `location`, `sqft`, `leaseLength`, `moveIn`, `unit`, `unit_sf`, `dock`, `rate`, `included_items`, `alt_option`, `is_importer`, `current_step`, `last_touch_date`, `next_due_date`, `seq_status`, `pending_email` (written by n8n when email ready to approve)
+
+**Follow-up fields** (written by the n8n Follow-up Scanner — workflow 6 — from Outlook/Graph): `last_contact_date` (YYYY-MM-DD of the most recent email to/from the lead, either direction), `days_since_contact` (int), `followup_contacted` (bool — false if no email history was found and the date fell back to lead creation), `followup_due` (bool — true at ≥3 days), `followup_checked_at` (ISO of last scan), `followup_snooze_until` (YYYY-MM-DD — set by the app's "Snooze" button, suppresses the lead until that date). The app **does not depend on the scanner having run**: `contactInfo(lead)` recomputes "days since contact" client-side as the most recent of `last_contact_date` / `last_touch_date` / the last thread entry, falling back to `createdAt`. The scanner just keeps the Outlook-derived signal fresh.
 
 **Waitlist fields** (a lead can be put on the waitlist to watch for matching space): `wl_on` (bool), `wl_locations` (array of propIds to watch), `wl_type` (`any`/`WH`/`OFFICE`/`DOCK`/`TRAILER`), `wl_sf_min`, `wl_sf_max`. The "⏳ Waitlist" lead filter shows only `wl_on` leads. The modal sets `wl_on`/type/size; **locations are chosen on the lead card** via `renderWaitlistBlock` — a collapsible block (`wlCollapsed` Set, `wlToggleCollapse`) with a "＋ Add location…" dropdown of current `availMap` locations and removable chips (`wlAddLocation`/`wlRemoveLocation`, which persist + re-render). Matches compute inline every render via `wlMatches(lead)` (available-or-hold units in the chosen locations matching type + size) — no button, the list updates live as you add/remove locations. All client-side against synced availability; no n8n.
 
@@ -150,8 +164,30 @@ The `<script type="module">` means functions are NOT global. Any function refere
 
 ---
 
-## Email sequencer (n8n workflows 1-3)
-Separate from availability. For sending 5-touch follow-up emails to leads. See `n8n/SETUP.md`. Not yet activated/tested end-to-end.
+## Follow-up model — DECIDED 2026-06-10: scanner only, sequencer OFF
+Justin's rule is simple: **"no correspondence in 3 days → follow up,"** where correspondence = Outlook email (either direction) **OR** any thread update he logs. That's the **Follow-up Scanner (workflow 6)** + the 🔔 Follow-ups tab, and it's the ONLY follow-up mechanism we run. The 5-touch sequencer (workflows 1–3) is intentionally **left off** — it fires on a fixed cadence regardless of whether you've been in contact, which produces exactly the "false" notifications Justin wants to avoid. **In n8n, run only workflow 6** (plus the unrelated availability workflow 5). Do **not** activate 1/2/3. The sequencer docs below are kept only in case that decision is ever revisited.
+
+## Email sequencer (n8n workflows 1-3) — MANUAL-SEND model (currently OFF — see decision above)
+Separate from availability. A 5-touch follow-up cadence. **Sending is manual** (Justin sends from his own Outlook) to avoid needing the `Mail.Send` Graph scope:
+- **Activate workflows 1 + 3 only; workflow 2 stays OFF.**
+- **Workflow 1** (`1_queue_checker.json`, 8am daily) drafts the next due touch and writes `pending_email` to the lead — Firestore only, no Graph. Fires for `seq_status === 'active'` leads (new leads default to `active`, so they auto-enroll) with an email and `next_due_date <= today`, up to 5 touches.
+- **App** renders the draft (`renderEmailPreview`) with **✉️ Open in email** (`openSequencerEmail` → `mailto:`) and **✓ Mark sent** (`markTouchSent` → advances the cadence client-side: sets `current_step`, `last_touch_date`, `next_due_date` per `SEQ_CADENCE = {1:4,2:6,3:7,4:9}`, `seq_status` active/closed, clears `pending_email`). Plus Snooze/Skip. This replaced the old "Approve & Send" button (which wrote `seq_status='send_approved'` for workflow 2). All handlers exposed on `window.*`.
+- **Workflow 3** (`3_reply_detector.json`, every 30 min, read-only `Mail.Read`) flips a replying lead to `seq_status='replied'`, removing it from the queue.
+- **Workflow 2** (`2_send_trigger.json`) = the auto-sender; **unused** unless `Mail.Send` is later granted. To enable full auto-send: grant `Mail.Send` + admin consent, activate workflow 2, and swap the app's two send buttons back to one "Approve & Send". See `n8n/SETUP.md`.
+
+## Follow-up Scanner (n8n workflow 6)
+The follow-up system Justin actually asked for: surface "leads that haven't been contacted in 3 days." Separate from (and simpler than) the 5-touch sequencer — it never sends anything, it only **measures last contact from Outlook and flags cold leads**.
+
+- **`n8n/6_followup_scanner.json`** — runs daily at 7am (cron `0 7 * * *`). Reads all `leads` from Firestore, filters in code to open/contactable leads (has email; not archived; stage not won/lost; `seq_status` ≠ `replied`; not snoozed), then for each lead queries Microsoft Graph `GET /users/{OUTLOOK_USER_ID}/messages?$search="participants:<email>"` and takes the newest `receivedDateTime`/`sentDateTime` across the hits (captures both directions, all folders). Writes `last_contact_date`, `days_since_contact`, `followup_due`, `followup_contacted`, `followup_checked_at` back to the lead. Reuses the **same two credentials** as the other workflows: `Microsoft OAuth2 — Cubework Outlook` and `Google Service Account — do-or-wait`, plus the `OUTLOOK_USER_ID` env var. No new credentials.
+  - Graph note: `$search` can't be combined with `$orderby`, so it fetches the top 25 relevance-ranked hits and takes the max date in code — fine for a single correspondent. If a lead has zero email history, the date falls back to `createdAt` and `followup_contacted` is set false.
+  - **splitInBatches v3 wiring**: the loop body hangs off output **index 1** ("loop"); output 0 ("done") is intentionally empty. (Workflow 3's loop wires the body to index 0 — that ordering is the older convention; follow the v3 ordering used here.)
+
+### In-app surface (index.html, Leads tab)
+- **`🔔 Follow-ups` filter button** (`#followup-filter-btn`, `setLeadFilter('followup')`) with a count badge of due leads.
+- **Reminder banner** (`#followup-banner`) above the board: shows "N leads have gone quiet for 3+ days" with a "Review follow-ups →" button. Hidden when the Follow-ups filter is already active or nothing is due.
+- **`🔔 Nd cold` chip** on each due lead card (or "no contact yet").
+- **Suggested-message block** (`renderFollowupBlock`) inside a due lead's thread (only when there's no `pending_email` from the sequencer): one of 3 lightweight merge templates in `FOLLOWUP_MSGS` (Check-in / Value-add / Break-up), with **↻ cycle template** (`cycleFollowupTpl`), **✉️ Open in email** (`openFollowupEmail`, builds a `mailto:`), **📋 Copy** (`copyFollowupMsg`), and **Snooze 3 days** (`snoozeFollowup`, sets `followup_snooze_until`).
+- Core logic: `FOLLOWUP_DAYS` (=3), `isFollowupDue(lead)`, `contactInfo(lead)`. All new inline handlers are exposed in the `window.*` block (per the ES-module gotcha).
 
 ---
 
@@ -170,6 +206,7 @@ do_or_wait/
     1_queue_checker.json       ← email sequencer
     2_send_trigger.json
     3_reply_detector.json
+    6_followup_scanner.json    ← Follow-up Scanner: flags leads cold 3+ days (Outlook/Graph → Firestore). No sending.
     templates.json
     SETUP.md
 ```

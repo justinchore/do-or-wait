@@ -800,9 +800,13 @@
       <button class="lf-btn"        data-stage="contacted" onclick="setLeadFilter('contacted')">Contacted</button>
       <button class="lf-btn"        data-stage="toured"    onclick="setLeadFilter('toured')">Toured</button>
       <button class="lf-btn"        data-stage="proposal"  onclick="setLeadFilter('proposal')">Proposal</button>
+      <button class="lf-btn"        data-stage="followup"  id="followup-filter-btn" onclick="setLeadFilter('followup')">🔔 Follow-ups</button>
       <button class="lf-btn"        data-stage="waitlist"  onclick="setLeadFilter('waitlist')">⏳ Waitlist</button>
       <button class="lf-btn" id="hide-wl-btn" style="margin-left:auto" onclick="toggleHideWaitlist()">Hide ⏳</button>
     </div>
+
+    <!-- Follow-up reminder banner (shown when leads have gone cold 3+ days) -->
+    <div id="followup-banner" style="display:none; max-width:1100px; margin:12px auto 0; padding:0 16px; width:100%;"></div>
 
     <!-- New leads strip (compact chips) -->
     <div id="new-leads-wrap" style="display:none; max-width:1100px; margin:0 auto; padding:12px 16px 0; width:100%;">
@@ -1923,6 +1927,78 @@ const LEAD_SEGS = {
   other:     { label:'📋 Other',     bg:'#f3f4f6', color:'#4b5563' },
 };
 
+// ═══════════════════════════════════════════════════════════════
+//  FOLLOW-UPS — "leads that haven't been contacted in N days"
+// ═══════════════════════════════════════════════════════════════
+// Source of truth for "last contact" is whichever is most recent:
+//   • last_contact_date  — written by the n8n Follow-up Scanner from Outlook (Graph)
+//   • last_touch_date    — written by the email sequencer when a touch is sent
+//   • the last thread entry you logged in the app (a call/note counts as contact)
+// If none exist, we fall back to when the lead was created so a never-touched
+// lead still surfaces. The n8n scanner (workflow 6) keeps days_since_contact /
+// followup_due fresh from real email activity; this client-side calc means the
+// board still works the moment you open it, even between scans.
+const FOLLOWUP_DAYS = 3;
+const followupTplIdx = new Map();   // leadId -> which suggested-message template is showing
+
+function dayDiff(ms) {
+  const dayStart = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  return Math.round((dayStart(new Date()) - dayStart(new Date(ms))) / 86400000);
+}
+
+// Returns { days, date, contacted } — days is null only if we truly can't date the lead.
+function contactInfo(lead) {
+  const cands = [];
+  if (lead.last_contact_date) cands.push(Date.parse(lead.last_contact_date));   // newest Outlook email (either direction), from the scanner
+  if (lead.last_touch_date)   cands.push(Date.parse(lead.last_touch_date));     // last sequencer touch sent
+  // Any thread update you logged counts as correspondence too — e.g. "talked to lead about options".
+  // Take the most recent across ALL entries (not just the last in the array, in case they're unordered).
+  (lead.entries || []).forEach(e => { if (e && e.createdAt) cands.push(Date.parse(e.createdAt)); });
+  const real = cands.filter(t => !isNaN(t));
+  if (real.length) { const m = Math.max(...real); return { days: dayDiff(m), date: m, contacted: true }; }
+  const created = Date.parse(lead.createdAt);
+  if (!isNaN(created)) return { days: dayDiff(created), date: created, contacted: false };
+  return { days: null, date: null, contacted: false };
+}
+
+function isFollowupSnoozed(lead) {
+  const today = new Date().toISOString().slice(0, 10);
+  const s = lead.followup_snooze_until || lead.snooze_until;
+  return !!(s && String(s) >= today);
+}
+
+function isFollowupDue(lead) {
+  if (lead.archived) return false;
+  if (['won', 'lost'].includes(lead.stage || 'cold')) return false;
+  if (lead.seq_status === 'replied') return false;   // they're engaged
+  if (isFollowupSnoozed(lead)) return false;
+  const { days } = contactInfo(lead);
+  return days !== null && days >= FOLLOWUP_DAYS;
+}
+
+// Short follow-up message templates, merged with the lead's fields. Plain-text,
+// copy- or email-ready. Kept lightweight on purpose — the full 5-touch sequence
+// lives in the n8n sequencer; these are quick nudges you can fire by hand.
+const FOLLOWUP_MSGS = [
+  { label: 'Check-in', build: l => ({
+      subject: `Following up — Cubework ${l.location || 'space'}${l.unit ? ` (${l.unit})` : ''}`,
+      body: `Hi ${l.first_name || 'there'},\n\nJust circling back on ${l.unit ? `${l.unit}${l.unit_sf ? ` (${Number(l.unit_sf).toLocaleString()} sf)` : ''}` : 'the space we discussed'}${l.location ? ` at ${l.location}` : ''}. ${l.rate ? `Still available at ${l.rate}. ` : ''}Wanted to make sure this didn't slip through.\n\nWould a quick 15-minute tour this week work for ${l.company || 'your team'}?\n\nBest,\nJustin Cho\nBusiness Development — Cubework` })
+  },
+  { label: 'Value-add', build: l => ({
+      subject: `What's included with your space at Cubework`,
+      body: `Hi ${l.first_name || 'there'},\n\nQuick note on why a few tenants chose Cubework over cheaper alternatives:${l.included_items ? `\n\n${l.included_items} are included — no surprise utility bills.` : ''}\nFlexible terms — month-to-month available, so you're not locked in.\n24/7 access, loading, and security.\n\n${l.unit ? `Still have ${l.unit}${l.rate ? ` at ${l.rate}` : ''} — worth a 15-minute look?` : 'Worth a quick look?'}\n\nBest,\nJustin` })
+  },
+  { label: 'Break-up', build: l => ({
+      subject: `Last note — Cubework space for ${l.company || 'you'}`,
+      body: `Hi ${l.first_name || 'there'},\n\nI'll keep this short — I've reached out a couple of times and haven't heard back. Totally fine if the timing isn't right or it's not a fit.\n\nI'll leave it here. If you're ever looking for flexible warehouse space near the ports, just reach back out — I'm quick to respond.\n\nWishing you${l.company ? ` and ${l.company}` : ''} the best.\n\nJustin Cho\nBusiness Development — Cubework` })
+  },
+];
+
+function followupMsgFor(lead) {
+  const idx = (followupTplIdx.get(lead.id) || 0) % FOLLOWUP_MSGS.length;
+  return { idx, label: FOLLOWUP_MSGS[idx].label, ...FOLLOWUP_MSGS[idx].build(lead) };
+}
+
 // Firestore listener
 unsubLeads = onSnapshot(collection(db, 'leads'), snap => {
   leads = snap.docs.map(d => d.data()).filter(l => !l._deleted);
@@ -1938,6 +2014,7 @@ function renderLeadsSection() {
   const wonlost = leads.filter(l => l.archived || closed.includes(l.stage || 'cold'));
   let filtered = leadFilter === 'all' ? active
     : leadFilter === 'waitlist' ? active.filter(l => l.wl_on)
+    : leadFilter === 'followup' ? active.filter(isFollowupDue)
     : active.filter(l => (l.stage||'cold') === leadFilter);
   if (hideWaitlist && leadFilter !== 'waitlist') filtered = filtered.filter(l => !l.wl_on);
 
@@ -1955,6 +2032,32 @@ function renderLeadsSection() {
     leadsTab.innerHTML = pendingCount > 0
       ? `🎯 Leads <span class="tab-badge">${pendingCount}</span>`
       : '🎯 Leads';
+  }
+
+  // Follow-ups — leads that have gone cold 3+ days
+  const dueLeads = active.filter(isFollowupDue);
+  const fBtn = document.getElementById('followup-filter-btn');
+  if (fBtn) fBtn.innerHTML = dueLeads.length
+    ? `🔔 Follow-ups <span class="tab-badge">${dueLeads.length}</span>`
+    : '🔔 Follow-ups';
+  const fBanner = document.getElementById('followup-banner');
+  if (fBanner) {
+    if (dueLeads.length && leadFilter !== 'followup') {
+      const names = dueLeads.slice(0, 3).map(l => esc(l.company || 'a lead')).join(', ');
+      const more  = dueLeads.length > 3 ? ` +${dueLeads.length - 3} more` : '';
+      fBanner.style.display = 'block';
+      fBanner.innerHTML = `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;border:1.5px dashed #d97706;background:rgba(217,119,6,.07);border-radius:12px;padding:11px 15px;">
+          <span style="font-size:20px;line-height:1;">🔔</span>
+          <div style="flex:1;min-width:180px;font-size:13px;color:var(--text);">
+            <b>${dueLeads.length} lead${dueLeads.length !== 1 ? 's' : ''}</b> ${dueLeads.length !== 1 ? 'have' : 'has'} gone quiet for ${FOLLOWUP_DAYS}+ days
+            <span style="color:var(--text2);"> — ${names}${more}</span>
+          </div>
+          <button onclick="setLeadFilter('followup')" style="font-size:12px;font-weight:700;border:none;background:#d97706;color:#fff;border-radius:8px;padding:6px 13px;cursor:pointer;">Review follow-ups →</button>
+        </div>`;
+    } else {
+      fBanner.style.display = 'none';
+      fBanner.innerHTML = '';
+    }
   }
 
   // stats
@@ -2116,6 +2219,11 @@ function renderLeadCard(lead) {
   const allRes  = allDone(lead);
   const noteCount = lead.entries.reduce((n,e) => n + (e.notes?.length||0), 0);
   const entryCount = lead.entries.length;
+  const due     = isFollowupDue(lead);
+  const ci      = contactInfo(lead);
+  const dueChip = due
+    ? `<span style="display:inline-block;font-weight:700;color:#b45309;background:#fef3c7;border:1px solid #fcd34d;border-radius:20px;padding:0 8px;margin-right:6px;">🔔 ${ci.contacted ? `${ci.days}d cold` : 'no contact yet'}</span>`
+    : '';
 
   return `
   <div class="topic-card ${lead.archived ? 'archived' : status}${isOpen ? ' open' : ''}" id="lc-${lead.id}" style="border-left-color:${stage.color}"
@@ -2137,6 +2245,7 @@ function renderLeadCard(lead) {
         </div>
         <div class="card-snippet">${last ? esc(last.text) : ''}</div>
         <div class="card-meta-row">
+          ${dueChip}
           ${lead.pending_email ? `<span style="color:#2563eb;font-weight:700">📧 Touch ${lead.pending_email.step} ready · </span>` : ''}
           ${entryCount} update${entryCount!==1?'s':''}
           ${noteCount ? ` · 🎤 ${noteCount} note${noteCount!==1?'s':''}` : ''}
@@ -2147,6 +2256,7 @@ function renderLeadCard(lead) {
     </div>
     <div class="thread">
       ${lead.pending_email ? renderEmailPreview(lead) : ''}
+      ${due && !lead.pending_email ? renderFollowupBlock(lead) : ''}
       ${renderLeadDetails(lead)}
       ${lead.wl_on ? renderWaitlistBlock(lead) : ''}
       ${lead.entries.map(e => renderLeadEntry(lead, e)).join('')}
@@ -2163,13 +2273,40 @@ function renderLeadCard(lead) {
   </div>`;
 }
 
+function renderFollowupBlock(lead) {
+  const ci  = contactInfo(lead);
+  const msg = followupMsgFor(lead);
+  const when = ci.contacted
+    ? `Last contact ${ci.days}d ago${ci.date ? ` (${fmtDate(new Date(ci.date).toISOString())})` : ''}`
+    : 'No contact logged yet';
+  return `
+  <div class="email-preview" style="border-color:#d97706;background:rgba(217,119,6,.04);">
+    <div class="email-preview-hd">
+      <span class="email-ready-badge" style="background:#d97706;">🔔 Follow-up due — ${when}</span>
+      <button onclick="cycleFollowupTpl('${lead.id}',event)" title="Try another template"
+              style="font-size:11px;border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:2px 9px;cursor:pointer;color:var(--text);">↻ ${esc(msg.label)}</button>
+    </div>
+    <div class="email-meta">
+      <b>To:</b> ${esc(lead.email || '—')}<br>
+      <b>Subject:</b> ${esc(msg.subject)}
+    </div>
+    <hr class="email-divider">
+    <div class="email-body" id="fu-body-${lead.id}">${esc(msg.body)}</div>
+    <div class="email-actions">
+      ${lead.email ? `<button class="approve-btn" onclick="openFollowupEmail('${lead.id}',event)">✉️ Open in email</button>` : ''}
+      <button class="email-snooze-btn" onclick="copyFollowupMsg('${lead.id}',event)">📋 Copy</button>
+      <button class="email-skip-btn" onclick="snoozeFollowup('${lead.id}',event)">Snooze ${FOLLOWUP_DAYS} days</button>
+    </div>
+  </div>`;
+}
+
 function renderEmailPreview(lead) {
   const pe = lead.pending_email;
   if (!pe) return '';
   return `
   <div class="email-preview">
     <div class="email-preview-hd">
-      <span class="email-ready-badge">📧 Touch ${pe.step} of 5 — Ready to send</span>
+      <span class="email-ready-badge">📧 Touch ${pe.step} of 5 — review &amp; send</span>
       <span style="font-size:11px;color:#3b82f6">${fmtDate(pe.drafted_at)}</span>
     </div>
     <div class="email-meta">
@@ -2179,7 +2316,8 @@ function renderEmailPreview(lead) {
     <hr class="email-divider">
     <div class="email-body">${esc(pe.body)}</div>
     <div class="email-actions">
-      <button class="approve-btn" onclick="approveEmail('${lead.id}',event)">✓ Approve &amp; Send</button>
+      <button class="approve-btn" onclick="openSequencerEmail('${lead.id}',event)">✉️ Open in email</button>
+      <button class="approve-btn" style="background:#059669;" onclick="markTouchSent('${lead.id}',event)">✓ Mark sent</button>
       <button class="email-snooze-btn" onclick="snoozeEmail('${lead.id}',event)">Snooze 3 days</button>
       <button class="email-skip-btn"   onclick="skipEmail('${lead.id}',event)">Skip this touch</button>
     </div>
@@ -2284,6 +2422,90 @@ async function snoozeEmail(leadId, e) {
     snooze_until: snoozeUntil.toISOString().slice(0, 10),
     updatedAt:    new Date().toISOString()
   }, 'leads');
+}
+
+// Manual-send sequencer: open the queued touch in your own email client.
+// You send it from Outlook, then hit "Mark sent" to advance the cadence.
+function openSequencerEmail(leadId, e) {
+  if (e) e.stopPropagation();
+  const lead = leads.find(l => l.id === leadId);
+  if (!lead || !lead.pending_email) return;
+  const pe = lead.pending_email;
+  window.location.href =
+    `mailto:${encodeURIComponent(pe.to || lead.email || '')}?subject=${encodeURIComponent(pe.subject || '')}&body=${encodeURIComponent(pe.body || '')}`;
+}
+
+// Advance the 5-touch cadence client-side (mirrors what n8n workflow 2 did before
+// we moved to manual sending): record the touch, schedule the next one, clear the draft.
+const SEQ_CADENCE = { 1: 4, 2: 6, 3: 7, 4: 9 };   // days to wait after touch N before N+1
+async function markTouchSent(leadId, e) {
+  if (e) e.stopPropagation();
+  const lead = leads.find(l => l.id === leadId);
+  if (!lead || !lead.pending_email) return;
+  const step    = lead.pending_email.step;
+  const today   = new Date();
+  const todayStr = today.toISOString().slice(0, 10);
+  const { pending_email, ...rest } = lead;
+  const updated = {
+    ...rest,
+    current_step:    step,
+    last_touch_date: todayStr,
+    seq_status:      step >= 5 ? 'closed' : 'active',
+    updatedAt:       new Date().toISOString()
+  };
+  if (step < 5 && SEQ_CADENCE[step]) {
+    const next = new Date(today);
+    next.setDate(next.getDate() + SEQ_CADENCE[step]);
+    updated.next_due_date = next.toISOString().slice(0, 10);
+  }
+  const i = leads.findIndex(l => l.id === leadId); if (i >= 0) leads[i] = updated;
+  renderLeadsSection();
+  await persistItem(updated, 'leads');
+}
+
+// ── Follow-up suggestion actions ──────────────────────────────
+function cycleFollowupTpl(leadId, e) {
+  if (e) e.stopPropagation();
+  followupTplIdx.set(leadId, (followupTplIdx.get(leadId) || 0) + 1);
+  renderLeadsSection();
+}
+
+function openFollowupEmail(leadId, e) {
+  if (e) e.stopPropagation();
+  const lead = leads.find(l => l.id === leadId);
+  if (!lead || !lead.email) return;
+  const msg = followupMsgFor(lead);
+  window.location.href =
+    `mailto:${encodeURIComponent(lead.email)}?subject=${encodeURIComponent(msg.subject)}&body=${encodeURIComponent(msg.body)}`;
+}
+
+async function copyFollowupMsg(leadId, e) {
+  if (e) e.stopPropagation();
+  const lead = leads.find(l => l.id === leadId);
+  if (!lead) return;
+  const msg = followupMsgFor(lead);
+  const text = `Subject: ${msg.subject}\n\n${msg.body}`;
+  try { await navigator.clipboard.writeText(text); }
+  catch (err) {
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (_) {}
+    document.body.removeChild(ta);
+  }
+  const btn = e && e.target;
+  if (btn) { const o = btn.textContent; btn.textContent = '✓ Copied'; setTimeout(() => { btn.textContent = o; }, 1500); }
+}
+
+async function snoozeFollowup(leadId, e) {
+  if (e) e.stopPropagation();
+  const lead = leads.find(l => l.id === leadId);
+  if (!lead) return;
+  const until = new Date();
+  until.setDate(until.getDate() + FOLLOWUP_DAYS);
+  const updated = { ...lead, followup_snooze_until: until.toISOString().slice(0, 10), updatedAt: new Date().toISOString() };
+  const i = leads.findIndex(l => l.id === leadId); if (i >= 0) leads[i] = updated;
+  renderLeadsSection();
+  await persistItem(updated, 'leads');
 }
 
 function toggleLeadCard(id) {
@@ -3371,6 +3593,12 @@ window.toggleWonLost       = toggleWonLost;
 window.approveEmail        = approveEmail;
 window.skipEmail           = skipEmail;
 window.snoozeEmail         = snoozeEmail;
+window.openSequencerEmail  = openSequencerEmail;
+window.markTouchSent       = markTouchSent;
+window.cycleFollowupTpl    = cycleFollowupTpl;
+window.openFollowupEmail   = openFollowupEmail;
+window.copyFollowupMsg     = copyFollowupMsg;
+window.snoozeFollowup      = snoozeFollowup;
 </script>
 </body>
 </html>
