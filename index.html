@@ -2237,7 +2237,6 @@ function renderLeadCard(lead) {
         ${phoneClean
           ? qbtn('📞 Call', `logTouch('${lead.id}','call',event)`) + qbtn('💬 Text', `logTouch('${lead.id}','text',event)`)
           : qbtn('📞 Add number', `openEditLeadDetails('${lead.id}',event)`)}
-        ${qbtn('🤝 Met', `logTouch('${lead.id}','met',event)`)}
         ${qbtn('📥 Inbound', `logTouch('${lead.id}','inbound',event)`)}
       </div>`;
 
