@@ -1026,6 +1026,10 @@
       <label>Full Name / Contact Notes</label>
       <input id="lf-contact" type="text" placeholder="Full name, title, etc." autocomplete="off" />
     </div>
+    <div class="field">
+      <label>Phone</label>
+      <input id="lf-phone" type="tel" placeholder="323-555-0142 — enables 📞 Call / 💬 Text" autocomplete="off" />
+    </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
       <div class="field">
         <label>Segment</label>
@@ -2226,6 +2230,16 @@ function renderLeadCard(lead) {
     ? `<span style="display:inline-block;font-weight:700;color:#b45309;background:#fef3c7;border:1px solid #fcd34d;border-radius:20px;padding:0 8px;margin-right:6px;">🔔 ${ci.contacted ? `${ci.days}d cold` : 'no contact yet'}</span>`
     : '';
 
+  // Quick-log: launch the call/text AND drop a dated entry in one tap (note added after).
+  const phoneClean = (lead.phone || '').replace(/[^0-9+]/g, '');
+  const qbtn = (txt, js) => `<button onclick="event.stopPropagation();${js}" style="font-size:11px;font-weight:600;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:14px;padding:3px 11px;cursor:pointer;">${txt}</button>`;
+  const quickLog = lead.archived ? '' : `<div class="quick-log" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+        ${phoneClean
+          ? qbtn('📞 Call', `logTouch('${lead.id}','call',event)`) + qbtn('💬 Text', `logTouch('${lead.id}','text',event)`)
+          : qbtn('📞 Add number', `openEditLeadDetails('${lead.id}',event)`)}
+        ${qbtn('🤝 Met', `logTouch('${lead.id}','met',event)`)}
+      </div>`;
+
   return `
   <div class="topic-card ${lead.archived ? 'archived' : status}${isOpen ? ' open' : ''}" id="lc-${lead.id}" style="border-left-color:${stage.color}"
        ondragstart="leadDragStart(event,'${lead.id}')" ondragend="leadDragEnd(event)"
@@ -2252,6 +2266,7 @@ function renderLeadCard(lead) {
           ${noteCount ? ` · 🎤 ${noteCount} note${noteCount!==1?'s':''}` : ''}
           · last ${fmtDate(last?.createdAt || lead.createdAt)}
         </div>
+        ${quickLog}
       </div>
       <span class="chevron">▼</span>
     </div>
@@ -2330,6 +2345,7 @@ function renderLeadDetails(lead) {
     lead.first_name && lead.email && ['✉️', 'Email', `${esc(lead.first_name)} &lt;${esc(lead.email)}&gt;`],
     !lead.first_name && lead.email && ['✉️', 'Email', lead.email],
     lead.contact    && ['👤', 'Contact', lead.contact],
+    lead.phone      && ['📞', 'Phone', lead.phone],
   ].filter(Boolean);
 
   const needRows = [
@@ -2509,6 +2525,29 @@ async function snoozeFollowup(leadId, e) {
   await persistItem(updated, 'leads');
 }
 
+// Quick-log a touch (call/text/met). Logs a dated thread entry AND, for call/text,
+// hands off to the phone's dialer / Messages so the same tap starts the contact.
+// You add the outcome note afterward via 📝 Note on the new entry.
+async function logTouch(leadId, kind, e) {
+  if (e) e.stopPropagation();
+  const lead = leads.find(l => l.id === leadId);
+  if (!lead) return;
+  const phone = (lead.phone || '').replace(/[^0-9+]/g, '');
+  if ((kind === 'call' || kind === 'text') && !phone) {
+    alert('Add a phone number in ✏️ Details to call or text from here.');
+    return;
+  }
+  const LABEL = { call: '📞 Called', text: '💬 Texted', met: '🤝 Met' };
+  const entry = { id: 'e' + Date.now(), type: 'wait', text: LABEL[kind] || 'Logged touch', done: false, notes: [], createdAt: new Date().toISOString() };
+  lead.entries = [...(lead.entries || []), entry];
+  lead.updatedAt = new Date().toISOString();
+  expandedLeadIds.clear(); expandedLeadIds.add(leadId);   // open this card so the new entry's 📝 Note is one tap away
+  renderLeadsSection();
+  persistItem(lead, 'leads');                              // tel:/sms: don't unload the page, so this write completes
+  if (kind === 'call') window.location.href = `tel:${phone}`;
+  if (kind === 'text') window.location.href = `sms:${phone}`;
+}
+
 function toggleLeadCard(id) {
   // Accordion: clicking a card closes any other open one (clicking the open card collapses it).
   if (expandedLeadIds.has(id)) expandedLeadIds.delete(id); else { expandedLeadIds.clear(); expandedLeadIds.add(id); }
@@ -2535,7 +2574,7 @@ function toggleHideWaitlist() {
 
 // ── Lead modal ────────────────────────────────────────────────
 function _clearLeadModal() {
-  ['lf-company','lf-firstname','lf-email','lf-contact',
+  ['lf-company','lf-firstname','lf-email','lf-contact','lf-phone',
    'lf-location','lf-sqft','lf-lease','lf-movein',
    'lf-unit','lf-unit-sf','lf-rate','lf-included','lf-alt']
     .forEach(id => { const el = document.getElementById(id); if (el) { el.value = ''; el.classList.remove('err'); } });
@@ -2568,6 +2607,7 @@ function openEditLeadDetails(id, e) {
   document.getElementById('lf-firstname').value          = lead.first_name  || '';
   document.getElementById('lf-email').value              = lead.email        || '';
   document.getElementById('lf-contact').value            = lead.contact     || '';
+  document.getElementById('lf-phone').value              = lead.phone       || '';
   document.getElementById('lf-segment').value            = lead.segment     || 'other';
   document.getElementById('lf-stage').value              = lead.stage       || 'cold';
   document.getElementById('lf-location').value           = lead.location    || '';
@@ -2603,6 +2643,7 @@ async function saveLeadDetails() {
     first_name:     document.getElementById('lf-firstname').value.trim(),
     email:          document.getElementById('lf-email').value.trim(),
     contact:        document.getElementById('lf-contact').value.trim(),
+    phone:          document.getElementById('lf-phone').value.trim(),
     segment:        document.getElementById('lf-segment').value,
     stage:          document.getElementById('lf-stage').value,
     location:       document.getElementById('lf-location').value.trim(),
@@ -3578,6 +3619,7 @@ window.leadOverlayClick    = leadOverlayClick;
 window.saveLeadDetails     = saveLeadDetails;
 window.deleteLead          = deleteLead;
 window.toggleLeadCard      = toggleLeadCard;
+window.logTouch            = logTouch;
 window.wlAddLocation       = wlAddLocation;
 window.wlRemoveLocation    = wlRemoveLocation;
 window.wlToggleCollapse    = wlToggleCollapse;

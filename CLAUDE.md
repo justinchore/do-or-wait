@@ -44,7 +44,7 @@ Source: `C:\Users\jcho\Documents\Claude\Projects\do_or_wait\index.html` (single 
 Task threads. Fields: `title`, `archived`, `entries[]`, `createdAt`
 
 ### `leads/{id}`
-Sales leads. Thread structure + lead-specific fields: `company`, `first_name`, `email`, `contact`, `segment`, `stage`, `location`, `sqft`, `leaseLength`, `moveIn`, `unit`, `unit_sf`, `dock`, `rate`, `included_items`, `alt_option`, `is_importer`, `current_step`, `last_touch_date`, `next_due_date`, `seq_status`, `pending_email` (written by n8n when email ready to approve)
+Sales leads. Thread structure + lead-specific fields: `company`, `first_name`, `email`, `contact`, `phone`, `segment`, `stage`, `location`, `sqft`, `leaseLength`, `moveIn`, `unit`, `unit_sf`, `dock`, `rate`, `included_items`, `alt_option`, `is_importer`, `current_step`, `last_touch_date`, `next_due_date`, `seq_status`, `pending_email` (written by n8n when email ready to approve)
 
 **Follow-up fields** (written by the n8n Follow-up Scanner — workflow 6 — from Outlook/Graph): `last_contact_date` (YYYY-MM-DD of the most recent email to/from the lead, either direction), `days_since_contact` (int), `followup_contacted` (bool — false if no email history was found and the date fell back to lead creation), `followup_due` (bool — true at ≥3 days), `followup_checked_at` (ISO of last scan), `followup_snooze_until` (YYYY-MM-DD — set by the app's "Snooze" button, suppresses the lead until that date). The app **does not depend on the scanner having run**: `contactInfo(lead)` recomputes "days since contact" client-side as the most recent of `last_contact_date` / `last_touch_date` / the last thread entry, falling back to `createdAt`. The scanner just keeps the Outlook-derived signal fresh.
 
@@ -191,6 +191,9 @@ The follow-up system Justin actually asked for: surface "leads that haven't been
 - **`🔔 Nd cold` chip** on each due lead card (or "no contact yet").
 - **Suggested-message block** (`renderFollowupBlock`) inside a due lead's thread (only when there's no `pending_email` from the sequencer): one of 3 lightweight merge templates in `FOLLOWUP_MSGS` (Check-in / Value-add / Break-up), with **↻ cycle template** (`cycleFollowupTpl`), **✉️ Open in email** (`openFollowupEmail`, builds a `mailto:`), **📋 Copy** (`copyFollowupMsg`), and **Snooze 3 days** (`snoozeFollowup`, sets `followup_snooze_until`).
 - Core logic: `FOLLOWUP_DAYS` (=3), `isFollowupDue(lead)`, `contactInfo(lead)`. All new inline handlers are exposed in the `window.*` block (per the ES-module gotcha).
+
+### Quick-log call/text/met (launch + log in one tap)
+Each active lead card shows a compact button row (`renderLeadCard` → `quickLog`): **📞 Call** / **💬 Text** when `lead.phone` is set (else a **📞 Add number** button that opens edit), plus **🤝 Met**. `logTouch(leadId, kind, e)` appends a dated thread entry (`📞 Called` / `💬 Texted` / `🤝 Met`, type `wait`), opens the card (accordion) so the outcome note is one tap away via 📝 Note, persists, then for call/text hands off to `tel:`/`sms:` (digits sanitized from `lead.phone`). This launches the dialer / Messages (iMessage on Apple) AND logs the touch in the same tap — which also resets that lead's 3-day follow-up clock (calls/texts are invisible to the Outlook scanner). New `phone` field added to the lead modal (`lf-phone`). `logTouch` is exposed on `window.*`. Note: `tel:`/`sms:` only do something on a device with a phone/Messages handler (iPhone, or Mac via Continuity) — the log still records on any platform.
 
 ---
 
