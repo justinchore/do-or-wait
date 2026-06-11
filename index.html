@@ -1632,7 +1632,8 @@ function renderNote(topicId, entryId, note, coll='topics') {
 //  INTERACTIONS
 // ═══════════════════════════════════════════════════════════════
 function toggleCard(id) {
-  if (expandedIds.has(id)) expandedIds.delete(id); else expandedIds.add(id);
+  // Accordion: clicking a card closes any other open one (clicking the open card collapses it).
+  if (expandedIds.has(id)) expandedIds.delete(id); else { expandedIds.clear(); expandedIds.add(id); }
   render(); populateAudio();
 }
 
@@ -2509,7 +2510,8 @@ async function snoozeFollowup(leadId, e) {
 }
 
 function toggleLeadCard(id) {
-  if (expandedLeadIds.has(id)) expandedLeadIds.delete(id); else expandedLeadIds.add(id);
+  // Accordion: clicking a card closes any other open one (clicking the open card collapses it).
+  if (expandedLeadIds.has(id)) expandedLeadIds.delete(id); else { expandedLeadIds.clear(); expandedLeadIds.add(id); }
   renderLeadsSection();
   populateAudio();
 }

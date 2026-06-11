@@ -33,6 +33,9 @@ Source: `C:\Users\jcho\Documents\Claude\Projects\do_or_wait\index.html` (single 
 
 **If we ever do migrate**, the chosen path is **Preact + htm loaded from a CDN** — components + reactivity while preserving the zero-build, push-to-deploy workflow. Not full React-with-a-bundler.
 
+**Deferred feature ideas (revisit at the Preact migration):**
+- Side-by-side card comparison (open two cards at once). Cards are currently **accordion** (single-open) via `toggleCard` / `toggleLeadCard` — opening one collapses the rest. Multi-open + a comparison layout is cleaner to build with components than with the current string-templating.
+
 ---
 
 ## Firestore collections
