@@ -1,0 +1,76 @@
+{
+  "name": "CW — 7. Pricing Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "cronExpression", "expression": "0 6 * * *" }] }
+      },
+      "id": "cw-p-001",
+      "name": "Every morning 6am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://graph.microsoft.com/v1.0/drives/b!NqOhqfgNDEy9VSk-AuJqlB28H4LACSBCj5XJoInGBLtDFdyhYUsPRoBujaT-7ww-/items/01MTLWTO2EWTLUZXWKHFGYJJRYD3BOVYYA/workbook/worksheets('New%20Price%20Sheet%202026')/usedRange(valuesOnly=true)?$select=values",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOAuth2Api",
+        "options": {}
+      },
+      "id": "cw-p-002",
+      "name": "Read price sheet",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "credentials": {
+        "microsoftOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Microsoft OAuth2 — Cubework Outlook"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the 2D 'values' array from the Graph usedRange into per-location pricing\n// records, then build a Firestore PATCH body for pricing/current.\n// Sheet layout (tab 'New Price Sheet 2026'): header on sheet row 4, data from row 5.\n// Columns A..Y map to KEYS below. Stop at the 'INACTIVE LOCATION' divider; skip the\n// repeated 'STATE' header row; a row with pricing but no state/city/address is a\n// continuation of the previous location (fills its blanks) — e.g. Walnut.\n\nconst resp = $input.first().json || {};\nconst values = Array.isArray(resp.values) ? resp.values : [];\nconst KEYS = [null,'state','city','address','sub2k','r2_5k','r5k','r5k_12mo','office_mo','office','dock','desk','virtual','truck','small_veh','wifi','annual','deposit','dp_office','dp_wh','dp_xdock','studio','conf','event','amenities','special'];\n\nfunction clean(v){\n  if(v === null || v === undefined || v === '') return '';\n  if(typeof v === 'number') return Number.isInteger(v) ? v : Math.round(v*10000)/10000;\n  return String(v).trim();\n}\n\nconst rows = [];\nfor(let i = 4; i < values.length; i++){          // i=4 -> sheet row 5\n  const row = values[i] || [];\n  const a = clean(row[0]);\n  if(a === 'INACTIVE LOCATION') break;\n  if(a === 'STATE') continue;                     // repeated header\n  const cells = [];\n  for(let c = 0; c < 25; c++) cells.push(clean(row[c]));\n  if(!cells.some(x => x !== '')) continue;         // blank row\n  const rec = {};\n  for(let c = 0; c < 25; c++){ const k = KEYS[c+1]; if(cells[c] !== '') rec[k] = cells[c]; }\n  const hasLoc = rec.state || rec.city || rec.address;\n  if(!hasLoc && rows.length){                       // continuation -> fill prior\n    const prev = rows[rows.length-1];\n    for(const k in rec){ if(prev[k] === undefined) prev[k] = rec[k]; }\n    continue;\n  }\n  rows.push(rec);\n}\nrows.forEach((r, idx) => { r._id = 'p' + idx; });\n\nfunction fv(v){\n  if(typeof v === 'number') return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };\n  return { stringValue: String(v) };\n}\nconst arr = rows.map(r => { const fields = {}; for(const k in r) fields[k] = fv(r[k]); return { mapValue: { fields } }; });\nconst patchBody = { fields: {\n  rows:      { arrayValue: { values: arr } },\n  updatedAt: { stringValue: new Date().toISOString() },\n  source:    { stringValue: 'n8n pricing sync' },\n  count:     { integerValue: String(rows.length) }\n}};\n\nif(rows.length === 0) throw new Error('Pricing parse produced 0 rows — check the worksheet name/usedRange.');\nreturn [{ json: { patchBody, count: rows.length } }];"
+      },
+      "id": "cw-p-003",
+      "name": "Parse pricing",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/pricing/current?updateMask.fieldPaths=rows&updateMask.fieldPaths=updatedAt&updateMask.fieldPaths=source&updateMask.fieldPaths=count",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.patchBody) }}",
+        "options": {}
+      },
+      "id": "cw-p-004",
+      "name": "Write pricing to Firestore",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Google Service Account — do-or-wait"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every morning 6am": { "main": [[{ "node": "Read price sheet", "type": "main", "index": 0 }]] },
+    "Read price sheet": { "main": [[{ "node": "Parse pricing", "type": "main", "index": 0 }]] },
+    "Parse pricing": { "main": [[{ "node": "Write pricing to Firestore", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "cw-workflow-007"
+}

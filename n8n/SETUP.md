@@ -25,6 +25,7 @@ Justin sends from his own Outlook — n8n does **not** send mail. This avoids ne
 | `2_send_trigger.json` | Runs every 5 min. Finds leads you approved (`seq_status = send_approved`), sends via Outlook, updates the lead. |
 | `3_reply_detector.json` | Runs every 30 min. Checks your inbox for emails from active prospects, marks them as replied. |
 | `6_followup_scanner.json` | Runs at 7am daily. Scans Outlook for the last email to/from each open lead, writes `days_since_contact` / `followup_due` to Firestore. **Does not send anything** — it just powers the app's 🔔 Follow-ups view. |
+| `7_pricing_sync.json` | Runs at 6am daily. Reads the master price sheet (Sales_US site, `New Master List_ Price.xlsx`, tab `New Price Sheet 2026`) via the Graph workbook API and writes the parsed rate card to Firestore `pricing/current`. Powers the app's 💲 Pricing tab. |
 | `templates.json` | Reference copy of the 5 email templates (the actual templates are embedded in workflow 1's Code node). |
 
 ---
@@ -125,6 +126,27 @@ The scanner reads mail via `GET /users/{OUTLOOK_USER_ID}/messages?$search="parti
 
 ### Tuning the threshold
 The 3-day rule lives in two places: `FOLLOWUP_DAYS` near the bottom of the scanner's `Compute days since contact` Code node, and `const FOLLOWUP_DAYS = 3;` in `index.html`. Change both to match.
+
+---
+
+## Pricing Sync (workflow 7) — the 💲 Pricing tab
+
+Reads the national price sheet from SharePoint and writes it to Firestore `pricing/current`. Reuses the same two credentials as the others — no new ones.
+
+### Import & activate
+1. Workflows → Import from file → `7_pricing_sync.json`
+2. Map `Read price sheet` → `Microsoft OAuth2 — Cubework Outlook`; map `Write pricing to Firestore` → `Google Service Account — do-or-wait` (replace `REPLACE_WITH_CREDENTIAL_ID`).
+3. **Activate.** Runs 6am daily; use **Test workflow** to run on demand.
+
+### Graph permission note — IMPORTANT
+This file lives on the **Sales_US** SharePoint site (the availability sync reads the *PropertyManagement* site). The Azure app needs read access to Sales_US:
+- If it has **`Files.Read.All` / `Sites.Read.All`** (application) with admin consent → already covered.
+- If it's locked to specific sites (`Sites.Selected`) → grant the app access to the Sales_US site.
+
+If `Read price sheet` returns 403/itemNotFound, this is why. The driveId/itemId and worksheet name are baked into the node's URL; if the sheet is renamed or moved, update them there.
+
+### How the app uses it
+The 💲 Pricing tab reads `pricing/current` live. Until the first sync runs, it shows the bundled snapshot from `pricing-seed.js` (labeled "snapshot"); once the sync writes the doc it flips to "live". To refresh the snapshot fallback, regenerate `pricing-seed.js` from the master xlsx.
 
 ---
 

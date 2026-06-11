@@ -646,6 +646,7 @@
     <button class="tab-btn" data-tab="leads" onclick="switchTab('leads')">🎯 Leads</button>
     <button class="tab-btn" data-tab="playbook" onclick="switchTab('playbook')">📞 Playbook</button>
     <button class="tab-btn" data-tab="avail" onclick="switchTab('avail')">🏭 Avail</button>
+    <button class="tab-btn" data-tab="pricing" onclick="switchTab('pricing')">💲 Pricing</button>
     <button class="tab-btn" data-tab="notes" onclick="switchTab('notes')">💡 Notes</button>
   </div>
 
@@ -875,6 +876,20 @@
         <button class="btn sm" onclick="clearNoteSince()">clear</button>
       </div>
       <div id="notes-list"></div>
+    </div>
+  </div>
+
+  <!-- Pricing view (national rate card) -->
+  <div id="pricing-view" style="display:none">
+    <div style="max-width:1200px;margin:0 auto;padding:16px;width:100%;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+        <input id="pricing-search" oninput="onPricingSearch(this.value)" placeholder="Search city, address, or state…"
+               style="flex:1;min-width:200px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:14px;" />
+        <select id="pricing-state" onchange="setPricingState(this.value)"
+               style="padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:13px;"></select>
+        <span id="pricing-meta" style="font-size:12px;color:var(--text2);"></span>
+      </div>
+      <div id="pricing-content"></div>
     </div>
   </div>
 
@@ -1141,6 +1156,7 @@
   </div>
 </div>
 
+<script src="pricing-seed.js"></script>
 <script type="module">
 // ═══════════════════════════════════════════════════════════════
 //  FIREBASE (no auth — open access)
@@ -2693,11 +2709,13 @@ function switchTab(tab) {
   document.getElementById('leads-view').style.display    = tab === 'leads'    ? '' : 'none';
   document.getElementById('playbook-view').style.display = tab === 'playbook' ? '' : 'none';
   document.getElementById('avail-view').style.display    = tab === 'avail'    ? '' : 'none';
+  document.getElementById('pricing-view').style.display  = tab === 'pricing'  ? '' : 'none';
   document.getElementById('notes-view').style.display    = tab === 'notes'    ? '' : 'none';
   document.querySelectorAll('.tab-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.tab === tab);
   });
   if (tab === 'notes') renderNotes();
+  if (tab === 'pricing') renderPricing();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -3560,6 +3578,89 @@ function clearNoteSince() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  PRICING — national rate card. Reads Firestore pricing/current
+//  (written by the n8n Pricing Sync); falls back to the bundled
+//  snapshot in pricing-seed.js so the tab works before/without sync.
+// ═══════════════════════════════════════════════════════════════
+let pricingRows   = (window.PRICING_SEED || []).slice();
+let pricingSource = 'snapshot';
+let pricingSearch = '';
+let pricingState  = 'all';
+const expandedPrice = new Set();
+
+const PRICE_PRIMARY = [
+  ['sub2k','<2k sf',true],['r2_5k','2–5k sf',true],['r5k','5k+ sf',true],
+  ['r5k_12mo','5k+ 12mo',true],['office','Office',false],['dock','Dock',false],
+];
+const PRICE_DETAIL = [
+  ['office_mo','Office (monthly min)'],['desk','Desk / Cubicle'],['virtual','Virtual Office'],
+  ['truck','Truck Parking'],['small_veh','Small Vehicle'],['wifi','Whse WiFi'],
+  ['annual','Annual (per SF)'],['deposit','Security Deposit'],['dp_office','Day Pass — Office/Desk'],
+  ['dp_wh','Day Pass — WH (per SF)'],['dp_xdock','Day Pass — Cross Dock'],['studio','Studio Space'],
+  ['conf','Conference Room'],['event','Event Space (per SF)'],['amenities','Amenities'],['special','Special Pricing'],
+];
+
+function normalizePricing(){ pricingRows.forEach((r,i)=>{ if(!r._id) r._id = 'p' + i; }); }
+normalizePricing();
+
+function priceVal(v, money){
+  if(v === '' || v == null) return '<span style="color:var(--text2)">—</span>';
+  if(money && typeof v === 'number') return '$' + v.toFixed(2);
+  return esc(String(v));
+}
+function onPricingSearch(v){ pricingSearch = (v||'').trim().toLowerCase(); renderPricing(); }
+function setPricingState(v){ pricingState = v; renderPricing(); }
+function togglePriceRow(id, e){ if(e) e.stopPropagation(); if(expandedPrice.has(id)) expandedPrice.delete(id); else expandedPrice.add(id); renderPricing(); }
+
+function renderPricing(){
+  const host = document.getElementById('pricing-content'); if(!host) return;
+  const sel = document.getElementById('pricing-state');
+  if(sel){
+    const states = [...new Set(pricingRows.map(r=>r.state).filter(Boolean))].sort();
+    sel.innerHTML = '<option value="all">All states</option>' +
+      states.map(s=>`<option value="${esc(s)}">${esc(STATE_NAMES[s]||s)}</option>`).join('');
+    sel.value = pricingState;
+  }
+  let rows = pricingRows.filter(r => pricingState === 'all' || r.state === pricingState);
+  if(pricingSearch) rows = rows.filter(r => [r.state,r.city,r.address].some(x => String(x||'').toLowerCase().includes(pricingSearch)));
+  rows = rows.slice().sort((a,b)=> String(a.state||'').localeCompare(String(b.state||'')) || String(a.city||'').localeCompare(String(b.city||'')));
+  const meta = document.getElementById('pricing-meta');
+  if(meta) meta.textContent = `${rows.length} location${rows.length!==1?'s':''} · ${pricingSource==='live'?'live':'snapshot'}`;
+  if(!rows.length){ host.innerHTML = '<div class="empty">No locations match.</div>'; return; }
+  const groups = {}; rows.forEach(r => { (groups[r.state||'Other'] = groups[r.state||'Other'] || []).push(r); });
+  const cols = PRICE_PRIMARY;
+  host.innerHTML = Object.keys(groups).sort().map(st => {
+    const body = groups[st].map(r => {
+      const open = expandedPrice.has(r._id);
+      const tds = cols.map(([k,,money])=>`<td style="text-align:right;white-space:nowrap;padding:5px 6px;">${priceVal(r[k],money)}</td>`).join('');
+      const det = PRICE_DETAIL.filter(([k])=>r[k]!=='' && r[k]!=null)
+        .map(([k,lab])=>`<div style="display:flex;justify-content:space-between;gap:12px;padding:3px 0;border-top:1px solid var(--border);font-size:12px;"><span style="color:var(--text2);">${lab}</span><span style="font-weight:600;">${esc(String(r[k]))}</span></div>`).join('');
+      const detRow = open ? `<tr><td colspan="${cols.length+2}" style="background:var(--bg);padding:8px 12px;">${det || '<span style="color:var(--text2)">No additional pricing.</span>'}</td></tr>` : '';
+      return `<tr onclick="togglePriceRow('${r._id}',event)" style="cursor:pointer;border-top:1px solid var(--border);">
+          <td style="font-weight:600;white-space:nowrap;padding:5px 6px;">${esc(r.city||'')} <span style="color:var(--text2);font-weight:400;">${open?'▾':'▸'}</span></td>
+          <td style="color:var(--text2);font-size:12px;padding:5px 6px;">${esc(r.address||'')}</td>${tds}</tr>${detRow}`;
+    }).join('');
+    return `<div style="margin-bottom:18px;">
+        <div style="font-weight:700;font-size:13px;margin:0 0 6px;">${esc(STATE_NAMES[st]||st)} <span style="color:var(--text2);font-weight:400;">(${groups[st].length})</span></div>
+        <div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead><tr style="color:var(--text2);font-size:11px;text-transform:uppercase;letter-spacing:.04em;text-align:left;">
+            <th style="padding:4px 6px;">City</th><th style="padding:4px 6px;">Address</th>
+            ${cols.map(([,lab])=>`<th style="padding:4px 6px;text-align:right;">${lab}</th>`).join('')}
+          </tr></thead><tbody>${body}</tbody></table></div>
+      </div>`;
+  }).join('');
+}
+
+// Live override from Firestore (written by the n8n Pricing Sync). Falls back to the snapshot if the doc is absent/empty.
+try {
+  onSnapshot(doc(db,'pricing','current'), snap => {
+    const d = snap.exists() ? snap.data() : null;
+    if(d && Array.isArray(d.rows) && d.rows.length){ pricingRows = d.rows; pricingSource = 'live'; normalizePricing(); renderPricing(); }
+  }, err => console.warn('pricing listener', err));
+} catch(e){ console.warn('pricing listener init', e); }
+renderPricing();
+
+// ═══════════════════════════════════════════════════════════════
 //  EXPOSE GLOBALS (for onclick= attributes in HTML)
 // ═══════════════════════════════════════════════════════════════
 window.toggleCard      = toggleCard;
@@ -3640,6 +3741,9 @@ window.skipEmail           = skipEmail;
 window.snoozeEmail         = snoozeEmail;
 window.openSequencerEmail  = openSequencerEmail;
 window.markTouchSent       = markTouchSent;
+window.onPricingSearch     = onPricingSearch;
+window.setPricingState     = setPricingState;
+window.togglePriceRow      = togglePriceRow;
 window.cycleFollowupTpl    = cycleFollowupTpl;
 window.openFollowupEmail   = openFollowupEmail;
 window.copyFollowupMsg     = copyFollowupMsg;

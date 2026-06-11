@@ -6,7 +6,8 @@ A web app for Justin Cho (Justin.Cho@cubework.com) at Cubework. Tabs:
 2. **Leads** — Sales pipeline for leasing prospects, same DO/WAIT thread model  
 3. **📞 Playbook** — (existing sales playbook view)
 4. **🏭 Avail** — Real-time availability dashboard for Cubework warehouse locations
-5. **💡 Notes** — Ideas/issues notebook (two editable fields per note, filter by date created)
+5. **💲 Pricing** — National rate card (read-only). Searchable table grouped by state; click a row to expand full pricing detail. Reads `pricing/current` (n8n-synced), falls back to `pricing-seed.js` snapshot.
+6. **💡 Notes** — Ideas/issues notebook (two editable fields per note, filter by date created)
 
 Deployed at: https://justinchore.github.io/do-or-wait/
 Source: `C:\Users\jcho\Documents\Claude\Projects\do_or_wait\index.html` (single HTML file, push to GitHub to deploy)
@@ -59,6 +60,9 @@ Written by n8n after syncing each property's SharePoint file. Fields: `property`
 **App-edited fields survive sync**: `pa`, `ownership`, and `lease_expiration` are written directly from the app via Firestore REST PATCH and are NOT in the sync's `updateMask`, so re-syncs don't clobber them. `ownership`/`lease_expiration` are set via the Ownership modal (`openEditOwnership`/`saveOwnership`); the collapsed location card shows an ownership badge (🏢 Owned / 📄 Leased · exp date, red if expired) that opens the modal on click.
 
 Each entry in `units[]` (parsed from the BOT tab): `unit`, `type` (WH/OFFICE/DOCK/TRAILER), `sf`, `status`, `tenant`, `owner`, `phone`, `email`, `poc`, `notes`, `available` (bool), `hold` (bool). owner/phone/email/poc/notes come from BOT-tab cols 6-10 and are null when blank.
+
+### `pricing/current`
+One document — the national rate card. Written by the **n8n Pricing Sync (workflow 7)** from the SharePoint master price sheet (`New Master List_ Price.xlsx`, tab `New Price Sheet 2026`, on the **Sales_US** site). Fields: `rows` (array of per-location maps), `updatedAt`, `source`, `count`. Each row map: `state, city, address, sub2k, r2_5k, r5k, r5k_12mo, office_mo, office, dock, desk, virtual, truck, small_veh, wifi, annual, deposit, dp_office, dp_wh, dp_xdock, studio, conf, event, amenities, special` (blank fields omitted; per-SF tiers numeric, ranges/"n/a" as strings). The **💲 Pricing tab** reads this; if absent it falls back to the bundled snapshot in `pricing-seed.js`. (Decided to use n8n because the sheet changes often — same rationale as availability.)
 
 ### `config/properties`
 One document. Contains a `properties` array — each entry:
@@ -201,6 +205,7 @@ Each active lead card shows a compact button row (`renderLeadCard` → `quickLog
 ```
 do_or_wait/
   index.html            ← entire app (push to GitHub to deploy)
+  pricing-seed.js       ← auto-generated snapshot of the price sheet, loaded by index.html as the Pricing-tab fallback before/without the n8n sync. Regenerate from the master xlsx; NOT hand-edited. (Loaded via <script src> just before the module — the one static data asset outside index.html.)
   CLAUDE.md             ← this file
   sharepoint_location_links.txt ← SharePoint URLs for the CA locations (input for presets)
   n8n/

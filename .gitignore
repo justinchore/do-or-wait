@@ -1,0 +1,7 @@
+# Source spreadsheet for the price sheet — do NOT commit (large, internal, and the repo is public).
+# The app uses the parsed snapshot in pricing-seed.js instead.
+Copy of New Master List_ Price.xlsx
+*.xlsx
+
+# stray workspace temp
+.writetest.tmp
