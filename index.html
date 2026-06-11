@@ -2238,6 +2238,7 @@ function renderLeadCard(lead) {
           ? qbtn('📞 Call', `logTouch('${lead.id}','call',event)`) + qbtn('💬 Text', `logTouch('${lead.id}','text',event)`)
           : qbtn('📞 Add number', `openEditLeadDetails('${lead.id}',event)`)}
         ${qbtn('🤝 Met', `logTouch('${lead.id}','met',event)`)}
+        ${qbtn('📥 Inbound', `logTouch('${lead.id}','inbound',event)`)}
       </div>`;
 
   return `
@@ -2537,8 +2538,9 @@ async function logTouch(leadId, kind, e) {
     alert('Add a phone number in ✏️ Details to call or text from here.');
     return;
   }
-  const LABEL = { call: '📞 Called', text: '💬 Texted', met: '🤝 Met' };
-  const entry = { id: 'e' + Date.now(), type: 'wait', text: LABEL[kind] || 'Logged touch', done: false, notes: [], createdAt: new Date().toISOString() };
+  const LABEL = { call: '📞 Called', text: '💬 Texted', met: '🤝 Met', inbound: '📥 They reached out' };
+  const type  = kind === 'inbound' ? 'do' : 'wait';   // inbound → ball's in your court (Do); outbound → waiting on them (Wait)
+  const entry = { id: 'e' + Date.now(), type, text: LABEL[kind] || 'Logged touch', done: false, notes: [], createdAt: new Date().toISOString() };
   lead.entries = [...(lead.entries || []), entry];
   lead.updatedAt = new Date().toISOString();
   expandedLeadIds.clear(); expandedLeadIds.add(leadId);   // open this card so the new entry's 📝 Note is one tap away
