@@ -1,0 +1,250 @@
+{
+  "name": "CW — 8. Prospect Finder (DRAFT)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 4 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cw-p-001",
+      "name": "Nightly 4am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── DATA FEED (STUB) ─────────────────────────────────────────────────\n// Swap this node for the real ImportYeti feed once we pick the path:\n//   Option A — File drop: replace with a Microsoft Graph / HTTP node that\n//     reads the latest exported CSV from SharePoint/OneDrive (mirror the\n//     availability sync's \"Read sheet data\" node), then map rows below.\n//   Option B — ImportYeti API: replace with an HTTP Request node hitting\n//     the ImportYeti API; map its response to the row shape below.\n// Until then these sample rows let you test the whole chain end to end.\n// Expected row shape (one object per importer):\n//   company, category, dest_port, shipments_12m, shipments_total,\n//   supplier_count, hq_city, hq_state, product_desc\nconst rows = [\n  { company:'Sample Patio Co', category:'patio furniture', dest_port:'Los Angeles',\n    shipments_12m:180, shipments_total:540, supplier_count:6,\n    hq_city:'Anaheim', hq_state:'CA', product_desc:'outdoor sofas, dining sets' }\n];\nreturn rows.map(r => ({ json: r }));"
+      },
+      "id": "cw-p-002",
+      "name": "Get import data (STUB — swap feed)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Apply the rubric's hard PORT GATE and normalize to one row per company.\n// Anything not landing at LA / Long Beach is dropped (geography is the\n// whole advantage). One row per company; pass-through rows keep their\n// raw signals for the scorer.\nconst LA = ['los angeles','long beach','both la/lb','la','lb'];\nconst out = [];\nconst seen = new Set();\nfor (const it of $input.all()) {\n  const r = it.json || {};\n  const company = String(r.company || '').trim();\n  if (!company) continue;\n  const port = String(r.dest_port || '').trim().toLowerCase();\n  if (!LA.some(p => port.includes(p))) continue;   // wrong coast -> drop\n  const key = company.toLowerCase();\n  if (seen.has(key)) continue;                      // dedupe\n  seen.add(key);\n  out.push({ json: { ...r, company } });\n}\nreturn out;"
+      },
+      "id": "cw-p-003",
+      "name": "Port gate + normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "cw-p-004",
+      "name": "Loop candidates",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the Anthropic request that scores this candidate against the\n// cubework-prospect-finder rubric and drafts the opener. Keeps the rubric\n// text in one place; the next node POSTs it to the Claude API.\nconst c = $json;\nconst rubric = `You are scoring an importer as a prospect for Cubework's flexible, month-to-month warehouse space in the Inland Empire (Ontario, Fontana, City of Industry), minutes from the Ports of LA/Long Beach. The ideal prospect has real container volume through LA/LB but is NOT so large it already owns its distribution — it feels a flexibility squeeze our model solves.\nScore these 7 factors (the LA/LB port gate has already passed):\n- volume_trend (0-20): shipments rising = outgrowing space, likely not lease-locked.\n- right_size (0-20): mid-size/growth; penalize giants that own DCs and tiny one-shipment importers.\n- seasonality (0-15): category that spikes (patio, holiday, fitness, fashion).\n- dtc (0-15): sells direct, holds its own inventory.\n- bulk (0-10): bulky-relative-to-value goods (furniture, home, sporting).\n- recurring (0-10): multiple ongoing shipments.\n- timing (0-10): recent funding / expansion / hiring / new US DC.\nTiers: Hot >=70, Warm 45-69, Watch <45. Score conservatively when data is thin.\nReturn ONLY minified JSON, no prose:\n{\"volume_trend\":n,\"right_size\":n,\"seasonality\":n,\"dtc\":n,\"bulk\":n,\"recurring\":n,\"timing\":n,\"total\":n,\"tier\":\"Hot|Warm|Watch\",\"why_now\":\"one sentence\",\"buyer_title\":\"title to target\",\"email_subject\":\"...\",\"email_body\":\"~80 words, value-led, lead with the port-proximity insight, reference this brand specifically, offer to share how others structure it, never use the phrase follow up, sign as Justin\"}`;\nconst candidate = JSON.stringify({\n  company:c.company, category:c.category, dest_port:c.dest_port,\n  shipments_12m:c.shipments_12m, shipments_total:c.shipments_total,\n  supplier_count:c.supplier_count, hq_city:c.hq_city, hq_state:c.hq_state,\n  product_desc:c.product_desc\n});\nconst requestBody = {\n  model: 'claude-3-5-sonnet-20241022',\n  max_tokens: 900,\n  system: rubric,\n  messages: [{ role: 'user', content: 'Candidate import data:\\n' + candidate }]\n};\nreturn [{ json: { ...c, requestBody } }];"
+      },
+      "id": "cw-p-005",
+      "name": "Build scoring prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": {}
+      },
+      "id": "cw-p-006",
+      "name": "Score + draft (Claude)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1340,
+        300
+      ],
+      "continueOnFail": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Anthropic API — do-or-wait"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the model's JSON, keep Hot/Warm only, and build a Firestore\n// createDocument body that drops straight into the do-or-wait `leads`\n// collection — so it shows on the Leads board next morning. Score, why-now\n// and the draft opener go into an initial thread note, which the app\n// already renders (no UI change needed).\nconst c = $json;\nlet parsed = {};\ntry {\n  const txt = (c.content && c.content[0] && c.content[0].text) || c.text || '{}';\n  parsed = JSON.parse(txt.trim().replace(/^```json/i,'').replace(/```$/,'').trim());\n} catch (e) { return []; }                 // unparseable -> skip\nconst tier = parsed.tier || 'Watch';\nif (tier === 'Watch') return [];           // only surface Hot/Warm\n\nconst company = $('Loop candidates').item.json.company;\nconst slug = 'iy-' + company.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'');\nconst now = new Date().toISOString();\n\nconst noteText =\n  '[Auto-prospected · ImportYeti] ' + tier + ' · score ' + (parsed.total != null ? parsed.total : '?') + '/100\\n' +\n  'Why now: ' + (parsed.why_now || '-') + '\\n' +\n  'Target buyer: ' + (parsed.buyer_title || '-') + '\\n\\n' +\n  'Draft opener\\nSubject: ' + (parsed.email_subject || '') + '\\n' + (parsed.email_body || '');\n\nconst entry = { mapValue: { fields: {\n  kind: { stringValue: 'note' },\n  text: { stringValue: noteText },\n  ts:   { stringValue: now }\n}}};\n\nconst fields = {\n  company:            { stringValue: company },\n  segment:            { stringValue: 'Importer — ' + (c.category || '') },\n  is_importer:        { booleanValue: true },\n  stage:              { stringValue: 'cold' },\n  prospect_source:    { stringValue: 'ImportYeti' },\n  prospect_tier:      { stringValue: tier },\n  prospect_score:     { integerValue: String(parsed.total != null ? parsed.total : 0) },\n  prospect_dest_port: { stringValue: c.dest_port || '' },\n  entries:            { arrayValue: { values: [ entry ] } },\n  createdAt:          { timestampValue: now }\n};\nreturn [{ json: { slug, fsBody: { fields } } }];"
+      },
+      "id": "cw-p-007",
+      "name": "Build lead doc",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/leads?documentId={{ $json.slug }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.fsBody) }}",
+        "options": {}
+      },
+      "id": "cw-p-008",
+      "name": "Create lead in Firestore",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1780,
+        300
+      ],
+      "continueOnFail": true,
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Google Service Account — do-or-wait"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Nightly 4am": {
+      "main": [
+        [
+          {
+            "node": "Get import data (STUB — swap feed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get import data (STUB — swap feed)": {
+      "main": [
+        [
+          {
+            "node": "Port gate + normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Port gate + normalize": {
+      "main": [
+        [
+          {
+            "node": "Loop candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop candidates": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Build scoring prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build scoring prompt": {
+      "main": [
+        [
+          {
+            "node": "Score + draft (Claude)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score + draft (Claude)": {
+      "main": [
+        [
+          {
+            "node": "Build lead doc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build lead doc": {
+      "main": [
+        [
+          {
+            "node": "Create lead in Firestore",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create lead in Firestore": {
+      "main": [
+        [
+          {
+            "node": "Loop candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "cw-workflow-008"
+}

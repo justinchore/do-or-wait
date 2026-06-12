@@ -1992,8 +1992,20 @@ function dayDiff(ms) {
   return Math.round((dayStart(new Date()) - dayStart(new Date(ms))) / 86400000);
 }
 
+// Whole weekdays elapsed since a contact (the contact day itself isn't counted).
+// Weekends don't count as silence — the follow-up clock runs on BUSINESS days,
+// so a Fri touch isn't "3 days cold" by Monday. Display still uses calendar days.
+function bizDaysBetween(fromMs, toMs = Date.now()) {
+  const dayStart = x => { const d = new Date(x); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); };
+  let d = dayStart(fromMs); const end = dayStart(toMs); let n = 0;
+  while (d < end) { d += 86400000; const wd = new Date(d).getDay(); if (wd !== 0 && wd !== 6) n++; }
+  return n;
+}
+
 // Most-recent contact across all signals, with its direction.
-// Returns { days, date, contacted, dir }  (dir: 'out' | 'in'); days null only if undatable.
+// Returns { days, bizDays, date, contacted, dir }  (dir: 'out' | 'in').
+// days = calendar days (for display); bizDays = business days (drives the due trigger).
+// days/bizDays null only if undatable.
 function contactInfo(lead) {
   const events = [];
   if (lead.last_contact_date) events.push({ t: Date.parse(lead.last_contact_date), dir: lead.last_contact_dir === 'in' ? 'in' : 'out' });
@@ -2006,10 +2018,10 @@ function contactInfo(lead) {
     events.push({ t: Date.parse(e.createdAt), dir: e.dir === 'in' ? 'in' : 'out' });
   });
   const valid = events.filter(e => !isNaN(e.t));
-  if (valid.length) { const win = valid.reduce((a, b) => b.t > a.t ? b : a); return { days: dayDiff(win.t), date: win.t, contacted: true, dir: win.dir }; }
+  if (valid.length) { const win = valid.reduce((a, b) => b.t > a.t ? b : a); return { days: dayDiff(win.t), bizDays: bizDaysBetween(win.t), date: win.t, contacted: true, dir: win.dir }; }
   const created = Date.parse(lead.createdAt);
-  if (!isNaN(created)) return { days: dayDiff(created), date: created, contacted: false, dir: 'out' };
-  return { days: null, date: null, contacted: false, dir: 'out' };
+  if (!isNaN(created)) return { days: dayDiff(created), bizDays: bizDaysBetween(created), date: created, contacted: false, dir: 'out' };
+  return { days: null, bizDays: null, date: null, contacted: false, dir: 'out' };
 }
 
 function isFollowupSnoozed(lead) {
@@ -2023,8 +2035,8 @@ function isFollowupDue(lead) {
   if (['won', 'lost'].includes(lead.stage || 'cold')) return false;
   if (lead.seq_status === 'replied') return false;
   if (isFollowupSnoozed(lead)) return false;
-  const { days, dir } = contactInfo(lead);
-  return dir === 'out' && days !== null && days >= FOLLOWUP_DAYS;   // outbound-cold only
+  const { bizDays, dir } = contactInfo(lead);
+  return dir === 'out' && bizDays !== null && bizDays >= FOLLOWUP_DAYS;   // outbound-cold, business days
 }
 
 // Stage-aware suggested messages: stage picks the copy, the ↻ cycle also offers a
