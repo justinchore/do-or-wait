@@ -915,6 +915,16 @@
         <div class="t-ico">⏳</div><div class="t-name">WAIT</div><div class="t-sub">Waiting for something</div>
       </button>
     </div>
+    <div class="field" id="m-kind-row" style="display:none">
+      <label>Type of update <span style="font-weight:400;color:var(--text2)">— only email/call/text briefs count toward follow-ups; notes don't</span></label>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button type="button" id="k-note"    onclick="pickKind('note')">📝 Note</button>
+        <button type="button" id="k-email"   onclick="pickKind('email')">✉️ Email</button>
+        <button type="button" id="k-call"    onclick="pickKind('call')">📞 Call</button>
+        <button type="button" id="k-text"    onclick="pickKind('text')">💬 Text</button>
+        <button type="button" id="k-inbound" onclick="pickKind('inbound')">📥 Inbound</button>
+      </div>
+    </div>
     <div class="field">
       <label id="m-entry-lbl">First update</label>
       <div class="ctx-label" id="m-ctx-lbl" style="display:none"></div>
@@ -1748,6 +1758,10 @@ function openAddEntry(itemId, e, coll='topics') {
   document.getElementById('m-ctx-lbl').style.display     = 'none';
   document.getElementById('f-entry').placeholder         = 'Describe the action or what you\'re waiting on…';
   syncTypeUI();
+  // Lead updates get a category (default Note); only briefs count for follow-ups. Topics don't.
+  mSelKind = 'note';
+  document.getElementById('m-kind-row').style.display = (coll === 'leads') ? 'block' : 'none';
+  if (coll === 'leads') syncKindUI();
   document.getElementById('overlay').classList.add('open');
   setTimeout(() => document.getElementById('f-entry').focus(), 180);
 }
@@ -1782,6 +1796,16 @@ function pickType(t) { mSelType = t; syncTypeUI(); }
 function syncTypeUI() {
   document.getElementById('t-do').className   = `t-opt do${mSelType === 'do'   ? ' sel' : ''}`;
   document.getElementById('t-wait').className = `t-opt wait${mSelType === 'wait' ? ' sel' : ''}`;
+}
+// Lead update category: only email/call/text/inbound count as contact for follow-ups; 'note' is internal.
+let mSelKind = 'note';
+function pickKind(k) { mSelKind = k; syncKindUI(); }
+function syncKindUI() {
+  ['note','email','call','text','inbound'].forEach(k => {
+    const el = document.getElementById('k-' + k); if (!el) return;
+    const sel = mSelKind === k;
+    el.style.cssText = `font-size:12px;font-weight:600;border:1.5px solid ${sel ? '#c8500f' : 'var(--border)'};background:${sel ? 'rgba(200,80,15,.08)' : 'var(--surface)'};color:var(--text);border-radius:14px;padding:5px 11px;cursor:pointer;font-family:inherit;`;
+  });
 }
 
 async function saveModal() {
@@ -1820,7 +1844,8 @@ async function saveModal() {
   if (mMode === 'add_entry') {
     const item = findItem(mTopicId, mColl);
     if (item) {
-      item.entries.push({ id: 'e' + Date.now(), type: mSelType, text, done: false, notes: [], createdAt: new Date().toISOString() });
+      const kindExtra = mColl === 'leads' ? { kind: mSelKind, dir: mSelKind === 'inbound' ? 'in' : 'out' } : {};
+      item.entries.push({ id: 'e' + Date.now(), type: mSelType, text, done: false, notes: [], createdAt: new Date().toISOString(), ...kindExtra });
       if (mColl === 'leads') expandedLeadIds.add(item.id); else expandedIds.add(item.id);
       closeModal();
       await persistItem(item, mColl);
@@ -1973,7 +1998,13 @@ function contactInfo(lead) {
   const events = [];
   if (lead.last_contact_date) events.push({ t: Date.parse(lead.last_contact_date), dir: lead.last_contact_dir === 'in' ? 'in' : 'out' });
   if (lead.last_touch_date)   events.push({ t: Date.parse(lead.last_touch_date),   dir: 'out' });
-  (lead.entries || []).forEach(e => { if (e && e.createdAt) events.push({ t: Date.parse(e.createdAt), dir: e.dir === 'in' ? 'in' : 'out' }); });
+  // Only contact briefs count toward the follow-up clock — internal notes don't.
+  // Legacy entries (no kind) are grandfathered as contact; kind==='note' is excluded.
+  (lead.entries || []).forEach(e => {
+    if (!e || !e.createdAt) return;
+    if (e.kind === 'note') return;   // internal note — not contact with the lead
+    events.push({ t: Date.parse(e.createdAt), dir: e.dir === 'in' ? 'in' : 'out' });
+  });
   const valid = events.filter(e => !isNaN(e.t));
   if (valid.length) { const win = valid.reduce((a, b) => b.t > a.t ? b : a); return { days: dayDiff(win.t), date: win.t, contacted: true, dir: win.dir }; }
   const created = Date.parse(lead.createdAt);
@@ -2325,7 +2356,7 @@ function renderFollowupBlock(lead) {
   const lastNote = (lead.entries || []).filter(e => e && e.createdAt)
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
   const ctx = (lastNote && lastNote.text)
-    ? `<div style="font-size:12px;color:var(--text2);background:var(--bg);border-radius:8px;padding:6px 10px;margin-bottom:8px;">↪ Last note: ${esc(lastNote.text.length > 140 ? lastNote.text.slice(0, 140) + '…' : lastNote.text)}</div>`
+    ? `<div style="font-size:12px;color:var(--text2);background:var(--bg);border-radius:8px;padding:6px 10px;margin-bottom:8px;">↪ Latest update: ${esc(lastNote.text.length > 140 ? lastNote.text.slice(0, 140) + '…' : lastNote.text)}</div>`
     : '';
   return `
   <div class="email-preview" style="border-color:#d97706;background:rgba(217,119,6,.04);">
@@ -3764,6 +3795,7 @@ window.skipEmail           = skipEmail;
 window.snoozeEmail         = snoozeEmail;
 window.openSequencerEmail  = openSequencerEmail;
 window.markTouchSent       = markTouchSent;
+window.pickKind            = pickKind;
 window.onPricingSearch     = onPricingSearch;
 window.setPricingState     = setPricingState;
 window.togglePriceRow      = togglePriceRow;
