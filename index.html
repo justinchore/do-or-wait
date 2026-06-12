@@ -1949,16 +1949,16 @@ const LEAD_SEGS = {
 };
 
 // ═══════════════════════════════════════════════════════════════
-//  FOLLOW-UPS — "leads that haven't been contacted in N days"
+//  FOLLOW-UPS — OUTBOUND-COLD leads ("I reached out, they've gone quiet 3+ days")
 // ═══════════════════════════════════════════════════════════════
-// Source of truth for "last contact" is whichever is most recent:
-//   • last_contact_date  — written by the n8n Follow-up Scanner from Outlook (Graph)
-//   • last_touch_date    — written by the email sequencer when a touch is sent
-//   • the last thread entry you logged in the app (a call/note counts as contact)
-// If none exist, we fall back to when the lead was created so a never-touched
-// lead still surfaces. The n8n scanner (workflow 6) keeps days_since_contact /
-// followup_due fresh from real email activity; this client-side calc means the
-// board still works the moment you open it, even between scans.
+// "Last contact" = the most recent of: newest Outlook email (scanner, carries a
+// direction in last_contact_dir), the last sequencer touch (outbound), and any
+// thread update you logged. Quick-logs carry a direction (call/text/met = out,
+// 📥 = in); a plain typed note defaults to OUT (it's your activity). A lead is a
+// follow-up ONLY when that most-recent contact was outbound — if THEY contacted
+// you last (inbound email or a 📥 log), the ball's in your court, which is a
+// separate "needs reply" job (those leads sit in the Do column), not a follow-up.
+// Works off your updates immediately; live email folds in once workflow 6 runs.
 const FOLLOWUP_DAYS = 3;
 const followupTplIdx = new Map();   // leadId -> which suggested-message template is showing
 
@@ -1967,19 +1967,18 @@ function dayDiff(ms) {
   return Math.round((dayStart(new Date()) - dayStart(new Date(ms))) / 86400000);
 }
 
-// Returns { days, date, contacted } — days is null only if we truly can't date the lead.
+// Most-recent contact across all signals, with its direction.
+// Returns { days, date, contacted, dir }  (dir: 'out' | 'in'); days null only if undatable.
 function contactInfo(lead) {
-  const cands = [];
-  if (lead.last_contact_date) cands.push(Date.parse(lead.last_contact_date));   // newest Outlook email (either direction), from the scanner
-  if (lead.last_touch_date)   cands.push(Date.parse(lead.last_touch_date));     // last sequencer touch sent
-  // Any thread update you logged counts as correspondence too — e.g. "talked to lead about options".
-  // Take the most recent across ALL entries (not just the last in the array, in case they're unordered).
-  (lead.entries || []).forEach(e => { if (e && e.createdAt) cands.push(Date.parse(e.createdAt)); });
-  const real = cands.filter(t => !isNaN(t));
-  if (real.length) { const m = Math.max(...real); return { days: dayDiff(m), date: m, contacted: true }; }
+  const events = [];
+  if (lead.last_contact_date) events.push({ t: Date.parse(lead.last_contact_date), dir: lead.last_contact_dir === 'in' ? 'in' : 'out' });
+  if (lead.last_touch_date)   events.push({ t: Date.parse(lead.last_touch_date),   dir: 'out' });
+  (lead.entries || []).forEach(e => { if (e && e.createdAt) events.push({ t: Date.parse(e.createdAt), dir: e.dir === 'in' ? 'in' : 'out' }); });
+  const valid = events.filter(e => !isNaN(e.t));
+  if (valid.length) { const win = valid.reduce((a, b) => b.t > a.t ? b : a); return { days: dayDiff(win.t), date: win.t, contacted: true, dir: win.dir }; }
   const created = Date.parse(lead.createdAt);
-  if (!isNaN(created)) return { days: dayDiff(created), date: created, contacted: false };
-  return { days: null, date: null, contacted: false };
+  if (!isNaN(created)) return { days: dayDiff(created), date: created, contacted: false, dir: 'out' };
+  return { days: null, date: null, contacted: false, dir: 'out' };
 }
 
 function isFollowupSnoozed(lead) {
@@ -1991,33 +1990,43 @@ function isFollowupSnoozed(lead) {
 function isFollowupDue(lead) {
   if (lead.archived) return false;
   if (['won', 'lost'].includes(lead.stage || 'cold')) return false;
-  if (lead.seq_status === 'replied') return false;   // they're engaged
+  if (lead.seq_status === 'replied') return false;
   if (isFollowupSnoozed(lead)) return false;
-  const { days } = contactInfo(lead);
-  return days !== null && days >= FOLLOWUP_DAYS;
+  const { days, dir } = contactInfo(lead);
+  return dir === 'out' && days !== null && days >= FOLLOWUP_DAYS;   // outbound-cold only
 }
 
-// Short follow-up message templates, merged with the lead's fields. Plain-text,
-// copy- or email-ready. Kept lightweight on purpose — the full 5-touch sequence
-// lives in the n8n sequencer; these are quick nudges you can fire by hand.
-const FOLLOWUP_MSGS = [
-  { label: 'Check-in', build: l => ({
-      subject: `Following up — Cubework ${l.location || 'space'}${l.unit ? ` (${l.unit})` : ''}`,
-      body: `Hi ${l.first_name || 'there'},\n\nJust circling back on ${l.unit ? `${l.unit}${l.unit_sf ? ` (${Number(l.unit_sf).toLocaleString()} sf)` : ''}` : 'the space we discussed'}${l.location ? ` at ${l.location}` : ''}. ${l.rate ? `Still available at ${l.rate}. ` : ''}Wanted to make sure this didn't slip through.\n\nWould a quick 15-minute tour this week work for ${l.company || 'your team'}?\n\nBest,\nJustin Cho\nBusiness Development — Cubework` })
-  },
-  { label: 'Value-add', build: l => ({
-      subject: `What's included with your space at Cubework`,
-      body: `Hi ${l.first_name || 'there'},\n\nQuick note on why a few tenants chose Cubework over cheaper alternatives:${l.included_items ? `\n\n${l.included_items} are included — no surprise utility bills.` : ''}\nFlexible terms — month-to-month available, so you're not locked in.\n24/7 access, loading, and security.\n\n${l.unit ? `Still have ${l.unit}${l.rate ? ` at ${l.rate}` : ''} — worth a 15-minute look?` : 'Worth a quick look?'}\n\nBest,\nJustin` })
-  },
-  { label: 'Break-up', build: l => ({
-      subject: `Last note — Cubework space for ${l.company || 'you'}`,
-      body: `Hi ${l.first_name || 'there'},\n\nI'll keep this short — I've reached out a couple of times and haven't heard back. Totally fine if the timing isn't right or it's not a fit.\n\nI'll leave it here. If you're ever looking for flexible warehouse space near the ports, just reach back out — I'm quick to respond.\n\nWishing you${l.company ? ` and ${l.company}` : ''} the best.\n\nJustin Cho\nBusiness Development — Cubework` })
-  },
-];
+// Stage-aware suggested messages: stage picks the copy, the ↻ cycle also offers a
+// value-add and a break-up. Greets by first name only (never company-as-name).
+// Refers to "the space" generically — the real specifics (unit/location/quotes) live
+// in your thread and are surfaced as a context line in the block.
+function fuSpace(l){ return l.unit ? `${l.unit}${l.unit_sf ? ` (${Number(l.unit_sf).toLocaleString()} sf)` : ''}` : 'the space we discussed'; }
+function fuHi(l){ return `Hi ${l.first_name || 'there'},`; }
+const FU_SIGN = '\n\nBest,\nJustin Cho\nBusiness Development — Cubework';
 
+const FOLLOWUP_BY_STAGE = {
+  cold:      [{ label: 'First touch', build: l => ({ subject: `Cubework — flexible space for ${l.company || 'you'}`,
+      body: `${fuHi(l)}\n\nWanted to make sure this didn't slip through — happy to walk you through ${fuSpace(l)} whenever you're ready. Would a quick look this week work?${FU_SIGN}` }) }],
+  contacted: [{ label: 'Check-in', build: l => ({ subject: `Following up — Cubework`,
+      body: `${fuHi(l)}\n\nCircling back on ${fuSpace(l)} — any thoughts, or questions I can answer? Happy to set up a quick 15-minute tour whenever works.${FU_SIGN}` }) }],
+  toured:    [{ label: 'Post-tour', build: l => ({ subject: `Great having you out — Cubework`,
+      body: `${fuHi(l)}\n\nThanks again for coming to see ${fuSpace(l)}. What did you think? Anything I can clarify — or should we talk terms and get you in?${FU_SIGN}` }) }],
+  proposal:  [{ label: 'Proposal nudge', build: l => ({ subject: `Following up on your Cubework proposal`,
+      body: `${fuHi(l)}\n\nFollowing up on the proposal for ${fuSpace(l)}. Any questions on the numbers? Glad to adjust if it helps make it work.${FU_SIGN}` }) }],
+};
+const FOLLOWUP_VALUE = { label: 'Value-add', build: l => ({ subject: `Why tenants pick Cubework`,
+  body: `${fuHi(l)}\n\nQuick note on why folks choose us:${l.included_items ? `\n• ${l.included_items} included — no surprise utility bills.` : ''}\n• Flexible terms — month-to-month available, so you're not locked in.\n• 24/7 access, loading, and security.\n\nStill happy to show you ${fuSpace(l)} — worth a quick look?${FU_SIGN}` }) };
+const FOLLOWUP_BREAKUP = { label: 'Break-up', build: l => ({ subject: `Last note — Cubework`,
+  body: `${fuHi(l)}\n\nI'll keep this short — haven't heard back, which is totally fine if the timing isn't right. I'll leave it here; if things change and you need flexible space, just reach back out — I'm quick to respond.\n\nWishing you${l.company ? ` and ${l.company}` : ''} the best.${FU_SIGN}` }) };
+
+function followupMsgsFor(lead){
+  const base = FOLLOWUP_BY_STAGE[lead.stage || 'cold'] || FOLLOWUP_BY_STAGE.cold;
+  return base.concat([FOLLOWUP_VALUE, FOLLOWUP_BREAKUP]);
+}
 function followupMsgFor(lead) {
-  const idx = (followupTplIdx.get(lead.id) || 0) % FOLLOWUP_MSGS.length;
-  return { idx, label: FOLLOWUP_MSGS[idx].label, ...FOLLOWUP_MSGS[idx].build(lead) };
+  const list = followupMsgsFor(lead);
+  const idx = (followupTplIdx.get(lead.id) || 0) % list.length;
+  return { idx, label: list[idx].label, ...list[idx].build(lead) };
 }
 
 // Firestore listener
@@ -2309,8 +2318,15 @@ function renderFollowupBlock(lead) {
   const ci  = contactInfo(lead);
   const msg = followupMsgFor(lead);
   const when = ci.contacted
-    ? `Last contact ${ci.days}d ago${ci.date ? ` (${fmtDate(new Date(ci.date).toISOString())})` : ''}`
-    : 'No contact logged yet';
+    ? (ci.days === 0 ? 'last contact today' : `quiet ${ci.days} day${ci.days === 1 ? '' : 's'}`)
+    : 'no contact logged yet';
+  // Surface your most recent thread note as context — the real specifics (unit, quotes,
+  // which location) live there, so the generic draft stays safe and you personalize from this.
+  const lastNote = (lead.entries || []).filter(e => e && e.createdAt)
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
+  const ctx = (lastNote && lastNote.text)
+    ? `<div style="font-size:12px;color:var(--text2);background:var(--bg);border-radius:8px;padding:6px 10px;margin-bottom:8px;">↪ Last note: ${esc(lastNote.text.length > 140 ? lastNote.text.slice(0, 140) + '…' : lastNote.text)}</div>`
+    : '';
   return `
   <div class="email-preview" style="border-color:#d97706;background:rgba(217,119,6,.04);">
     <div class="email-preview-hd">
@@ -2318,6 +2334,7 @@ function renderFollowupBlock(lead) {
       <button onclick="cycleFollowupTpl('${lead.id}',event)" title="Try another template"
               style="font-size:11px;border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:2px 9px;cursor:pointer;color:var(--text);">↻ ${esc(msg.label)}</button>
     </div>
+    ${ctx}
     <div class="email-meta">
       <b>To:</b> ${esc(lead.email || '—')}<br>
       <b>Subject:</b> ${esc(msg.subject)}
@@ -2555,7 +2572,8 @@ async function logTouch(leadId, kind, e) {
   }
   const LABEL = { call: '📞 Called', text: '💬 Texted', met: '🤝 Met', inbound: '📥 They reached out' };
   const type  = kind === 'inbound' ? 'do' : 'wait';   // inbound → ball's in your court (Do); outbound → waiting on them (Wait)
-  const entry = { id: 'e' + Date.now(), type, text: LABEL[kind] || 'Logged touch', done: false, notes: [], createdAt: new Date().toISOString() };
+  const dir   = kind === 'inbound' ? 'in' : 'out';    // direction routes the follow-up flow (outbound-cold only)
+  const entry = { id: 'e' + Date.now(), type, kind, dir, text: LABEL[kind] || 'Logged touch', done: false, notes: [], createdAt: new Date().toISOString() };
   lead.entries = [...(lead.entries || []), entry];
   lead.updatedAt = new Date().toISOString();
   expandedLeadIds.clear(); expandedLeadIds.add(leadId);   // open this card so the new entry's 📝 Note is one tap away
@@ -3599,6 +3617,7 @@ const PRICE_DETAIL = [
   ['dp_wh','Day Pass — WH (per SF)'],['dp_xdock','Day Pass — Cross Dock'],['studio','Studio Space'],
   ['conf','Conference Room'],['event','Event Space (per SF)'],['amenities','Amenities'],['special','Special Pricing'],
 ];
+const PRICE_LONG = new Set(['amenities','special']);   // long free-text — render full-width with line breaks
 
 function normalizePricing(){ pricingRows.forEach((r,i)=>{ if(!r._id) r._id = 'p' + i; }); }
 normalizePricing();
@@ -3634,10 +3653,14 @@ function renderPricing(){
       const open = expandedPrice.has(r._id);
       const tds = cols.map(([k,,money])=>`<td style="text-align:right;white-space:nowrap;padding:5px 6px;">${priceVal(r[k],money)}</td>`).join('');
       const det = PRICE_DETAIL.filter(([k])=>r[k]!=='' && r[k]!=null)
-        .map(([k,lab])=>`<div style="display:flex;justify-content:space-between;gap:12px;padding:3px 0;border-top:1px solid var(--border);font-size:12px;"><span style="color:var(--text2);">${lab}</span><span style="font-weight:600;">${esc(String(r[k]))}</span></div>`).join('');
+        .map(([k,lab])=>{
+          const val = esc(String(r[k]));
+          if(PRICE_LONG.has(k)) return `<div style="padding:5px 0;border-top:1px solid var(--border);font-size:12px;"><div style="color:var(--text2);margin-bottom:2px;">${lab}</div><div style="white-space:pre-wrap;line-height:1.45;">${val}</div></div>`;
+          return `<div style="display:flex;justify-content:space-between;gap:12px;padding:3px 0;border-top:1px solid var(--border);font-size:12px;"><span style="color:var(--text2);">${lab}</span><span style="font-weight:600;text-align:right;">${val}</span></div>`;
+        }).join('');
       const detRow = open ? `<tr><td colspan="${cols.length+2}" style="background:var(--bg);padding:8px 12px;">${det || '<span style="color:var(--text2)">No additional pricing.</span>'}</td></tr>` : '';
       return `<tr onclick="togglePriceRow('${r._id}',event)" style="cursor:pointer;border-top:1px solid var(--border);">
-          <td style="font-weight:600;white-space:nowrap;padding:5px 6px;">${esc(r.city||'')} <span style="color:var(--text2);font-weight:400;">${open?'▾':'▸'}</span></td>
+          <td style="font-weight:600;white-space:nowrap;padding:5px 6px;">${esc(r.city||'')}${r.special?' <span title="Has special / negotiation pricing" style="font-size:10px;background:#fef3c7;color:#92400e;border-radius:10px;padding:0 5px;vertical-align:middle;">💬</span>':''} <span style="color:var(--text2);font-weight:400;">${open?'▾':'▸'}</span></td>
           <td style="color:var(--text2);font-size:12px;padding:5px 6px;">${esc(r.address||'')}</td>${tds}</tr>${detRow}`;
     }).join('');
     return `<div style="margin-bottom:18px;">
