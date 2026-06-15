@@ -176,7 +176,8 @@
     .badge.do   { background: var(--do-bg);   color: var(--do);   border: 1px solid var(--do-mid); }
     .badge.wait { background: var(--wait-bg); color: var(--wait); border: 1px solid var(--wait-mid); }
     .badge.done { background: #f3f4f6; color: var(--done-fg); border: 1px solid var(--border); }
-    .card-snippet { font-size: 13px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .card-snippet { font-size: 13px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+    .card-snippet.expanded { white-space: normal; overflow: visible; text-overflow: clip; }
     .card-meta-row { font-size: 11px; color: var(--text2); margin-top: 5px; opacity: .7; }
     .chevron { font-size: 12px; color: var(--text2); flex-shrink: 0; transition: transform .2s; margin-top: 2px; user-select: none; }
     .topic-card.open .chevron { transform: rotate(180deg); }
@@ -1195,6 +1196,7 @@ const storage = getStorage(fbApp);
 let topics       = [];
 let unsubTopics  = null;
 let expandedIds  = new Set();
+let expandedSnippets = new Set();  // ids whose collapsed-card snippet is tapped open to full text
 let showArchived = { do: false, wait: false };
 
 // Modal
@@ -1570,7 +1572,9 @@ function renderCard(topic) {
           </span>
           ${esc(topic.title)}
         </div>
-        <div class="card-snippet">${last ? esc(last.text) : ''}</div>
+        <div class="card-snippet${expandedSnippets.has(topic.id) ? ' expanded' : ''}"
+             onclick="toggleSnippet('${topic.id}',event)"
+             title="Tap to see the full update">${last ? esc(last.text) : ''}</div>
         <div class="card-meta-row">
           ${topic.entries.length} update${topic.entries.length !== 1 ? 's' : ''}
           ${noteCount ? ` · 🎤 ${noteCount} note${noteCount !== 1 ? 's' : ''}` : ''}
@@ -1665,6 +1669,14 @@ function toggleCard(id) {
   // Accordion: clicking a card closes any other open one (clicking the open card collapses it).
   if (expandedIds.has(id)) expandedIds.delete(id); else { expandedIds.clear(); expandedIds.add(id); }
   render(); populateAudio();
+}
+
+// Tap the collapsed-card snippet to expand just that line to its full text (and back),
+// without opening the whole card. stopPropagation keeps the card's accordion from toggling.
+function toggleSnippet(id, ev) {
+  if (ev) ev.stopPropagation();
+  if (expandedSnippets.has(id)) expandedSnippets.delete(id); else expandedSnippets.add(id);
+  render();
 }
 
 // ── Collection helpers ────────────────────────────────────────
@@ -2326,7 +2338,9 @@ function renderLeadCard(lead) {
           ${lead.wl_on ? `<span class="badge" style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d">⏳ Waitlist</span>` : ''}
           ${esc(lead.company)}
         </div>
-        <div class="card-snippet">${last ? esc(last.text) : ''}</div>
+        <div class="card-snippet${expandedSnippets.has(lead.id) ? ' expanded' : ''}"
+             onclick="toggleSnippet('${lead.id}',event)"
+             title="Tap to see the full update">${last ? esc(last.text) : ''}</div>
         <div class="card-meta-row">
           ${dueChip}
           ${lead.pending_email ? `<span style="color:#2563eb;font-weight:700">📧 Touch ${lead.pending_email.step} ready · </span>` : ''}
@@ -3730,6 +3744,7 @@ renderPricing();
 //  EXPOSE GLOBALS (for onclick= attributes in HTML)
 // ═══════════════════════════════════════════════════════════════
 window.toggleCard      = toggleCard;
+window.toggleSnippet   = toggleSnippet;
 window.enableDrag      = enableDrag;
 window.disableDrag     = disableDrag;
 window.cardDragStart   = cardDragStart;
