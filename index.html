@@ -1575,6 +1575,9 @@ function renderCard(topic) {
         <div class="card-snippet${expandedSnippets.has(topic.id) ? ' expanded' : ''}"
              onclick="toggleSnippet('${topic.id}',event)"
              title="Tap to see the full update">${last ? esc(last.text) : ''}</div>
+        ${expandedSnippets.has(topic.id) && last && last.notes && last.notes.length
+          ? `<div class="entry-notes" style="cursor:default" onclick="event.stopPropagation()">${last.notes.map(n => renderNote(topic.id, last.id, n)).join('')}</div>`
+          : ''}
         <div class="card-meta-row">
           ${topic.entries.length} update${topic.entries.length !== 1 ? 's' : ''}
           ${noteCount ? ` · 🎤 ${noteCount} note${noteCount !== 1 ? 's' : ''}` : ''}
@@ -1679,6 +1682,7 @@ function toggleSnippet(id, ev) {
   // The id may belong to a task or a lead — they render in separate sections, so refresh both.
   render();
   if (typeof renderLeadsSection === 'function') renderLeadsSection();
+  populateAudio();   // load any voice notes revealed under the expanded snippet
 }
 
 // ── Collection helpers ────────────────────────────────────────
@@ -2344,6 +2348,9 @@ function renderLeadCard(lead) {
         <div class="card-snippet${expandedSnippets.has(lead.id) ? ' expanded' : ''}"
              onclick="toggleSnippet('${lead.id}',event)"
              title="Tap to see the full update">${last ? esc(last.text) : ''}</div>
+        ${expandedSnippets.has(lead.id) && last && last.notes && last.notes.length
+          ? `<div class="entry-notes" style="cursor:default" onclick="event.stopPropagation()">${last.notes.map(n => renderNote(lead.id, last.id, n, 'leads')).join('')}</div>`
+          : ''}
         <div class="card-meta-row">
           ${dueChip}
           ${lead.pending_email ? `<span style="color:#2563eb;font-weight:700">📧 Touch ${lead.pending_email.step} ready · </span>` : ''}
