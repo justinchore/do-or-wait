@@ -1676,7 +1676,9 @@ function toggleCard(id) {
 function toggleSnippet(id, ev) {
   if (ev) ev.stopPropagation();
   if (expandedSnippets.has(id)) expandedSnippets.delete(id); else expandedSnippets.add(id);
+  // The id may belong to a task or a lead — they render in separate sections, so refresh both.
   render();
+  if (typeof renderLeadsSection === 'function') renderLeadsSection();
 }
 
 // ── Collection helpers ────────────────────────────────────────
@@ -2044,6 +2046,7 @@ function isFollowupSnoozed(lead) {
 
 function isFollowupDue(lead) {
   if (lead.archived) return false;
+  if (lead.wl_on) return false;   // waitlist leads aren't chased — you watch for matching space instead
   if (['won', 'lost'].includes(lead.stage || 'cold')) return false;
   if (lead.seq_status === 'replied') return false;
   if (isFollowupSnoozed(lead)) return false;
@@ -2402,6 +2405,7 @@ function renderFollowupBlock(lead) {
       ${lead.email ? `<button class="approve-btn" onclick="openFollowupEmail('${lead.id}',event)">✉️ Open in email</button>` : ''}
       <button class="email-snooze-btn" onclick="copyFollowupMsg('${lead.id}',event)">📋 Copy</button>
       <button class="email-skip-btn" onclick="snoozeFollowup('${lead.id}',event)">Snooze ${FOLLOWUP_DAYS} days</button>
+      <button class="email-skip-btn" onclick="moveToWaitlist('${lead.id}',event)" title="Stop follow-ups — just watch for matching space">⏳ Move to waitlist</button>
     </div>
   </div>`;
 }
@@ -2610,6 +2614,19 @@ async function snoozeFollowup(leadId, e) {
   const until = new Date();
   until.setDate(until.getDate() + FOLLOWUP_DAYS);
   const updated = { ...lead, followup_snooze_until: until.toISOString().slice(0, 10), updatedAt: new Date().toISOString() };
+  const i = leads.findIndex(l => l.id === leadId); if (i >= 0) leads[i] = updated;
+  renderLeadsSection();
+  await persistItem(updated, 'leads');
+}
+
+// Take a lead out of the follow-up bucket by making it a waitlist lead — you stop
+// chasing it and instead watch for matching space (wl_on suppresses isFollowupDue).
+// To put it back in follow-ups, turn waitlist off (lead edit / Waitlist block).
+async function moveToWaitlist(leadId, e) {
+  if (e) e.stopPropagation();
+  const lead = leads.find(l => l.id === leadId);
+  if (!lead) return;
+  const updated = { ...lead, wl_on: true, updatedAt: new Date().toISOString() };
   const i = leads.findIndex(l => l.id === leadId); if (i >= 0) leads[i] = updated;
   renderLeadsSection();
   await persistItem(updated, 'leads');
@@ -3830,6 +3847,7 @@ window.cycleFollowupTpl    = cycleFollowupTpl;
 window.openFollowupEmail   = openFollowupEmail;
 window.copyFollowupMsg     = copyFollowupMsg;
 window.snoozeFollowup      = snoozeFollowup;
+window.moveToWaitlist      = moveToWaitlist;
 </script>
 </body>
 </html>
