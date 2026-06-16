@@ -689,6 +689,12 @@
 
   <!-- Playbook view -->
   <div id="playbook-view" style="display:none">
+  <div style="max-width:760px;margin:0 auto;padding:16px 16px 0;width:100%;">
+    <div style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:8px;">📇 Battle cards — quick reference</div>
+    <input id="pb-search" oninput="onPlaybookSearch(this.value)" placeholder="Search — e.g. 'expensive', 'deposit', 'TCO', 'importer'…"
+           style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:14px;margin-bottom:12px;" />
+    <div id="pb-cards"></div>
+  </div>
   <div class="cc-wrap">
   <div class="cc-sheet">
     <div class="cc-head">
@@ -2068,10 +2074,10 @@ function fuIncluded(l){ return l.included_items ? `${l.included_items} included`
 const FU_SIGN = '\n\nBest,\nJustin Cho\nBusiness Development — Cubework';
 
 // Playbook value blocks (from the Cubework Sales Playbook _kb — USPs / Triple-A).
-const FU_INCLUSIVE = "all-inclusive — no CAM, no NNN, no surprise utility bills";
+const FU_INCLUSIVE = "all-inclusive — one flat rate, no triple-net (NNN) or common-area maintenance (CAM) fees on top, and no surprise utility bills";
 const FU_FLEX = "month-to-month with 30-day notice, so you're never locked in";
 const FU_FAST = "move-in ready in 24–48 hours";
-const FU_TCO  = "once you add NNN, CAM and utilities, we usually pencil out ~20–30% lower all-in than a standard lease";
+const FU_TCO  = "once you add the triple-net (NNN), common-area maintenance (CAM) and utility charges a standard lease stacks on, we usually pencil out ~20–30% lower all-in";
 // Segment-tailored value angle (uses lead.segment, matching LEAD_SEGS keys).
 function fuHook(l){
   switch (l.segment) {
@@ -2875,6 +2881,7 @@ function switchTab(tab) {
   });
   if (tab === 'notes') renderNotes();
   if (tab === 'pricing') renderPricing();
+  if (tab === 'playbook') renderPlaybookCards();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -3825,6 +3832,76 @@ try {
 renderPricing();
 
 // ═══════════════════════════════════════════════════════════════
+//  PLAYBOOK BATTLE CARDS — quick-reference distilled from the Cubework
+//  Sales Playbook _kb (USPs/objections, pricing, products). Searchable,
+//  collapsible; lives at the top of the 📞 Playbook tab.
+// ═══════════════════════════════════════════════════════════════
+const PLAYBOOK_CARDS = [
+  { id:'triple-a', title:'🅰️ Triple-A value', body:
+    `<b>Agility</b> — month-to-month, no lock-in; live in 24–48 hr (vs 3–6 mo); 300–1M+ SF; scale seasonally, no penalty; multi-site under one agreement.<br>
+     <b>Accessibility</b> — all-inclusive (no NNN/CAM); move-in ready (no build-out); 70+ locations / 19 states; 24/7 QR access.<br>
+     <b>Advantage</b> — national network; furnished + full infra (docks, power, internet, security); services from forklift to admin.` },
+  { id:'objections', title:'🛡️ Objection handling', body:
+    `<b>"Too expensive"</b> → total cost of occupancy: traditional adds NNN 25–30%, utilities 15–20%, build-out $30–50/SF. All-inclusive ≈ 30–35% lower TCO, no capital risk.<br>
+     <b>"Only need a few months"</b> → built for it: 30-day notice, no penalty, in 48 hr.<br>
+     <b>"Not sure how long"</b> → start monthly, scale/reduce no penalty; flexibility alone = 20–30% savings.<br>
+     <b>"Needs may change"</b> → never locked in; upsize/downsize/transfer mid-term.<br>
+     <b>"Already have a warehouse"</b> → overflow / seasonal / last-mile / returns / project space.<br>
+     <b>"Don't need office"</b> → warehouse-only is fine; shared conference rooms; add office later.<br>
+     <b>"Want to test first"</b> → try 30 days before committing.<br>
+     <b>"Serve my industry?"</b> → "If you move, store, fulfill, ship, or create — we have space for you."` },
+  { id:'vs-lease', title:'⚔️ vs traditional lease', body:
+    `<b>Term:</b> 1-mo min vs 3–10 yr (97% less commitment)<br>
+     <b>Move-in:</b> 24–48 hr vs 3–6 mo (60× faster)<br>
+     <b>Upfront:</b> 1st mo + deposit vs + TI build-out (~75% less capital)<br>
+     <b>Pricing:</b> all-inclusive vs base + NNN + CAM (predictable)<br>
+     <b>Infra:</b> furnished vs empty shell ($0 build-out)<br>
+     <b>Markets:</b> 70+ vs single (national)` },
+  { id:'pricing', title:'💲 Pricing quick-ref', body:
+    `<b>Warehouse</b> $0.25–$2.50/SF — small 300–2.5k: $1.50–2.50 · med 2.5k–10k: $0.75–2.25 · large 10k+: $0.25–2.20.<br>
+     <b>Office</b> $1–$3.50/SF · <b>Parking</b> $50–$1,000/space · <b>Studios</b> $50–100/hr (first 2 hrs free).<br>
+     <b>Term discounts:</b> 12mo −$0.05, 24mo −$0.10. <b>Deposit:</b> 1 mo standard (½–6 by credit); <b>ACH enrollment −1 month</b>.<br>
+     <b>Discount authority:</b> SDR ≤5% · Mgr ≤10% · Dir ≤15% · CCO >15%. Non-price levers: term, config, bundled services, move-in date, multi-location (5–15%).<br>
+     <i>Caveat: actual pricing varies by location, size, amenities.</i>` },
+  { id:'included', title:'✅ What\'s included (all-inclusive)', body:
+    `Base rent, property taxes, CAM, standard utilities, 24/7 QR access, security + monitoring, common-area maintenance & cleaning, on-site management, water/coffee, mail sorting, <b>office Wi-Fi free</b>.<br>
+     <i>Add-ons (prorated):</i> WH Wi-Fi $75/mo · forklift $75/hr · loading $150/hr · extra utilities metered.` },
+  { id:'tco', title:'📉 TCO story (10,000 SF)', body:
+    `<b>Traditional</b> ≈ $16.00/SF/yr (base $8.50 + NNN $3 + utilities $2 + build-out $1.50 + tech $1) = <b>$160k/yr</b>.<br>
+     <b>Cubework</b> all-inclusive $12.50/SF = <b>$125k/yr</b>. → ~$35k/yr (22%) saved; <b>$175k over 5 yr</b>.` },
+  { id:'by-role', title:'🎯 Sell by decision-maker', body:
+    `<b>Operations</b> → move-in ready, dock systems, 24/7, 30–40% efficiency gains.<br>
+     <b>Finance/CFO</b> → fixed→variable cost, 75–80% less capital, predictable all-inclusive, OpEx vs CapEx.<br>
+     <b>Owner</b> → capital to growth not real estate, rapid activation, pivot freedom.<br>
+     <b>IT</b> → included fiber, smart access, integration- & IoT-ready.` },
+  { id:'products', title:'📦 Products', body:
+    `<b>Starter Flex</b> 300–5k SF (~$300/mo, 48hr, 30-day min) · <b>Growth Flex</b> 5k–50k (~$3k/mo) · <b>Enterprise Flex</b> 50k–1M+ (custom).<br>
+     Office (1–50p, furnished) · Parking (trucks/trailers/containers) · Event space · Studios (Turnbull COI & Irvine, first 2 hrs free) · Day passes / virtual office.` },
+  { id:'taglines', title:'💬 Taglines', body:
+    `"Any Size, Any Term, Any Business." · "Operate, ship, and grow — all under one flexible lease." · "No long-term contracts. No hassle. Just space that works." · "Your business changes fast — your space should too."` },
+];
+let pbSearch = '';
+const expandedPB = new Set();
+function onPlaybookSearch(v){ pbSearch = (v || '').trim().toLowerCase(); renderPlaybookCards(); }
+function togglePbCard(id){ if (expandedPB.has(id)) expandedPB.delete(id); else expandedPB.add(id); renderPlaybookCards(); }
+function renderPlaybookCards(){
+  const host = document.getElementById('pb-cards'); if (!host) return;
+  const q = pbSearch;
+  const cards = PLAYBOOK_CARDS.filter(c => !q || (c.title + ' ' + c.body.replace(/<[^>]+>/g, ' ')).toLowerCase().includes(q));
+  if (!cards.length){ host.innerHTML = '<div class="empty">No cards match.</div>'; return; }
+  host.innerHTML = cards.map(c => {
+    const open = q ? true : expandedPB.has(c.id);   // searching auto-expands matches
+    return `<div style="border:1px solid var(--border);border-radius:10px;margin-bottom:8px;overflow:hidden;">
+        <div onclick="togglePbCard('${c.id}')" style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 13px;cursor:pointer;font-weight:700;font-size:14px;background:var(--surface);">
+          <span>${c.title}</span><span style="color:var(--text2);font-weight:400;">${open ? '▾' : '▸'}</span>
+        </div>
+        ${open ? `<div style="padding:6px 14px 12px;font-size:13px;line-height:1.55;color:var(--text);">${c.body}</div>` : ''}
+      </div>`;
+  }).join('');
+}
+renderPlaybookCards();
+
+// ═══════════════════════════════════════════════════════════════
 //  EXPOSE GLOBALS (for onclick= attributes in HTML)
 // ═══════════════════════════════════════════════════════════════
 window.toggleCard      = toggleCard;
@@ -3910,6 +3987,8 @@ window.pickKind            = pickKind;
 window.onPricingSearch     = onPricingSearch;
 window.setPricingState     = setPricingState;
 window.togglePriceRow      = togglePriceRow;
+window.onPlaybookSearch    = onPlaybookSearch;
+window.togglePbCard        = togglePbCard;
 window.cycleFollowupTpl    = cycleFollowupTpl;
 window.openFollowupEmail   = openFollowupEmail;
 window.copyFollowupMsg     = copyFollowupMsg;
