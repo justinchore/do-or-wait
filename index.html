@@ -2074,10 +2074,12 @@ function fuIncluded(l){ return l.included_items ? `${l.included_items} included`
 const FU_SIGN = '\n\nBest,\nJustin Cho\nBusiness Development — Cubework';
 
 // Playbook value blocks (from the Cubework Sales Playbook _kb — USPs / Triple-A).
-const FU_INCLUSIVE = "all-inclusive — one flat rate, no triple-net (NNN) or common-area maintenance (CAM) fees on top, and no surprise utility bills";
-const FU_FLEX = "month-to-month with 30-day notice, so you're never locked in";
-const FU_FAST = "move-in ready in 24–48 hours";
-const FU_TCO  = "once you add the triple-net (NNN), common-area maintenance (CAM) and utility charges a standard lease stacks on, we usually pencil out ~20–30% lower all-in";
+// Written as standalone sentences so templates compose into short, clean lines.
+const FU_INCLUSIVE = "Pricing's all-inclusive — one flat rate, no triple-net (NNN) or common-area maintenance (CAM) fees on top, and no surprise utility bills.";
+const FU_FLEX = "It's month-to-month with 30-day notice, so you're never locked in.";
+const FU_FAST = "We can have you moved in within 24–48 hours.";
+const FU_TCO  = "once you add the triple-net (NNN), common-area maintenance (CAM) and utility charges a standard lease stacks on, we usually come out ~20–30% lower all-in";   // clause — embeds mid-sentence
+const fuCap = s => s.charAt(0).toUpperCase() + s.slice(1);
 // Segment-tailored value angle (uses lead.segment, matching LEAD_SEGS keys).
 function fuHook(l){
   switch (l.segment) {
@@ -2134,18 +2136,18 @@ function fuAvail(l){
 
 const FOLLOWUP_BY_STAGE = {
   cold:      [{ label: 'First touch', build: l => ({ subject: `Cubework — flexible, all-inclusive space for ${l.company || 'you'}`,
-      body: `${fuHi(l)}\n\n${fuAvail(l)}A few reasons teams pick us: ${FU_INCLUSIVE}, ${FU_FLEX}, and ${fuHook(l)}.\n\nWe're ${FU_FAST}, so we can move fast — worth a 15-minute look to see if it fits ${l.company || 'your operation'}?${FU_SIGN}` }) }],
-  contacted: [{ label: 'Check-in', build: l => ({ subject: `Cubework — quick update for ${l.company || 'you'}`,
-      body: `${fuHi(l)}\n\n${fuAvail(l)}Rather than just check in, a couple of things worth knowing: pricing is ${FU_INCLUSIVE}, and it's ${FU_FLEX}. Happy to hold a unit briefly while you decide, or set up a quick tour.\n\nWant me to line either up?${FU_SIGN}` }) }],
+      body: `${fuHi(l)}\n\nWanted to put Cubework on your radar. ${fuAvail(l)}${FU_INCLUSIVE} ${FU_FLEX} And ${fuHook(l)}.\n\n${FU_FAST} Worth a quick 15-minute look to see if it fits ${l.company || 'your operation'}?${FU_SIGN}` }) }],
+  contacted: [{ label: 'Check-in', build: l => ({ subject: `Cubework — still here when you're ready`,
+      body: `${fuHi(l)}\n\n${fuAvail(l)}${FU_INCLUSIVE} ${FU_FLEX}\n\nHappy to hold a unit briefly while you decide, or set up a quick tour — want me to line either up?${FU_SIGN}` }) }],
   toured:    [{ label: 'Post-tour', build: l => ({ subject: `Cubework — next steps on ${fuSpace(l)}`,
-      body: `${fuHi(l)}\n\nThanks again for coming out. ${fuAvail(l)}If rate's the open question, worth running the all-in numbers side by side — ${FU_TCO}. I can also hold ${l.unit || 'the unit'} for you while you decide.\n\nWhat would help get you to a yes?${FU_SIGN}` }) }],
+      body: `${fuHi(l)}\n\nThanks again for coming out. ${fuAvail(l)}If rate's the open question, it's worth running the all-in numbers side by side — ${FU_TCO}. And I can hold ${l.unit || 'the unit'} for you while you decide.\n\nWhat would help get you to a yes?${FU_SIGN}` }) }],
   proposal:  [{ label: 'Proposal nudge', build: l => ({ subject: `Cubework — keeping ${fuSpace(l)} on the table`,
-      body: `${fuHi(l)}\n\nWanted to keep this moving. ${fuAvail(l)}If the numbers are the sticking point, remember it's ${FU_INCLUSIVE} — ${FU_TCO} — and a longer term sharpens the rate further. Glad to rework the proposal so it lands.\n\nWhat would need to be true for this to be a yes?${FU_SIGN}` }) }],
+      body: `${fuHi(l)}\n\nWanted to keep this moving. ${fuAvail(l)}If the numbers are the sticking point, remember ${FU_TCO} — and a longer term sharpens the rate further. Glad to rework the proposal so it lands.\n\nWhat would need to be true for this to be a yes?${FU_SIGN}` }) }],
 };
 const FOLLOWUP_VALUE = { label: 'Value-add', build: l => ({ subject: `What you get with a Cubework space`,
-  body: `${fuHi(l)}\n\n${fuAvail(l)}Quick rundown:\n• ${FU_INCLUSIVE} (${fuIncluded(l)}).\n• ${FU_FLEX}; ${FU_FAST}.\n• And ${fuHook(l)}.\n\nWorth a quick look?${FU_SIGN}` }) };
+  body: `${fuHi(l)}\n\n${fuAvail(l)}Here's why teams pick us:\n• ${FU_INCLUSIVE}\n• ${FU_FLEX}\n• ${FU_FAST}\n• ${fuCap(fuHook(l))}.\n\nWorth 15 minutes to take a look?${FU_SIGN}` }) };
 const FOLLOWUP_BREAKUP = { label: 'Break-up', build: l => ({ subject: `Last note — Cubework`,
-  body: `${fuHi(l)}\n\nI'll keep this short — haven't heard back, which is totally fine if the timing's off. Want me to keep an eye out and ping you only when something opens in your size range? Otherwise I'll leave it here.\n\nWishing you${l.company ? ` and ${l.company}` : ''} the best.${FU_SIGN}` }) };
+  body: `${fuHi(l)}\n\nI'll keep this short — haven't heard back, which is completely fine if the timing's off. Want me to keep an eye out and only reach back when something opens in your size range? Otherwise I'll get out of your inbox.\n\nEither way, wishing you${l.company ? ` and ${l.company}` : ''} the best.${FU_SIGN}` }) };
 
 function followupMsgsFor(lead){
   const base = FOLLOWUP_BY_STAGE[lead.stage || 'cold'] || FOLLOWUP_BY_STAGE.cold;
