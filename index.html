@@ -2872,6 +2872,60 @@ let unsubAvail   = null;
 const expandedAvailProps = new Set(); // none open by default
 const availFilter = {}; // per-property unit filter: available | occupied | all
 let availSearch = '';   // Avail tab location search query
+let availSort   = 'sf';  // Avail tab sort: 'sf' (most available sq ft) | 'name' (A–Z)
+
+// ── RENEWALS: per-tenant lease expiration / renewal status (Firestore renewals/current,
+//    written by the n8n Renewals Sync — workflow 10 — from the Google renewal tracker sheet).
+//    Matched onto occupied units on the Avail page by property place-name + unit id. ──
+let renewalRows = [];            // [{property,unit,tenant,end_date,decision,stage,remarks,...}]
+let renewalVer  = 0;             // bumped each time renewalRows changes (memo invalidation)
+const _renewalLocCache = {};     // propId → { ver, map }
+// Place token from a sheet property name: drop the (code), a leading region/state prefix
+// (CA / COI / TX …), and any trailing number → e.g. "COI Pellissier 2720 (128)" → "pellissier".
+function renewalPlace(p) {
+  return String(p || '')
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/^[A-Z]{2,4}\s+/, '')
+    .replace(/\s+\d+\s*$/, '')
+    .trim().toLowerCase();
+}
+// Build (and memoize) a Map of unit-id (UPPERCASE) → renewal record for one location.
+// A sheet property matches a location when its place token (≥4 chars) appears in the
+// location's property name or address. Records WITH a decision win over blank ones.
+function renewalsForLoc(propId, d) {
+  const cached = _renewalLocCache[propId];
+  if (cached && cached.ver === renewalVer) return cached.map;
+  const hay = (String((d && d.property) || '') + ' ' + String((d && d.address) || '') + ' ' + propId).toLowerCase();
+  const map = new Map();
+  for (const r of renewalRows) {
+    const place = renewalPlace(r.property);
+    if (place.length < 4 || !hay.includes(place)) continue;
+    const key = String(r.unit || '').toUpperCase().trim();
+    if (!key) continue;
+    const prev = map.get(key);
+    if (!prev || (!prev.decision && r.decision)) map.set(key, r);
+  }
+  _renewalLocCache[propId] = { ver: renewalVer, map };
+  return map;
+}
+// Short, color-coded expiry/status badge for an occupied unit row.
+function renewalBadge(rec) {
+  if (!rec) return '';
+  const dnr = /do not renew|pause/i.test(rec.decision || rec.stage || '');
+  const exp = rec.end_date ? new Date(rec.end_date + 'T00:00:00') : null;
+  const days = exp ? Math.round((exp.getTime() - Date.now()) / 86400000) : null;
+  const expired = days != null && days < 0;
+  const soon = days != null && days >= 0 && days <= 90;
+  let bg = '#f3f4f6', fg = '#4b5563';
+  if (dnr || expired) { bg = '#fee2e2'; fg = '#b91c1c'; }
+  else if (soon) { bg = '#fef3c7'; fg = '#92400e'; }
+  const expStr = exp ? exp.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+  const label = dnr ? 'DO NOT RENEW' : (expStr ? `exp ${expStr}` : (rec.decision || 'lease'));
+  const title = [rec.decision, rec.stage, rec.remarks].filter(Boolean).join(' · ');
+  return `<span title="${esc(title)}" style="font-size:10px;font-weight:600;padding:1px 7px;border-radius:20px;background:${bg};color:${fg};white-space:nowrap;">📅 ${esc(label)}</span>`;
+}
+// Total available square footage at a location = warehouse + office (counted separately, summed).
+function availSfTotal(d) { return Number((d && d.wh && d.wh.avail_sf) || 0) + Number((d && d.office && d.office.avail_sf) || 0); }
 const STATE_NAMES = { CA:'California', NV:'Nevada', AZ:'Arizona', TX:'Texas', WA:'Washington', OR:'Oregon', OH:'Ohio', IL:'Illinois', GA:'Georgia', FL:'Florida', NY:'New York', NJ:'New Jersey', PA:'Pennsylvania', UT:'Utah', CO:'Colorado', NC:'North Carolina' };
 function stateOf(d) { const m = String((d && d.address) || '').match(/,\s*([A-Za-z]{2})\s+\d{5}/); return m ? m[1].toUpperCase() : 'Other'; }
 // Yardi Deal Manager URLs are .../property/{GUID}/{view}; swap the trailing
@@ -2914,22 +2968,35 @@ function renderAvailability() {
     return;
   }
 
-  // group locations by state
+  // group locations by state (region)
   const groups = {};
   props.forEach(id => { const st = stateOf(availMap[id]); (groups[st] = groups[st] || []).push(id); });
-  const stateKeys = Object.keys(groups).sort((a, b) => (a === 'Other') - (b === 'Other') || a.localeCompare(b));
+  const groupSf = st => groups[st].reduce((s, id) => s + availSfTotal(availMap[id]), 0);
+  // Region order: by total available sq ft (desc) when sorting by availability, else A–Z. "Other" always last.
+  const stateKeys = Object.keys(groups).sort((a, b) =>
+    (a === 'Other') - (b === 'Other') ||
+    (availSort === 'sf' ? (groupSf(b) - groupSf(a)) : 0) ||
+    a.localeCompare(b));
 
-  const searchBar = `<div style="margin-bottom:14px;">
+  const sortBtn = (key, label) => `<button onclick="setAvailSort('${key}')" style="font-size:12px;border:1px solid var(--border);border-radius:8px;padding:5px 10px;cursor:pointer;background:${availSort===key?'var(--text)':'var(--surface)'};color:${availSort===key?'var(--surface)':'var(--text)'};">${label}</button>`;
+  const searchBar = `<div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
       <input id="avail-search" type="text" placeholder="🔍  Search locations by name or address…" value="${esc(availSearch)}" oninput="onAvailSearch(this.value)"
-        style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:10px;font-size:14px;outline:none;background:var(--surface);color:var(--text);box-sizing:border-box;" />
+        style="flex:1;min-width:200px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;font-size:14px;outline:none;background:var(--surface);color:var(--text);box-sizing:border-box;" />
+      <span style="font-size:12px;color:var(--text2);">Sort:</span>
+      ${sortBtn('sf','Most available')}${sortBtn('name','A–Z')}
     </div>`;
 
   const sections = stateKeys.map(st => {
-    const ids = groups[st].sort((a, b) => String(availMap[a].property || a).localeCompare(String(availMap[b].property || b)));
+    const ids = groups[st].sort((a, b) =>
+      (availSort === 'sf')
+        ? (availSfTotal(availMap[b]) - availSfTotal(availMap[a])) || String(availMap[a].property || a).localeCompare(String(availMap[b].property || b))
+        : String(availMap[a].property || a).localeCompare(String(availMap[b].property || b)));
     const label = STATE_NAMES[st] || st;
+    const regionSf = groupSf(st);
     return `<div class="avail-state-group" data-state="${st}">
         <div style="font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin:18px 0 10px;display:flex;align-items:center;gap:8px;">
           ${esc(label)} <span style="font-weight:700;color:var(--text2);background:var(--bg);border:1px solid var(--border);border-radius:20px;padding:1px 9px;font-size:12px;">${ids.length}</span>
+          ${regionSf ? `<span style="font-weight:700;color:#16a34a;background:#dcfce7;border-radius:20px;padding:1px 9px;font-size:12px;">${regionSf.toLocaleString()} sf avail</span>` : ''}
         </div>
         ${ids.map(id => renderLocCard(id, availMap[id])).join('')}
       </div>`;
@@ -2943,6 +3010,11 @@ function renderAvailability() {
 function onAvailSearch(v) {
   availSearch = v;
   applyAvailSearch();
+}
+
+function setAvailSort(key) {
+  availSort = key;
+  renderAvailability();
 }
 
 function applyAvailSearch() {
@@ -3045,6 +3117,7 @@ function renderLocBody(propId, d) {
   const prk = d.parking|| {};
   const units = d.units || [];
   const filter = availFilter[propId] || 'available';
+  const renewals = renewalsForLoc(propId, d);   // unit-id (UPPER) → lease/renewal record
 
   const PILLS = {
     available: ['#dcfce7', '#166534', 'Available'],
@@ -3062,9 +3135,16 @@ function renderLocBody(propId, d) {
   function row(u) {
     const [bg, fg, lbl] = PILLS[statusOf(u)];
     const sf = u.sf ? Number(u.sf).toLocaleString() + ' sf' : '—';
+    const rec = renewals.get(String(u.unit || '').toUpperCase().trim());
     const dl = [
       ['Tenant', u.tenant], ['Owner', u.owner], ['Phone', u.phone],
-      ['Email', u.email], ['Onsite POC', u.poc], ['Notes', u.notes]
+      ['Email', u.email], ['Onsite POC', u.poc], ['Notes', u.notes],
+      ...(rec ? [
+        ['Lease ends', rec.end_date ? new Date(rec.end_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : ''],
+        ['Renewal status', rec.decision],
+        ['Renewal stage', rec.stage],
+        ['Renewal remarks', rec.remarks]
+      ] : [])
     ].filter(r => r[1]);
     const hasDetail = dl.length > 0;
     const key = propId + '-' + (n++);
@@ -3073,6 +3153,7 @@ function renderLocBody(propId, d) {
         <span style="font-size:12px;color:var(--text2);min-width:92px;">${sf}<span> · ${esc(u.type)}</span></span>
         <span style="font-size:11px;padding:2px 9px;border-radius:20px;background:${bg};color:${fg};">${lbl}</span>
         <span style="font-size:12px;color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${u.tenant ? esc(u.tenant) : ''}</span>
+        ${renewalBadge(rec)}
         ${hasDetail ? `<span id="uc-${key}" style="font-size:11px;color:var(--text2);transition:transform .15s;">▾</span>` : ''}
       </div>`;
     const detail = hasDetail ? `<div id="ud-${key}" style="display:none;padding:6px 10px 10px;border-top:1px solid var(--border);">
@@ -3702,6 +3783,17 @@ try {
 } catch(e){ console.warn('pricing listener init', e); }
 renderPricing();
 
+// Renewals — per-tenant lease expiration / renewal status (written by the n8n Renewals
+// Sync, workflow 10). Surfaced on occupied unit rows in the Avail tab. No snapshot fallback.
+try {
+  onSnapshot(doc(db,'renewals','current'), snap => {
+    const d = snap.exists() ? snap.data() : null;
+    renewalRows = (d && Array.isArray(d.rows)) ? d.rows : [];
+    renewalVer++;                                   // invalidate per-location memo
+    if (Object.keys(availMap).length) renderAvailability();   // refresh open cards with lease data
+  }, err => console.warn('renewals listener', err));
+} catch(e){ console.warn('renewals listener init', e); }
+
 // ═══════════════════════════════════════════════════════════════
 //  PLAYBOOK BATTLE CARDS — quick-reference distilled from the Cubework
 //  Sales Playbook _kb (USPs/objections, pricing, products). Searchable,
@@ -3815,6 +3907,7 @@ window.setNoteSort         = setNoteSort;
 window.setNoteSince        = setNoteSince;
 window.clearNoteSince      = clearNoteSince;
 window.triggerAvailSync    = triggerAvailSync;
+window.setAvailSort        = setAvailSort;
 window.toggleAvailCard     = toggleAvailCard;
 window.setAvailFilter      = setAvailFilter;
 window.toggleUnitDetail    = toggleUnitDetail;

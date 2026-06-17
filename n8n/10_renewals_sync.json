@@ -1,0 +1,125 @@
+{
+  "name": "CW — 10. Renewals Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 7 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cw-r-001",
+      "name": "Every morning 7:30am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://docs.google.com/spreadsheets/d/1TqWFcbyeQ2ulHdD54akyHZyuvkWcULl3ApL_sRE86v0/export?format=csv&gid=844109688",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "cw-r-002",
+      "name": "Read renewal sheet",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Renewals Sync — \"Parse renewals\" Code node (n8n, JS) ──────────────────\n// Paste this into the Code node's JavaScript field (workflow 10).\n// INPUT  : the HTTP Request node (\"Read renewal sheet\") returns the Google Sheet\n//          exported as CSV text. With responseFormat = \"text\", the body is in\n//          $json.data (older n8n puts it in $json.body) — both are handled.\n// OUTPUT : one item { patchBody, count } — a Firestore PATCH body for\n//          renewals/current = { rows:[…], updatedAt, source, count }.\n//\n// The sheet (gid 844109688) is a per-tenant lease-renewal tracker. Its right-hand\n// columns drift because of merged header cells, so we parse the STABLE left block\n// by header NAME (Property, Unit(s), Lease Name, End Date …) and resolve the\n// renewal \"decision\" / email \"stage\" by scanning the row against a known\n// vocabulary — position-independent, so column drift can't break it.\n// Multi-unit rows (\"C09, C10\") are exploded into one record per unit.\n\nconst inJson = $input.first().json || {};\nconst text = inJson.data || inJson.body || inJson.csv || '';\nif (!text || typeof text !== 'string') {\n  throw new Error('Renewals: no CSV text on input (expected $json.data from the HTTP node).');\n}\n\n// RFC-4180-ish tokenizer: quoted fields, embedded commas/newlines, \"\" escapes.\nfunction parseCSV(str) {\n  const rows = []; let row = []; let field = ''; let inQ = false;\n  for (let i = 0; i < str.length; i++) {\n    const ch = str[i];\n    if (inQ) {\n      if (ch === '\"') { if (str[i + 1] === '\"') { field += '\"'; i++; } else inQ = false; }\n      else field += ch;\n    } else {\n      if (ch === '\"') inQ = true;\n      else if (ch === ',') { row.push(field); field = ''; }\n      else if (ch === '\\n') { row.push(field); rows.push(row); row = []; field = ''; }\n      else if (ch === '\\r') { /* skip */ }\n      else field += ch;\n    }\n  }\n  if (field.length || row.length) { row.push(field); rows.push(row); }\n  return rows;\n}\n\nconst clean = v => (v == null ? '' : String(v).replace(/ /g, ' ').trim());\nconst grid = parseCSV(text);\n\n// Locate the data header row (the one carrying both \"Lease Name\" and \"End Date\").\nlet hIdx = -1;\nfor (let i = 0; i < grid.length; i++) {\n  const cells = grid[i].map(c => clean(c).toLowerCase());\n  if (cells.includes('lease name') && cells.includes('end date')) { hIdx = i; break; }\n}\nif (hIdx < 0) throw new Error('Renewals: header row (Lease Name / End Date) not found.');\n\nconst header = grid[hIdx].map(clean);\nconst idxOf  = name => header.findIndex(h => h.toLowerCase() === name.toLowerCase());\nconst idxAll = re => header.map((h, i) => re.test(h) ? i : -1).filter(i => i >= 0);\n\nconst iProp = idxOf('Property'), iUnit = idxOf('Unit(s)'), iName = idxOf('Lease Name'),\n      iType = idxOf('Lease type'), iAmd = idxOf('Amendment Type'), iEnd = idxOf('End Date'),\n      iRent = idxOf('Monthly Rent'), iReason = idxOf('Increase Reason'), remarkCols = idxAll(/remark/i);\nif (iProp < 0 || iUnit < 0 || iEnd < 0) throw new Error('Renewals: required columns (Property/Unit(s)/End Date) missing.');\n\n// Renewal decision vocabulary (the \"Increase Reason\" outcomes) + lifecycle stage.\nconst DECISION = /^(same rate|market price|4% ?\\+ ?\\$0\\.10 increase only|4% increase only|\\$0\\.10 increase only|do not renew|pause renewal|renewed.*|move ?out|new office rate)$/i;\nconst STAGE    = /(sent pi email|sent no increase email|do not renew|renewed|move ?out|pending)/i;\n\nfunction isoDate(s) {\n  s = clean(s); if (!s) return '';\n  const m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{2,4})$/);\n  if (!m) return '';\n  let yr = m[3]; if (yr.length === 2) yr = '20' + yr;\n  return `${yr}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;\n}\n\nconst rows = [];\nfor (let i = hIdx + 1; i < grid.length; i++) {\n  const r = grid[i].map(clean);\n  const property = clean(r[iProp]);\n  const unitsRaw = clean(r[iUnit]);\n  if (!property || !unitsRaw) continue;                 // summary / blank rows\n  if (property.toLowerCase() === 'property') continue;  // a repeated header\n\n  const end_date = isoDate(r[iEnd]);\n\n  let decision = iReason >= 0 ? clean(r[iReason]) : '';\n  if (!decision || !DECISION.test(decision)) {\n    const hit = r.find(c => DECISION.test(clean(c)));\n    if (hit) decision = clean(hit);\n  }\n\n  let stage = '';\n  for (const c of r) { const m = clean(c).match(STAGE); if (m) { stage = m[0]; break; } }\n\n  const remarks = [...new Set(remarkCols.map(ci => clean(r[ci])).filter(Boolean))]\n    .filter(x => x.toLowerCase() !== decision.toLowerCase() && x.toLowerCase() !== stage.toLowerCase())\n    .join(' · ');\n\n  const tenant = clean(r[iName]);\n  const lease_type = clean(r[iType]);\n  const amendment = clean(r[iAmd]);\n  const monthly_rent = clean(r[iRent]);\n\n  for (const unit of unitsRaw.split(/[,/]/).map(u => u.trim()).filter(Boolean)) {\n    rows.push({ property, unit, tenant, lease_type, amendment, end_date, decision, stage, remarks, monthly_rent });\n  }\n}\nif (rows.length === 0) throw new Error('Renewals parse produced 0 rows — check the sheet/gid is still link-viewable.');\n\n// Build the Firestore PATCH body (REST shape, like the pricing sync).\nconst fv = v => ({ stringValue: String(v == null ? '' : v) });\nconst arr = rows.map(rec => {\n  const fields = {};\n  for (const k in rec) fields[k] = fv(rec[k]);\n  return { mapValue: { fields } };\n});\nconst patchBody = { fields: {\n  rows:      { arrayValue: { values: arr } },\n  updatedAt: { stringValue: new Date().toISOString() },\n  source:    { stringValue: 'n8n renewals sync' },\n  count:     { integerValue: String(rows.length) }\n}};\n\nreturn [{ json: { patchBody, count: rows.length } }];\n"
+      },
+      "id": "cw-r-003",
+      "name": "Parse renewals",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/renewals/current?updateMask.fieldPaths=rows&updateMask.fieldPaths=updatedAt&updateMask.fieldPaths=source&updateMask.fieldPaths=count",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.patchBody) }}",
+        "options": {}
+      },
+      "id": "cw-r-004",
+      "name": "Write renewals to Firestore",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        300
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Google Service Account — do-or-wait"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every morning 7:30am": {
+      "main": [
+        [
+          {
+            "node": "Read renewal sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read renewal sheet": {
+      "main": [
+        [
+          {
+            "node": "Parse renewals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse renewals": {
+      "main": [
+        [
+          {
+            "node": "Write renewals to Firestore",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "cw-workflow-010"
+}
