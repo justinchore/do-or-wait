@@ -691,7 +691,7 @@
   <div id="playbook-view" style="display:none">
   <div style="max-width:760px;margin:0 auto;padding:16px 16px 0;width:100%;">
     <div style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:8px;">📇 Battle cards — quick reference</div>
-    <input id="pb-search" oninput="onPlaybookSearch(this.value)" placeholder="Search — e.g. 'expensive', 'deposit', 'TCO', 'importer'…"
+    <input id="pb-search" oninput="onPlaybookSearch(this.value)" placeholder="Search — e.g. 'expensive', 'deposit', 'clearance', 'TCO', 'importer'…"
            style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:14px;margin-bottom:12px;" />
     <div id="pb-cards"></div>
   </div>
@@ -3371,6 +3371,9 @@ function switchFP(propId, floor) {
 let fpEditing = null;   // { propId, floor }
 let fpDraft   = null;   // working copy of the whole layout { warehouse:{...}, office:{...} }
 let fpDrag    = null;   // active drag: { idx, mode, startX, startY, ox, oy, ow, oh }
+let fpSel     = null;   // selected item index (for the sq-ft editor)
+let fpSfEdits = {};     // unitId → new sq ft (pending; applied to availability on Save)
+let fpPair    = null;   // { aIdx, bIdx, total } — reallocate sq ft between two units, combined total locked
 
 function fpBlankFloor(floor){ return { viewBox: floor === 'office' ? '0 0 700 520' : '0 0 790 510', bg: null, items: [] }; }
 
@@ -3384,6 +3387,7 @@ function fpStartEdit(propId){
   if (!floor || !fpDraft[floor]) floor = (fpDraft.office.items.length && !fpDraft.warehouse.items.length) ? 'office' : 'warehouse';
   fpEditing = { propId, floor };
   fpFloors[propId] = floor;
+  fpSel = null; fpSfEdits = {}; fpPair = null;
   renderFloorplans(propId);
 }
 function fpEditFloor(floor){ if (!fpEditing) return; fpEditing.floor = floor; fpFloors[fpEditing.propId] = floor; renderFloorplans(fpEditing.propId); }
@@ -3393,11 +3397,21 @@ async function fpSaveEdit(){
   const propId = fpEditing.propId;
   const data = JSON.parse(JSON.stringify(fpDraft)); data.updatedAt = new Date().toISOString();
   floorplanMap[propId] = data;                 // optimistic local
-  fpEditing = null; fpDraft = null; fpDrag = null;
+  // SF edits write to the availability units (so the location list updates too).
+  // The SharePoint sync may later overwrite these — accepted tradeoff.
+  let updatedUnits = null;
+  if (Object.keys(fpSfEdits).length && availMap[propId] && Array.isArray(availMap[propId].units)) {
+    updatedUnits = availMap[propId].units.map(u => (u && fpSfEdits[u.unit] != null) ? { ...u, sf: fpSfEdits[u.unit] } : u);
+    availMap[propId] = { ...availMap[propId], units: updatedUnits };
+  }
+  fpEditing = null; fpDraft = null; fpDrag = null; fpSel = null; fpSfEdits = {};
   renderFloorplans(propId);
+  if (updatedUnits) renderAvailability();
   setSyncing(true);
-  try { await setDoc(doc(db, 'floorplans', propId), data); }
-  catch (e) { console.error('floorplan save failed', e); }
+  try {
+    await setDoc(doc(db, 'floorplans', propId), data);
+    if (updatedUnits) await setDoc(doc(db, 'availability', propId), { units: updatedUnits }, { merge: true });
+  } catch (e) { console.error('floorplan/sf save failed', e); }
   finally { setSyncing(false); }
 }
 
@@ -3419,6 +3433,8 @@ function fpApplyGeom(it){
 function fpDragStart(e, idx, mode){
   e.preventDefault(); e.stopPropagation();
   const it = fpDraft[fpEditing.floor].items[idx]; if (!it) return;
+  if (fpPair && idx !== fpPair.aIdx && idx !== fpPair.bIdx) fpPair = null;   // grabbing a 3rd unit exits reallocation
+  fpSel = idx;
   const p = fpSvgPoint(e.clientX, e.clientY);
   fpDrag = { idx, mode, startX: p.x, startY: p.y, ox: it.x, oy: it.y, ow: it.w || 80, oh: it.h || 60, _p: p };
   window.addEventListener('pointermove', fpDragMove);
@@ -3436,7 +3452,49 @@ function fpDragMove(e){
   if (t) { t.setAttribute('x', it.x + it.w / 2); t.setAttribute('y', it.y + it.h / 2); }
   if (h) { h.setAttribute('x', it.x + it.w - 11); h.setAttribute('y', it.y + it.h - 11); }
 }
-function fpDragEnd(){ fpDrag = null; window.removeEventListener('pointermove', fpDragMove); }
+function fpDragEnd(){ fpDrag = null; window.removeEventListener('pointermove', fpDragMove); if (fpEditing) fpRenderEditor(fpEditing.propId); }
+function fpUnitSf(units, id){ const u = units.find(x => x.unit === id); return (u && u.sf != null && u.sf !== '') ? Number(u.sf) : null; }
+function fpSetSf(idx, val){
+  const it = fpDraft[fpEditing.floor].items[idx]; if (!it || it.k !== 'u') return;
+  const n = parseInt(String(val).replace(/[^0-9]/g, ''), 10);
+  fpSfEdits[it.id] = isNaN(n) ? 0 : n;
+  const t = document.getElementById(`fps-${idx}`);
+  if (t) t.textContent = fpSfEdits[it.id] ? fpSfEdits[it.id].toLocaleString() + ' sf' : '';
+}
+// Reallocate sq ft between two units (split / move a wall): combined total stays locked.
+function fpCurSf(units, it){ return (it && (it.id in fpSfEdits)) ? fpSfEdits[it.id] : (fpUnitSf(units, it && it.id) || 0); }
+function fpStartRealloc(bIdxStr){
+  if (!fpEditing || fpSel == null) return;
+  const bIdx = Number(bIdxStr); if (isNaN(bIdx)) return;
+  const units = fpUnitsFor(fpEditing.propId);
+  const items = fpDraft[fpEditing.floor].items;
+  const A = items[fpSel], B = items[bIdx];
+  if (!A || !B || A.k !== 'u' || B.k !== 'u') return;
+  fpPair = { aIdx: fpSel, bIdx, total: fpCurSf(units, A) + fpCurSf(units, B) };
+  renderFloorplans(fpEditing.propId);
+}
+function fpEndRealloc(){ fpPair = null; if (fpEditing) renderFloorplans(fpEditing.propId); }
+function fpReallocFromA(val, source){
+  if (!fpPair) return;
+  const T = fpPair.total;
+  let a = parseInt(String(val).replace(/[^0-9]/g, ''), 10); if (isNaN(a)) a = 0;
+  a = Math.max(0, Math.min(T, a));
+  const b = T - a;
+  const items = fpDraft[fpEditing.floor].items;
+  fpSfEdits[items[fpPair.aIdx].id] = a;
+  fpSfEdits[items[fpPair.bIdx].id] = b;
+  if (source !== 'slider') { const s = document.getElementById('fp-realloc-slider'); if (s) s.value = a; }
+  if (source !== 'a') { const e = document.getElementById('fp-realloc-a'); if (e) e.value = a; }
+  if (source !== 'b') { const e = document.getElementById('fp-realloc-b'); if (e) e.value = b; }
+  const la = document.getElementById(`fps-${fpPair.aIdx}`); if (la) la.textContent = a ? a.toLocaleString() + ' sf' : '';
+  const lb = document.getElementById(`fps-${fpPair.bIdx}`); if (lb) lb.textContent = b ? b.toLocaleString() + ' sf' : '';
+}
+function fpReallocFromB(val){
+  if (!fpPair) return;
+  let b = parseInt(String(val).replace(/[^0-9]/g, ''), 10); if (isNaN(b)) b = 0;
+  b = Math.max(0, Math.min(fpPair.total, b));
+  fpReallocFromA(fpPair.total - b, 'b');
+}
 
 function fpRenderEditor(propId){
   const el = document.getElementById(`fp-section-${propId}`); if (!el) return;
@@ -3446,24 +3504,59 @@ function fpRenderEditor(propId){
   const boxes = (fd.items || []).map((it, idx) => {
     if (it.k === 'n') return `<text id="fpt-${idx}" x="${it.x}" y="${it.y}" text-anchor="${it.anchor||'start'}" font-family="Inter,system-ui,sans-serif" font-size="9" fill="#6b7280" style="cursor:move" onpointerdown="fpDragStart(event,${idx},'move')">${esc(it.t)}</text>`;
     const isUnit = it.k === 'u';
+    const sel    = idx === fpSel;
     const fill   = isUnit ? fpFill(it.id, units)   : (it.bg || '#eef2ff');
-    const stroke = isUnit ? fpStroke(it.id, units) : (it.tc || '#6366f1');
+    const stroke = sel ? '#2563eb' : (isUnit ? fpStroke(it.id, units) : (it.tc || '#6366f1'));
+    const sw     = sel ? '3.5' : '2';
     const label  = isUnit ? (it.id || '?') : (it.t || '');
+    const sf     = isUnit ? ((it.id in fpSfEdits) ? fpSfEdits[it.id] : fpUnitSf(units, it.id)) : null;
+    const showSf = sf != null && it.w > 50 && it.h > 34;
     return `<g>
-      <rect id="fpr-${idx}" x="${it.x}" y="${it.y}" width="${it.w}" height="${it.h}" fill="${fill}" stroke="${stroke}" stroke-width="2" rx="3" style="cursor:move" onpointerdown="fpDragStart(event,${idx},'move')"/>
-      <text id="fpt-${idx}" x="${it.x + it.w/2}" y="${it.y + it.h/2}" text-anchor="middle" dominant-baseline="middle" font-family="Inter,system-ui,sans-serif" font-size="11" font-weight="700" fill="#374151" style="pointer-events:none">${esc(label)}</text>
+      <rect id="fpr-${idx}" x="${it.x}" y="${it.y}" width="${it.w}" height="${it.h}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" rx="3" style="cursor:move" onpointerdown="fpDragStart(event,${idx},'move')"/>
+      <text id="fpt-${idx}" x="${it.x + it.w/2}" y="${it.y + it.h/2 + (showSf ? -6 : 0)}" text-anchor="middle" dominant-baseline="middle" font-family="Inter,system-ui,sans-serif" font-size="11" font-weight="700" fill="#374151" style="pointer-events:none">${esc(label)}</text>
+      <text id="fps-${idx}" x="${it.x + it.w/2}" y="${it.y + it.h/2 + 8}" text-anchor="middle" dominant-baseline="middle" font-family="Inter,system-ui,sans-serif" font-size="9" fill="#6b7280" style="pointer-events:none">${showSf ? Number(sf).toLocaleString() + ' sf' : ''}</text>
       <rect id="fph-${idx}" x="${it.x + it.w - 11}" y="${it.y + it.h - 11}" width="13" height="13" fill="#111827" rx="2" style="cursor:nwse-resize" onpointerdown="fpDragStart(event,${idx},'resize')"/>
     </g>`;
   }).join('');
   const bg = fd.bg ? `<image href="${esc(fd.bg)}" x="0" y="0" width="100%" height="100%" preserveAspectRatio="none" opacity="0.30"/>` : '';
   const floorBtns = ['warehouse','office'].map(f => `<button class="fp-tab${f===floor?' active':''}" onclick="fpEditFloor('${f}')">${f==='warehouse'?'Warehouse':'Office'}</button>`).join('');
+  const selItem = (fpSel != null) ? fd.items[fpSel] : null;
+  const bldgTotal = units.reduce((s, u) => s + ((u && (u.unit in fpSfEdits)) ? fpSfEdits[u.unit] : (Number(u && u.sf) || 0)), 0);
+  const inpCss = 'padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);';
+  let selPanel;
+  if (fpPair) {
+    const items = fd.items, A = items[fpPair.aIdx], B = items[fpPair.bIdx], T = fpPair.total;
+    const a = fpCurSf(units, A), b = fpCurSf(units, B);
+    selPanel = `<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 11px;margin-top:8px;font-size:13px;">
+        <div style="font-weight:700;margin-bottom:7px;">Reallocate sq ft — combined ${T.toLocaleString()} sf locked</div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <span><b>${esc(A.id || '?')}</b> <input id="fp-realloc-a" type="text" inputmode="numeric" value="${a}" oninput="fpReallocFromA(this.value,'a')" style="width:84px;${inpCss}"/></span>
+          <input id="fp-realloc-slider" type="range" min="0" max="${T}" value="${a}" oninput="fpReallocFromA(this.value,'slider')" style="flex:1;min-width:140px;"/>
+          <span><b>${esc(B.id || '?')}</b> <input id="fp-realloc-b" type="text" inputmode="numeric" value="${b}" oninput="fpReallocFromB(this.value)" style="width:84px;${inpCss}"/></span>
+          <button onclick="fpEndRealloc()" class="btn sm">Done</button>
+        </div>
+        <div style="font-size:11px;color:var(--text2);margin-top:5px;">Slide or type — the other unit adjusts so the two always sum to ${T.toLocaleString()}.</div>
+      </div>`;
+  } else if (selItem && selItem.k === 'u') {
+    const others = fd.items.map((x, i) => ({ x, i })).filter(o => o.x.k === 'u' && o.i !== fpSel);
+    const opts = others.map(o => `<option value="${o.i}">${esc(o.x.id || '?')}</option>`).join('');
+    selPanel = `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 11px;margin-top:8px;font-size:13px;">
+        <b>Unit ${esc(selItem.id || '?')}</b>
+        <label style="display:flex;align-items:center;gap:6px;">Sq ft <input type="text" inputmode="numeric" value="${(selItem.id in fpSfEdits) ? fpSfEdits[selItem.id] : (fpUnitSf(units, selItem.id) ?? '')}" oninput="fpSetSf(${fpSel}, this.value)" style="width:90px;${inpCss}"/></label>
+        ${others.length ? `<label style="display:flex;align-items:center;gap:6px;">⇄ split with <select onchange="fpStartRealloc(this.value)" style="${inpCss}"><option value="">unit…</option>${opts}</select></label>` : ''}
+      </div>`;
+  } else {
+    selPanel = `<div style="font-size:12px;color:var(--text2);margin-top:8px;">Tip: tap a unit to edit its sq ft — or use "split with" to move footage between two units.</div>`;
+  }
+  selPanel += `<div style="font-size:11px;color:var(--text2);margin-top:6px;">Building total (sum of units): <b>${bldgTotal.toLocaleString()} sf</b></div>`;
   el.innerHTML = `<div class="fp-section">
     <div class="fp-hd">
       <div class="fp-title">Editing floor plan</div>
       <div class="fp-tabs">${floorBtns}</div>
     </div>
-    <div style="font-size:12px;color:var(--text2);margin:4px 0 8px;">Drag a box to move · drag the dark corner to resize · colors are live.</div>
+    <div style="font-size:12px;color:var(--text2);margin:4px 0 8px;">Drag a box to move · drag the dark corner to resize · tap a unit to edit its sq ft · colors are live.</div>
     <div class="fp-svg-wrap"><svg id="fp-edit-svg-${propId}" viewBox="${esc(fd.viewBox)}" xmlns="http://www.w3.org/2000/svg" style="touch-action:none;width:100%;border:1.5px dashed var(--border);border-radius:8px;background:var(--surface);">${bg}${boxes}</svg></div>
+    ${selPanel}
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;">
       <button onclick="fpCancelEdit()" class="btn sm">Cancel</button>
       <button onclick="fpSaveEdit()" class="btn sm dark">Save floor plan</button>
@@ -3982,6 +4075,14 @@ const PLAYBOOK_CARDS = [
      <b>Term discounts:</b> 12mo −$0.05, 24mo −$0.10. <b>Deposit:</b> 1 mo standard (½–6 by credit); <b>ACH enrollment −1 month</b>.<br>
      <b>Discount authority:</b> SDR ≤5% · Mgr ≤10% · Dir ≤15% · CCO >15%. Non-price levers: term, config, bundled services, move-in date, multi-location (5–15%).<br>
      <i>Caveat: actual pricing varies by location, size, amenities.</i>` },
+  { id:'clearance', title:'💳 Payment clearance (move-in)', body:
+    `Licensees <b>cannot move in until payment clears</b>. Clearing periods, fastest → slowest:<br>
+     <b>Cash / cash deposit</b> — <b>same day</b> (once it reflects in the bank).<br>
+     <b>Wire transfer</b> — <b>1–3 business days</b>. <i>ledger: "Wire / Direct ACH to our bank account"</i><br>
+     <b>Credit / debit card</b> — <b>3 business days</b>. <i>via Transafe, or portal: "Credit Card On-Line Payment" · "Recurring Credit Card Payment" · "Debit Card On-Line Payment"</i><br>
+     <b>Check</b> — <b>4–5 business days</b>. <i>ledger: "Check Deposit"</i><br>
+     <b>ACH</b> — <b>5 business days</b>. <i>portal EFT · Elevate "One Time EFT Receipt" · Auto-ACH "Pre-Authorized Payment"</i><br>
+     <i>Tip: for a fast move-in steer them to cash or wire; ACH and check are slowest — set the move-in date off the clearing window, not the payment date.</i>` },
   { id:'included', title:'✅ What\'s included (all-inclusive)', body:
     `Base rent, property taxes, CAM, standard utilities, 24/7 QR access, security + monitoring, common-area maintenance & cleaning, on-site management, water/coffee, mail sorting, <b>office Wi-Fi free</b>.<br>
      <i>Add-ons (prorated):</i> WH Wi-Fi $75/mo · forklift $75/hr · loading $150/hr · extra utilities metered.` },
@@ -4061,6 +4162,11 @@ window.fpEditFloor         = fpEditFloor;
 window.fpCancelEdit        = fpCancelEdit;
 window.fpSaveEdit          = fpSaveEdit;
 window.fpDragStart         = fpDragStart;
+window.fpSetSf             = fpSetSf;
+window.fpStartRealloc      = fpStartRealloc;
+window.fpEndRealloc        = fpEndRealloc;
+window.fpReallocFromA      = fpReallocFromA;
+window.fpReallocFromB      = fpReallocFromB;
 window.showUnitPopup       = showUnitPopup;
 window.closeUnitPopup      = closeUnitPopup;
 window.toggleAvailCard     = toggleAvailCard;
