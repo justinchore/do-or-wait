@@ -3065,9 +3065,9 @@ function openAvailExport() {
       .sort((a, b) => String(availMap[a].property || a).localeCompare(String(availMap[b].property || b)))
       .map(id => {
         const d = availMap[id] || {};
-        return `<label style="display:flex;gap:8px;align-items:flex-start;padding:6px 8px;border-radius:8px;cursor:pointer;">
+        return `<label data-propid="${esc(id)}" style="display:flex;gap:8px;align-items:flex-start;padding:6px 8px;border-radius:8px;cursor:pointer;">
             <input type="checkbox" value="${esc(id)}" checked onchange="availExpCount()" style="margin-top:3px;">
-            <span><span style="font-weight:600;">${esc(d.property || id)}</span>${d.address ? `<br><span style="font-size:12px;color:var(--text2);">${esc(d.address)}</span>` : ''}</span>
+            <span style="flex:1;"><span style="font-weight:600;">${esc(d.property || id)}</span>${d.address ? `<br><span style="font-size:12px;color:var(--text2);">${esc(d.address)}</span>` : ''}<br><span class="availexp-sync" style="font-size:11px;color:var(--text2);">${availExpSyncLabel(d.synced_at)}</span></span>
           </label>`;
       }).join('');
     return `<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin:8px 6px 2px;">${esc(label)}</div>${rows}`;
@@ -3086,6 +3086,21 @@ function availExpCount() {
   const all = document.querySelectorAll('#availexp-list input[type=checkbox]');
   const n = [...all].filter(c => c.checked).length;
   document.getElementById('availexp-count').textContent = `${n} of ${all.length} selected`;
+}
+function availExpSyncLabel(s) {
+  if (!s) return 'Synced: never';
+  const t = new Date(s);
+  const mins = Math.round((Date.now() - t.getTime()) / 60000);
+  const rel = mins < 1 ? 'just now' : mins < 60 ? `${mins}m ago` : mins < 1440 ? `${Math.round(mins / 60)}h ago` : t.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return `Synced: ${t.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} (${rel})`;
+}
+// Refresh the per-location "Synced:" labels in the modal from live availMap (called as syncs land)
+function refreshExportSyncTimes() {
+  document.querySelectorAll('#availexp-list label[data-propid]').forEach(lbl => {
+    const id = lbl.getAttribute('data-propid');
+    const span = lbl.querySelector('.availexp-sync');
+    if (span) span.textContent = availExpSyncLabel((availMap[id] || {}).synced_at);
+  });
 }
 async function doAvailExport() {
   const chosen = [...document.querySelectorAll('#availexp-list input[type=checkbox]:checked')].map(c => c.value);
@@ -3114,8 +3129,10 @@ async function doAvailExport() {
     while (pending().length && Date.now() < deadline) {
       const done = chosen.length - pending().length - failed.length;
       st.textContent = `Syncing from SharePoint… ${done}/${chosen.length} confirmed`;
+      refreshExportSyncTimes();
       await new Promise(r => setTimeout(r, 1500));
     }
+    refreshExportSyncTimes();
     const stale = pending(); // didn't confirm a write-back in time
 
     // 4) Pull the fresh server snapshot and download the chosen locations.
