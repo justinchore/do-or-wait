@@ -1174,6 +1174,7 @@
 </div>
 
 <script src="pricing-seed.js"></script>
+<script src="floorplan-seed.js"></script>
 <script type="module">
 // ═══════════════════════════════════════════════════════════════
 //  FIREBASE (no auth — open access)
@@ -2891,6 +2892,8 @@ function switchTab(tab) {
 // ═══════════════════════════════════════════════════════════════
 const availMap  = {};          // propId → data
 let unsubAvail   = null;
+const floorplanMap = {};       // propId → { warehouse:{...}, office:{...} } (editor-saved layouts; falls back to FLOORPLAN_SEED)
+let unsubFloorplans = null;
 const expandedAvailProps = new Set(); // none open by default
 const availFilter = {}; // per-property unit filter: available | occupied | all
 let availSearch = '';   // Avail tab location search query
@@ -2918,6 +2921,14 @@ unsubAvail = onSnapshot(collection(db, 'availability'), snap => {
   snap.docChanges().forEach(c => { if (c.type === 'removed') delete availMap[c.doc.id]; });
   renderAvailability();
   if (typeof renderLeadsSection === 'function') renderLeadsSection(); // keep waitlist matches live when a location syncs
+});
+
+// Editor-saved floorplan layouts (fall back to FLOORPLAN_SEED when absent).
+unsubFloorplans = onSnapshot(collection(db, 'floorplans'), snap => {
+  snap.forEach(d => { floorplanMap[d.id] = d.data(); });
+  snap.docChanges().forEach(c => { if (c.type === 'removed') delete floorplanMap[c.doc.id]; });
+  // refresh any expanded location whose floor plan is showing
+  Object.keys(availMap).forEach(pid => { if (expandedAvailProps.has(pid)) renderFloorplans(pid); });
 });
 
 function renderAvailability() {
@@ -3294,43 +3305,42 @@ function fpLabel(txt, x, y, w, h, bg='#f9fafb', tc='#9ca3af') {
           font-family="Inter,system-ui,sans-serif" font-size="9" font-weight="600" fill="${tc}" letter-spacing=".5">${txt}</text>`;
 }
 
-function warehouseSVG(units, propId) {
-  const r = (id,x,y,w,h) => fpRect(id,x,y,w,h,units,propId);
-  return `<svg viewBox="0 0 790 510" xmlns="http://www.w3.org/2000/svg">
-    ${r('D05',10,10,105,82)} ${r('D03',123,10,115,82)} ${r('D04',246,10,113,82)}
-    ${r('D02',367,10,200,82)} ${r('D01',575,10,135,82)}
-    <rect x="10" y="100" width="700" height="14" fill="#e5e7eb" rx="2"/>
-    <text x="355" y="110" text-anchor="middle" dominant-baseline="middle" font-family="Inter,system-ui,sans-serif" font-size="8" fill="#9ca3af" letter-spacing="1">HALLWAY</text>
-    ${r('B01',10,122,468,378)}
-    ${r('C05',486,122,132,76)} ${r('C04',486,198,132,76)} ${r('C03',486,274,132,76)}
-    ${r('C02',486,350,132,76)} ${r('C01',486,426,132,74)}
-    ${r('A02',626,122,154,95)} ${r('A01',626,225,154,275)}
-    <text x="770" y="55" text-anchor="end" font-family="Inter,system-ui,sans-serif" font-size="8" fill="#9ca3af">EXIT ↑</text>
-  </svg>`;
-}
+// Floorplan layout for a property: Firestore floorplans/{propId} (editor-saved) wins,
+// else the bundled FLOORPLAN_SEED. Returns null if neither has one.
+function fpLayout(propId){ return floorplanMap[propId] || (window.FLOORPLAN_SEED || {})[propId] || null; }
 
-function officeSVG(units, propId) {
-  const r = (id,x,y,w,h) => fpRect(id,x,y,w,h,units,propId);
-  return `<svg viewBox="0 0 700 520" xmlns="http://www.w3.org/2000/svg">
-    ${r('R05',10,10,130,115)} ${r('R06',10,133,130,195)} ${r('R07',10,336,130,125)}
-    ${fpLabel('LOBBY',148,10,290,300,'#f0fdf4','#4ade80')}
-    ${fpLabel('BREAKROOM',148,318,148,82)} ${fpLabel('MEN',304,318,80,82)} ${fpLabel('WOMEN',392,318,54,82)}
-    ${r('R04',454,10,118,82)} ${r('R03',454,100,118,130)} ${r('R02',454,238,118,155)}
-    ${fpLabel('SERVER',454,401,118,60)}
-    ${r('R08',148,408,175,102)} ${r('R09',331,408,175,102)} ${r('R01',580,408,108,102)}
-    <text x="295" y="515" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="8" fill="#9ca3af">FRONT ENTRANCE</text>
-  </svg>`;
+// Render one floor (a {viewBox, bg, items[]}) to SVG. Units keep live status colors.
+function floorplanSVG(fd, units, propId) {
+  if (!fd) return '';
+  const bg = fd.bg ? `<image href="${esc(fd.bg)}" x="0" y="0" width="100%" height="100%" preserveAspectRatio="none" opacity="0.30"/>` : '';
+  const parts = (fd.items || []).map(it => {
+    if (it.k === 'u') return fpRect(it.id, it.x, it.y, it.w, it.h, units, propId);
+    if (it.k === 'l') return fpLabel(it.t, it.x, it.y, it.w, it.h, it.bg, it.tc);
+    if (it.k === 'n') return `<text x="${it.x}" y="${it.y}" text-anchor="${it.anchor || 'start'}" font-family="Inter,system-ui,sans-serif" font-size="8" fill="#9ca3af">${esc(it.t)}</text>`;
+    return '';
+  }).join('');
+  return `<svg viewBox="${esc(fd.viewBox || '0 0 790 510')}" xmlns="http://www.w3.org/2000/svg">${bg}${parts}</svg>`;
 }
 
 function renderFloorplans(propId) {
   const el = document.getElementById(`fp-section-${propId}`);
   if (!el) return;
+  if (fpEditing && fpEditing.propId === propId) return fpRenderEditor(propId);   // edit mode takes over
   const units  = fpUnitsFor(propId);
-  const floor  = fpFloors[propId] || 'warehouse';
-  // Only show floor plan for known properties — add more here as needed
-  const hasFP  = propId === 'pellissier-2720';
-  if (!hasFP) return;
-  const svg    = floor === 'warehouse' ? warehouseSVG(units, propId) : officeSVG(units, propId);
+  const layout = fpLayout(propId);
+  const createBtn = `<button onclick="fpStartEdit('${propId}')" class="btn sm dark">✏️ Create floor plan</button>`;
+  if (!layout) {
+    el.innerHTML = `<div class="fp-section"><div style="padding:14px;font-size:13px;color:var(--text2);text-align:center;">No floor plan for this location yet.<div style="margin-top:8px;">${createBtn}</div></div></div>`;
+    return;
+  }
+  const floorsAvail = ['warehouse','office'].filter(f => layout[f] && (layout[f].items || []).length);
+  if (!floorsAvail.length) { el.innerHTML = `<div class="fp-section"><div style="padding:14px;text-align:center;">${createBtn}</div></div>`; return; }
+  let floor = fpFloors[propId] || floorsAvail[0];
+  if (!floorsAvail.includes(floor)) floor = floorsAvail[0];
+  const svg = floorplanSVG(layout[floor], units, propId);
+  const tabs = floorsAvail.length > 1
+    ? `<div class="fp-tabs">${floorsAvail.map(f => `<button class="fp-tab${f===floor?' active':''}" onclick="switchFP('${propId}','${f}')">${f==='warehouse'?'Warehouse':'Office'}</button>`).join('')}</div>`
+    : '';
   const legend = `<div class="fp-legend">
     <div class="fp-legend-item"><div class="fp-legend-dot" style="background:#dcfce7;border:1.5px solid #16a34a"></div>Available</div>
     <div class="fp-legend-item"><div class="fp-legend-dot" style="background:#ffedd5;border:1.5px solid #f97316"></div>Occupied</div>
@@ -3339,9 +3349,9 @@ function renderFloorplans(propId) {
   el.innerHTML = `<div class="fp-section">
     <div class="fp-hd">
       <div class="fp-title">Floor Plan</div>
-      <div class="fp-tabs">
-        <button class="fp-tab${floor==='warehouse'?' active':''}" onclick="switchFP('${propId}','warehouse')">Warehouse</button>
-        <button class="fp-tab${floor==='office'?' active':''}"    onclick="switchFP('${propId}','office')">Office</button>
+      <div style="display:flex;align-items:center;gap:8px;">
+        ${tabs}
+        <button onclick="fpStartEdit('${propId}')" style="font-size:11px;border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:3px 9px;cursor:pointer;color:var(--text);">✏️ Edit</button>
       </div>
     </div>
     ${legend}
@@ -3352,6 +3362,113 @@ function renderFloorplans(propId) {
 function switchFP(propId, floor) {
   fpFloors[propId] = floor;
   renderFloorplans(propId);
+}
+
+// ── Floorplan EDITOR ──────────────────────────────────────────────────────────
+// Drag a box to move, drag its corner to resize, Save → Firestore floorplans/{propId}.
+// During a drag we update the dragged elements' attributes directly (no re-render),
+// so the SVG's coordinate frame (getScreenCTM) stays stable mid-drag.
+let fpEditing = null;   // { propId, floor }
+let fpDraft   = null;   // working copy of the whole layout { warehouse:{...}, office:{...} }
+let fpDrag    = null;   // active drag: { idx, mode, startX, startY, ox, oy, ow, oh }
+
+function fpBlankFloor(floor){ return { viewBox: floor === 'office' ? '0 0 700 520' : '0 0 790 510', bg: null, items: [] }; }
+
+function fpStartEdit(propId){
+  if (typeof event !== 'undefined' && event) event.stopPropagation();
+  const cur = fpLayout(propId);
+  fpDraft = cur ? JSON.parse(JSON.stringify(cur)) : { warehouse: fpBlankFloor('warehouse'), office: fpBlankFloor('office') };
+  if (!fpDraft.warehouse) fpDraft.warehouse = fpBlankFloor('warehouse');
+  if (!fpDraft.office)    fpDraft.office    = fpBlankFloor('office');
+  let floor = fpFloors[propId];
+  if (!floor || !fpDraft[floor]) floor = (fpDraft.office.items.length && !fpDraft.warehouse.items.length) ? 'office' : 'warehouse';
+  fpEditing = { propId, floor };
+  fpFloors[propId] = floor;
+  renderFloorplans(propId);
+}
+function fpEditFloor(floor){ if (!fpEditing) return; fpEditing.floor = floor; fpFloors[fpEditing.propId] = floor; renderFloorplans(fpEditing.propId); }
+function fpCancelEdit(){ const p = fpEditing && fpEditing.propId; fpEditing = null; fpDraft = null; fpDrag = null; if (p) renderFloorplans(p); }
+async function fpSaveEdit(){
+  if (!fpEditing) return;
+  const propId = fpEditing.propId;
+  const data = JSON.parse(JSON.stringify(fpDraft)); data.updatedAt = new Date().toISOString();
+  floorplanMap[propId] = data;                 // optimistic local
+  fpEditing = null; fpDraft = null; fpDrag = null;
+  renderFloorplans(propId);
+  setSyncing(true);
+  try { await setDoc(doc(db, 'floorplans', propId), data); }
+  catch (e) { console.error('floorplan save failed', e); }
+  finally { setSyncing(false); }
+}
+
+// client (px) → SVG user coordinates, via the live svg's CTM (re-fetched each call).
+function fpSvgPoint(cx, cy){
+  const svg = fpEditing && document.getElementById(`fp-edit-svg-${fpEditing.propId}`);
+  const m = svg && svg.getScreenCTM && svg.getScreenCTM();
+  if (!m) return { x: cx, y: cy };
+  const pt = svg.createSVGPoint(); pt.x = cx; pt.y = cy;
+  const r = pt.matrixTransform(m.inverse());
+  return { x: r.x, y: r.y };
+}
+function fpApplyGeom(it){
+  const p  = fpDrag._p;
+  const dx = p.x - fpDrag.startX, dy = p.y - fpDrag.startY;
+  if (fpDrag.mode === 'move') { it.x = Math.round(fpDrag.ox + dx); it.y = Math.round(fpDrag.oy + dy); }
+  else { it.w = Math.max(20, Math.round(fpDrag.ow + dx)); it.h = Math.max(16, Math.round(fpDrag.oh + dy)); }
+}
+function fpDragStart(e, idx, mode){
+  e.preventDefault(); e.stopPropagation();
+  const it = fpDraft[fpEditing.floor].items[idx]; if (!it) return;
+  const p = fpSvgPoint(e.clientX, e.clientY);
+  fpDrag = { idx, mode, startX: p.x, startY: p.y, ox: it.x, oy: it.y, ow: it.w || 80, oh: it.h || 60, _p: p };
+  window.addEventListener('pointermove', fpDragMove);
+  window.addEventListener('pointerup', fpDragEnd, { once: true });
+}
+function fpDragMove(e){
+  if (!fpDrag || !fpEditing) return;
+  const it = fpDraft[fpEditing.floor].items[fpDrag.idx]; if (!it) return;
+  fpDrag._p = fpSvgPoint(e.clientX, e.clientY);
+  fpApplyGeom(it);
+  const r = document.getElementById(`fpr-${fpDrag.idx}`);
+  const t = document.getElementById(`fpt-${fpDrag.idx}`);
+  const h = document.getElementById(`fph-${fpDrag.idx}`);
+  if (r) { r.setAttribute('x', it.x); r.setAttribute('y', it.y); r.setAttribute('width', it.w); r.setAttribute('height', it.h); }
+  if (t) { t.setAttribute('x', it.x + it.w / 2); t.setAttribute('y', it.y + it.h / 2); }
+  if (h) { h.setAttribute('x', it.x + it.w - 11); h.setAttribute('y', it.y + it.h - 11); }
+}
+function fpDragEnd(){ fpDrag = null; window.removeEventListener('pointermove', fpDragMove); }
+
+function fpRenderEditor(propId){
+  const el = document.getElementById(`fp-section-${propId}`); if (!el) return;
+  const floor = fpEditing.floor;
+  const fd = fpDraft[floor] || (fpDraft[floor] = fpBlankFloor(floor));
+  const units = fpUnitsFor(propId);
+  const boxes = (fd.items || []).map((it, idx) => {
+    if (it.k === 'n') return `<text id="fpt-${idx}" x="${it.x}" y="${it.y}" text-anchor="${it.anchor||'start'}" font-family="Inter,system-ui,sans-serif" font-size="9" fill="#6b7280" style="cursor:move" onpointerdown="fpDragStart(event,${idx},'move')">${esc(it.t)}</text>`;
+    const isUnit = it.k === 'u';
+    const fill   = isUnit ? fpFill(it.id, units)   : (it.bg || '#eef2ff');
+    const stroke = isUnit ? fpStroke(it.id, units) : (it.tc || '#6366f1');
+    const label  = isUnit ? (it.id || '?') : (it.t || '');
+    return `<g>
+      <rect id="fpr-${idx}" x="${it.x}" y="${it.y}" width="${it.w}" height="${it.h}" fill="${fill}" stroke="${stroke}" stroke-width="2" rx="3" style="cursor:move" onpointerdown="fpDragStart(event,${idx},'move')"/>
+      <text id="fpt-${idx}" x="${it.x + it.w/2}" y="${it.y + it.h/2}" text-anchor="middle" dominant-baseline="middle" font-family="Inter,system-ui,sans-serif" font-size="11" font-weight="700" fill="#374151" style="pointer-events:none">${esc(label)}</text>
+      <rect id="fph-${idx}" x="${it.x + it.w - 11}" y="${it.y + it.h - 11}" width="13" height="13" fill="#111827" rx="2" style="cursor:nwse-resize" onpointerdown="fpDragStart(event,${idx},'resize')"/>
+    </g>`;
+  }).join('');
+  const bg = fd.bg ? `<image href="${esc(fd.bg)}" x="0" y="0" width="100%" height="100%" preserveAspectRatio="none" opacity="0.30"/>` : '';
+  const floorBtns = ['warehouse','office'].map(f => `<button class="fp-tab${f===floor?' active':''}" onclick="fpEditFloor('${f}')">${f==='warehouse'?'Warehouse':'Office'}</button>`).join('');
+  el.innerHTML = `<div class="fp-section">
+    <div class="fp-hd">
+      <div class="fp-title">Editing floor plan</div>
+      <div class="fp-tabs">${floorBtns}</div>
+    </div>
+    <div style="font-size:12px;color:var(--text2);margin:4px 0 8px;">Drag a box to move · drag the dark corner to resize · colors are live.</div>
+    <div class="fp-svg-wrap"><svg id="fp-edit-svg-${propId}" viewBox="${esc(fd.viewBox)}" xmlns="http://www.w3.org/2000/svg" style="touch-action:none;width:100%;border:1.5px dashed var(--border);border-radius:8px;background:var(--surface);">${bg}${boxes}</svg></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;">
+      <button onclick="fpCancelEdit()" class="btn sm">Cancel</button>
+      <button onclick="fpSaveEdit()" class="btn sm dark">Save floor plan</button>
+    </div>
+  </div>`;
 }
 
 function showUnitPopup(propId, id) {
@@ -3939,6 +4056,11 @@ window.setNoteSince        = setNoteSince;
 window.clearNoteSince      = clearNoteSince;
 window.triggerAvailSync    = triggerAvailSync;
 window.switchFP            = switchFP;
+window.fpStartEdit         = fpStartEdit;
+window.fpEditFloor         = fpEditFloor;
+window.fpCancelEdit        = fpCancelEdit;
+window.fpSaveEdit          = fpSaveEdit;
+window.fpDragStart         = fpDragStart;
 window.showUnitPopup       = showUnitPopup;
 window.closeUnitPopup      = closeUnitPopup;
 window.toggleAvailCard     = toggleAvailCard;

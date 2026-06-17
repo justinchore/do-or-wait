@@ -159,7 +159,7 @@ More CA locations (Terminal West Sac, Fresno, Airport Ontario, La Mirada) are be
 - `renderLocBody(propId, d)` — expanded: stats grid, filter chips (Available/Occupied/All, default Available via `availFilter[propId]`; no Hold filter — holds are available), per-section unit row lists (WH/Office/Dock; Parking is count-only in the stats grid), floor plan. Rows are compact; clicking a row expands tenant/owner/phone/email/poc/notes. `isAvail(u) = u.available || u.hold`.
 - `setAvailFilter(propId, f, ev)` — sets the unit filter and re-renders the body
 - `toggleUnitDetail(key, ev)` — expands/collapses a unit's detail panel
-- `renderFloorplans(propId)` — SVG floorplan. Currently only `pellissier-2720` has one. Banana Fontana needs one built.
+- `renderFloorplans(propId)` — **data-driven** SVG floorplan. Reads layout via `fpLayout(propId)` (Firestore `floorplans/{propId}`, else `FLOORPLAN_SEED` from `floorplan-seed.js`); `floorplanSVG()` renders items (`k:'u'` unit→live status colors via `fpRect`, `k:'l'` label, `k:'n'` note) over an optional faded `bg` image. Floor tabs auto-shown per floor present; properties with no layout show "No floor plan yet". Editor (Layer 2) is how others get added/updated.
 - `triggerAvailSync(propId)` — POSTs `{ propId }` to Cloudflare Worker
 - `submitAddLocation()` — POSTs full location payload to Cloudflare Worker
 - `LOCATION_PRESETS` — quick-fill buttons in Add Location modal. Add entries here for each new location.
@@ -169,9 +169,8 @@ More CA locations (Terminal West Sac, Fresno, Airport Ontario, La Mirada) are be
 ### Gotcha — function exposure (ES module scope)
 The `<script type="module">` means functions are NOT global. Any function referenced from an inline `onclick=`/`ondrag*=`/`oninput=` attribute MUST be added to the `window.* = ...` block near the bottom of the module, or it throws "X is not defined" at click time. (This caused the original drag bug — the handlers existed but weren't exposed.) When adding a new inline handler, always add the matching `window.` line.
 
-## Floorplan SVGs (in renderFloorplans function)
-- `pellissier-2720`: warehouse (D01-D05, B01, C01-C05, A01-A02) + office (R01-R09)  
-- `11179-banana-fontana`: NOT YET BUILT — needs SVG for A01-E07 WH, R01-R08 OFFICE
+## Floorplans — DATA-DRIVEN (decided 2026-06)
+Layout lives in **data, not code**: Firestore `floorplans/{propId}` (editor-saved) overrides the bundled `floorplan-seed.js` (`window.FLOORPLAN_SEED`). Shape per property: `{ warehouse:{viewBox,bg,items[]}, office:{...} }`; each item `{k,id?,t?,x,y,w,h,bg?,tc?,anchor?}` where `k`: `u`=unit (live status by `id`), `l`=label (room/area box), `n`=note (free text). `bg` is an optional faded underlay image URL. Pellissier seeded from its old hardcoded SVG (renders identically — `pellissier-2720` warehouse D01-D05/B01/C01-C05/A01-A02, office R01-R09). **Editor (Layer 2, next):** screenshot tracing underlay + drag/resize boxes + dock markers + save to Firestore — the self-serve way to lay out/update every property (incl. Banana Fontana A01-E07/R01-R08) without code. UI drag isn't auto-testable here, so build/test it in layers.
 
 ---
 
@@ -212,6 +211,7 @@ Each active lead card shows a compact button row (`renderLeadCard` → `quickLog
 do_or_wait/
   index.html            ← entire app (push to GitHub to deploy)
   pricing-seed.js       ← auto-generated snapshot of the price sheet, loaded by index.html as the Pricing-tab fallback before/without the n8n sync. Regenerate from the master xlsx; NOT hand-edited. (Loaded via <script src> just before the module — the one static data asset outside index.html.)
+  floorplan-seed.js     ← bundled fallback floor-plan layouts (Pellissier). Editor saves override these to Firestore floorplans/{propId}. Loaded via <script src> before the module.
   CLAUDE.md             ← this file
   .gitignore            ← keeps the master price xlsx (large, internal, repo is public) and *.xlsx out of git
   sharepoint_location_links.txt ← SharePoint URLs for the CA locations (input for presets)
