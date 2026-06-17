@@ -1,0 +1,394 @@
+{
+  "name": "CW — 9. Floorplan Image Render",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 5 * * 1"
+            }
+          ]
+        }
+      },
+      "id": "cw-fr-001",
+      "name": "Weekly Mon 5am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        200,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "floorplan-render",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "cw-fr-002",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/config/properties",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "options": {}
+      },
+      "id": "cw-fr-003",
+      "name": "Get property config",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        420,
+        300
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Google Service Account — do-or-wait"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// One item per location {propId,driveId,itemId}; webhook may pass a single propId.\nconst doc = $input.first().json;\nconst fields = (doc.fields) || (doc.document && doc.document.fields) || {};\nconst arr = (fields.properties && fields.properties.arrayValue && fields.properties.arrayValue.values) || [];\nlet only = '';\ntry { only = ($('Webhook').first().json.body && $('Webhook').first().json.body.propId) || ''; } catch (e) {}\nconst out = [];\nfor (const it of arr) {\n  const m = (it.mapValue && it.mapValue.fields) || {};\n  const g = k => (m[k] && m[k].stringValue) || '';\n  const propId = g('id'), driveId = g('driveId'), itemId = g('itemId');\n  if (!propId || !driveId || !itemId) continue;\n  if (only && propId !== only) continue;\n  out.push({ json: { propId, driveId, itemId } });\n}\nif (!out.length) throw new Error('Floorplan render: no properties matched.');\nreturn out;\n"
+      },
+      "id": "cw-fr-004",
+      "name": "Select properties",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "cw-fr-005",
+      "name": "Loop properties",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        860,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://graph.microsoft.com/v1.0/drives/{{ $json.driveId }}/items/{{ $json.itemId }}/content",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "id": "cw-fr-006",
+      "name": "Download xlsx",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1080,
+        360
+      ],
+      "credentials": {
+        "microsoftOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Microsoft OAuth2 — Cubework Outlook"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "=/tmp/fp/{{ $('Loop properties').item.json.propId }}.xlsx",
+        "dataPropertyName": "data",
+        "options": {}
+      },
+      "id": "cw-fr-007",
+      "name": "Save xlsx to disk",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1300,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=python3 /opt/cubework/render_siteplan.py \"/tmp/fp/{{ $('Loop properties').item.json.propId }}.xlsx\" \"{{ $('Loop properties').item.json.propId }}\" /tmp/fp/out"
+      },
+      "id": "cw-fr-008",
+      "name": "Render Site Plan",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        1520,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// Read render_siteplan.py stdout (JSON) → one item per produced PNG.\nconst it = $('Loop properties').item.json;\nlet res = {};\ntry { res = JSON.parse(($json.stdout || '').trim().split('\\n').pop() || '{}'); } catch (e) {}\nconst ts = Date.now();\nconst out = [];\nfor (const floor of ['warehouse', 'office']) {\n  const p = res[floor];\n  if (!p) continue;\n  out.push({ json: { propId: it.propId, floor, pngPath: p,\n    objectName: `floorplan_images/${it.propId}-${floor}-${ts}.png` } });\n}\nif (!out.length) { return []; }   // nothing rendered for this location — skip quietly\nreturn out;\n"
+      },
+      "id": "cw-fr-009",
+      "name": "Parse render output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1740,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "={{ $json.pngPath }}",
+        "options": {
+          "dataPropertyName": "png"
+        }
+      },
+      "id": "cw-fr-010",
+      "name": "Read PNG",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1960,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://firebasestorage.googleapis.com/v0/b/do-or-wait.appspot.com/o?uploadType=media&name={{ encodeURIComponent($('Parse render output').item.json.objectName) }}",
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "png",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "cw-fr-011",
+      "name": "Upload to Firebase Storage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2180,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// After the Storage upload: build the public download URL + the Firestore PATCH body.\nconst meta = $('Parse render output').item.json;             // {propId, floor, objectName}\nconst BUCKET = $vars && $vars.FIREBASE_BUCKET ? $vars.FIREBASE_BUCKET : 'do-or-wait.appspot.com';\nconst resp = $json || {};\nlet token = '';\ntry { token = (resp.downloadTokens) || (resp.metadata && resp.metadata.firebaseStorageDownloadTokens) || ''; } catch (e) {}\nconst url = `https://firebasestorage.googleapis.com/v0/b/${BUCKET}/o/${encodeURIComponent(meta.objectName)}?alt=media${token ? ('&token=' + token) : ''}`;\nconst patchBody = { fields: { [meta.floor]: { stringValue: url }, updatedAt: { stringValue: new Date().toISOString() } } };\nreturn [{ json: { propId: meta.propId, floor: meta.floor, url, patchBody } }];\n"
+      },
+      "id": "cw-fr-012",
+      "name": "Build patch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/floorplan_images/{{ $json.propId }}?updateMask.fieldPaths={{ $json.floor }}&updateMask.fieldPaths=updatedAt",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.patchBody) }}",
+        "options": {}
+      },
+      "id": "cw-fr-013",
+      "name": "Write image URL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2620,
+        360
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Google Service Account — do-or-wait"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Weekly Mon 5am": {
+      "main": [
+        [
+          {
+            "node": "Get property config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Get property config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get property config": {
+      "main": [
+        [
+          {
+            "node": "Select properties",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select properties": {
+      "main": [
+        [
+          {
+            "node": "Loop properties",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop properties": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Download xlsx",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download xlsx": {
+      "main": [
+        [
+          {
+            "node": "Save xlsx to disk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save xlsx to disk": {
+      "main": [
+        [
+          {
+            "node": "Render Site Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Site Plan": {
+      "main": [
+        [
+          {
+            "node": "Parse render output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse render output": {
+      "main": [
+        [
+          {
+            "node": "Read PNG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read PNG": {
+      "main": [
+        [
+          {
+            "node": "Upload to Firebase Storage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to Firebase Storage": {
+      "main": [
+        [
+          {
+            "node": "Build patch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build patch": {
+      "main": [
+        [
+          {
+            "node": "Write image URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write image URL": {
+      "main": [
+        [
+          {
+            "node": "Loop properties",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "cw-workflow-009"
+}

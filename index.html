@@ -585,19 +585,6 @@
     .fp-svg-wrap { background:var(--surface); border-radius:12px; padding:12px; box-shadow:var(--shadow); overflow:hidden; }
     .fp-svg-wrap svg { width:100%; height:auto; display:block; }
 
-    /* Unit detail popup */
-    .unit-popup {
-      position:fixed; bottom:90px; left:50%; transform:translateX(-50%);
-      background:var(--surface); border-radius:14px; padding:14px 18px 16px;
-      box-shadow:var(--shadow-lg); z-index:250; min-width:220px; max-width:320px;
-      border:1.5px solid var(--border); display:none; text-align:left;
-    }
-    .unit-popup.open { display:block; }
-    .unit-popup-id { font-size:18px; font-weight:800; margin-bottom:4px; }
-    .unit-popup-row { font-size:13px; color:var(--text2); margin-top:3px; }
-    .unit-popup-row b { color:var(--text); }
-    .unit-popup-close { position:absolute; top:10px; right:12px; background:none; border:none; font-size:16px; cursor:pointer; color:var(--text2); font-family:inherit; }
-
     /* ── Print ──────────────────────────────── */
     .print-hd { display: none; }
     @media print {
@@ -944,15 +931,6 @@
   </div>
 </div>
 
-<!-- Unit detail popup -->
-<div class="unit-popup" id="unit-popup">
-  <button class="unit-popup-close" onclick="closeUnitPopup()">✕</button>
-  <div class="unit-popup-id" id="up-id"></div>
-  <div class="unit-popup-row" id="up-status"></div>
-  <div class="unit-popup-row" id="up-sf"></div>
-  <div class="unit-popup-row" id="up-tenant"></div>
-</div>
-
 <!-- Add Location modal -->
 <div class="overlay" id="addloc-overlay" onclick="if(event.target===this)closeAddLocation()">
   <div class="modal">
@@ -1174,7 +1152,6 @@
 </div>
 
 <script src="pricing-seed.js"></script>
-<script src="floorplan-seed.js"></script>
 <script type="module">
 // ═══════════════════════════════════════════════════════════════
 //  FIREBASE (no auth — open access)
@@ -2892,9 +2869,6 @@ function switchTab(tab) {
 // ═══════════════════════════════════════════════════════════════
 const availMap  = {};          // propId → data
 let unsubAvail   = null;
-const floorplanMap = {};       // propId → { warehouse:{...}, office:{...} } (editor-saved layouts; falls back to FLOORPLAN_SEED)
-const floorplanImages = {};    // propId → { warehouse:<url>, office:<url> } — uploaded Site Plan images (the primary floor-plan view)
-let unsubFloorplans = null;
 const expandedAvailProps = new Set(); // none open by default
 const availFilter = {}; // per-property unit filter: available | occupied | all
 let availSearch = '';   // Avail tab location search query
@@ -2909,8 +2883,6 @@ function yardiSpaces(url) {
     ? url.replace(/(\/property\/[^/]+\/)[^/?#]*$/, '$1spaces')
     : url.replace(/\/+$/, '') + '/spaces';
 }
-const fpFloors   = {};          // propId → 'warehouse' | 'office'
-
 // n8n on-demand webhook URL — fill in after importing workflow 4
 const PROXY                = 'https://plain-credit-5962.jchoustin91.workers.dev';
 const AVAIL_WEBHOOK        = `${PROXY}/webhook/availability-sync`;
@@ -2924,20 +2896,6 @@ unsubAvail = onSnapshot(collection(db, 'availability'), snap => {
   if (typeof renderLeadsSection === 'function') renderLeadsSection(); // keep waitlist matches live when a location syncs
 });
 
-// Editor-saved floorplan layouts (fall back to FLOORPLAN_SEED when absent).
-unsubFloorplans = onSnapshot(collection(db, 'floorplans'), snap => {
-  snap.forEach(d => { floorplanMap[d.id] = d.data(); });
-  snap.docChanges().forEach(c => { if (c.type === 'removed') delete floorplanMap[c.doc.id]; });
-  // refresh any expanded location whose floor plan is showing
-  Object.keys(availMap).forEach(pid => { if (expandedAvailProps.has(pid)) renderFloorplans(pid); });
-});
-
-// Uploaded Site Plan images (the primary floor-plan view — the real SharePoint drawing).
-onSnapshot(collection(db, 'floorplan_images'), snap => {
-  snap.forEach(d => { floorplanImages[d.id] = d.data(); });
-  snap.docChanges().forEach(c => { if (c.type === 'removed') delete floorplanImages[c.doc.id]; });
-  Object.keys(availMap).forEach(pid => { if (expandedAvailProps.has(pid)) renderFloorplans(pid); });
-});
 
 function renderAvailability() {
   const el = document.getElementById('avail-content');
@@ -3264,498 +3222,30 @@ async function triggerAvailSync(propId) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  FLOORPLAN
+//  FLOORPLAN (link to the SharePoint Site Plan)
 // ═══════════════════════════════════════════════════════════════
-// fpFloors is already declared above as {}
 
-function fpUnitsFor(propId) { return availMap[propId]?.units || []; }
-
-function fpFill(id, units) {
-  const u = units.find(x => x.unit === id);
-  if (!u) return '#f3f4f6';
-  return (u.available || u.hold) ? '#dcfce7' : '#ffedd5';
-}
-function fpStroke(id, units) {
-  const u = units.find(x => x.unit === id);
-  if (!u) return '#d1d5db';
-  return (u.available || u.hold) ? '#16a34a' : '#f97316';
-}
-function fpTextColor(id, units) {
-  const u = units.find(x => x.unit === id);
-  if (!u) return '#6b7280';
-  return u.available ? '#166534' : '#9a3412';
-}
-
-// Generate one unit rectangle + label
-function fpRect(id, x, y, w, h, units, propId) {
-  const fill   = fpFill(id, units);
-  const stroke = fpStroke(id, units);
-  const tc     = fpTextColor(id, units);
-  const cx = x + w/2, cy = y + h/2;
-  const fs = Math.min(13, Math.max(8, w / 5));
-  const u  = units.find(x => x.unit === id);
-  const sf = u?.sf ? `${Number(u.sf).toLocaleString()}` : '';
-  const showSf = sf && h > 38 && w > 55;
-  return `<g onclick="showUnitPopup('${propId||''}','${id}')" style="cursor:pointer">
-    <rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${fill}" stroke="${stroke}" stroke-width="1.5" rx="3"/>
-    <text x="${cx}" y="${cy + (showSf ? -6 : 4)}" text-anchor="middle" dominant-baseline="middle"
-          font-family="Inter,system-ui,sans-serif" font-size="${fs}" font-weight="700" fill="${tc}">${id}</text>
-    ${showSf ? `<text x="${cx}" y="${cy+8}" text-anchor="middle" dominant-baseline="middle"
-          font-family="Inter,system-ui,sans-serif" font-size="${Math.max(7,fs-3)}" fill="${tc}" opacity=".75">${sf} sf</text>` : ''}
-  </g>`;
-}
-
-// Non-unit label (lobby, hallway etc.)
-function fpLabel(txt, x, y, w, h, bg='#f9fafb', tc='#9ca3af') {
-  const cx = x+w/2, cy = y+h/2;
-  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${bg}" stroke="#e5e7eb" stroke-width="1" rx="3"/>
-    <text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="middle"
-          font-family="Inter,system-ui,sans-serif" font-size="9" font-weight="600" fill="${tc}" letter-spacing=".5">${txt}</text>`;
-}
-
-// Floorplan layout for a property: Firestore floorplans/{propId} (editor-saved) wins,
-// else the bundled FLOORPLAN_SEED. Returns null if neither has one.
-function fpLayout(propId){
-  if (floorplanMap[propId]) return floorplanMap[propId];          // editor-saved (always keyed by the real propId)
-  const seed = window.FLOORPLAN_SEED || {};
-  if (seed[propId]) return seed[propId];                          // exact seed match
-  // Tolerant fallback: the seed key may be a slightly different slug of the same
-  // property (e.g. '11179-banana-fontana' vs 'banana-fontana'). Match if one
-  // normalized id contains the other (and is specific enough to avoid false hits).
-  const norm = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '');
-  const np = norm(propId);
-  if (np.length >= 6) {
-    for (const k in seed) { const nk = norm(k); if (nk.length >= 6 && (nk.includes(np) || np.includes(nk))) return seed[k]; }
-  }
-  return null;
-}
-
-// Render one floor (a {viewBox, bg, items[]}) to SVG. Units keep live status colors.
-function floorplanSVG(fd, units, propId) {
-  if (!fd) return '';
-  const bg = fd.bg ? `<image href="${esc(fd.bg)}" x="0" y="0" width="100%" height="100%" preserveAspectRatio="none" opacity="0.30"/>` : '';
-  const parts = (fd.items || []).map(it => {
-    if (it.k === 'u') return fpRect(it.id, it.x, it.y, it.w, it.h, units, propId);
-    if (it.k === 'l') return fpLabel(it.t, it.x, it.y, it.w, it.h, it.bg, it.tc);
-    if (it.k === 'n') return `<text x="${it.x}" y="${it.y}" text-anchor="${it.anchor || 'start'}" font-family="Inter,system-ui,sans-serif" font-size="8" fill="#9ca3af">${esc(it.t)}</text>`;
-    return '';
-  }).join('');
-  return `<svg viewBox="${esc(fd.viewBox || '0 0 790 510')}" xmlns="http://www.w3.org/2000/svg">${bg}${parts}</svg>`;
-}
-
-const FP_MINI_BTN = 'font-size:11px;border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:3px 9px;cursor:pointer;color:var(--text);';
-// A file-picker label that uploads a Site Plan image for one floor.
-function fpUpLabel(propId, floor, text, dark){
-  const cls = dark ? 'class="btn sm dark" ' : '';
-  const sty = dark ? '' : `style="${FP_MINI_BTN}"`;
-  return `<label ${cls}${sty} title="Upload the SharePoint Site Plan image for this floor">${text}<input type="file" accept="image/*" style="display:none" onchange="fpUploadPlanImage(this.files && this.files[0], '${propId}', '${floor}'); this.value='';"></label>`;
-}
-
+// Floor plan = a link to the live SharePoint Site Plan (the source of truth).
+// (In-app rendering/upload was dropped 2026-06-17 — see CLAUDE.md.)
 function renderFloorplans(propId) {
   const el = document.getElementById(`fp-section-${propId}`);
   if (!el) return;
-  if (fpEditing && fpEditing.propId === propId) return fpRenderEditor(propId);   // edit mode takes over
-  const units  = fpUnitsFor(propId);
-  const layout = fpLayout(propId);
-  const imgs   = floorplanImages[propId] || {};
-  const imageFloors = ['warehouse','office'].filter(f => imgs[f]);
-  const boxFloors   = layout ? ['warehouse','office'].filter(f => layout[f] && (layout[f].items || []).length) : [];
-  const allFloors   = ['warehouse','office'].filter(f => imageFloors.includes(f) || boxFloors.includes(f));
-
-  if (!allFloors.length) {
-    el.innerHTML = `<div class="fp-section"><div style="padding:14px;font-size:13px;color:var(--text2);text-align:center;">
-      No floor plan yet — upload the location's Site Plan image (a screenshot/export of the SharePoint plan).
-      <div style="margin-top:10px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
-        ${fpUpLabel(propId,'warehouse','📷 Upload Warehouse plan', true)}
-        ${fpUpLabel(propId,'office','📷 Upload Office plan', true)}
-        <button onclick="fpStartEdit('${propId}')" class="btn sm">✏️ Draw manually</button>
-      </div></div></div>`;
-    return;
-  }
-  let floor = fpFloors[propId];
-  if (!floor || !allFloors.includes(floor)) floor = allFloors[0];
-  const tabs = allFloors.length > 1
-    ? `<div class="fp-tabs">${allFloors.map(f => `<button class="fp-tab${f===floor?' active':''}" onclick="switchFP('${propId}','${f}')">${f==='warehouse'?'Warehouse':'Office'}</button>`).join('')}</div>`
-    : '';
-  let body, controls;
-  if (imgs[floor]) {
-    body = `<div class="fp-svg-wrap"><img src="${esc(imgs[floor])}" alt="${floor} floor plan" style="width:100%;display:block;border-radius:8px;cursor:zoom-in;" onclick="window.open('${esc(imgs[floor])}','_blank')"/></div>`;
-    controls = `${fpUpLabel(propId, floor, '📷 Replace')}
-        <button onclick="fpRemovePlanImage('${propId}','${floor}')" style="${FP_MINI_BTN}color:#b91c1c;">🗑 Remove</button>`;
-  } else {
-    const legend = `<div class="fp-legend">
-      <div class="fp-legend-item"><div class="fp-legend-dot" style="background:#dcfce7;border:1.5px solid #16a34a"></div>Available</div>
-      <div class="fp-legend-item"><div class="fp-legend-dot" style="background:#ffedd5;border:1.5px solid #f97316"></div>Occupied</div>
-      <div class="fp-legend-item"><div class="fp-legend-dot" style="background:#f3f4f6;border:1.5px solid #d1d5db"></div>No data</div>
-    </div>`;
-    body = `${legend}<div class="fp-svg-wrap">${floorplanSVG(layout[floor], units, propId)}</div>`;
-    controls = `${fpUpLabel(propId, floor, '📷 Use image')}
-        <button onclick="fpStartEdit('${propId}')" style="${FP_MINI_BTN}">✏️ Edit</button>`;
-  }
+  const d = availMap[propId] || {};
+  const sp = d.sharepoint_url || '';
+  const yardi = d.yardi_url || '';
+  const link = (href, label) => `<a href="${esc(href)}" target="_blank" rel="noopener" class="btn sm dark" style="text-decoration:none;" onclick="event.stopPropagation()">${label}</a>`;
+  const links = [];
+  if (sp)    links.push(link(sp, '📄 Open Site Plan (SharePoint) ↗'));
+  if (yardi) links.push(link(yardi, '📐 Yardi blueprint ↗'));
   el.innerHTML = `<div class="fp-section">
-    <div class="fp-hd">
-      <div class="fp-title">Floor Plan</div>
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">${tabs}${controls}</div>
-    </div>
-    ${body}
-  </div>`;
-}
-
-// Upload a Site Plan image for one floor → Firebase Storage → floorplan_images/{propId}.
-async function fpUploadPlanImage(file, propId, floor){
-  if (!file) return;
-  const ext = file.name.includes('.') ? '.' + file.name.split('.').pop().toLowerCase() : '.png';
-  setSyncing(true);
-  try {
-    const r = ref(storage, `floorplan_images/${propId}-${floor}-${Date.now()}${ext}`);
-    await uploadBytes(r, file, { contentType: file.type || 'image/png' });
-    const url = await getDownloadURL(r);
-    floorplanImages[propId] = { ...(floorplanImages[propId] || {}), [floor]: url };   // optimistic
-    fpFloors[propId] = floor;
-    renderFloorplans(propId);
-    await setDoc(doc(db, 'floorplan_images', propId), { [floor]: url, updatedAt: new Date().toISOString() }, { merge: true });
-  } catch (e) { console.error('floor plan image upload failed', e); alert('Upload failed: ' + e.message); }
-  finally { setSyncing(false); }
-}
-async function fpRemovePlanImage(propId, floor){
-  if (!confirm(`Remove the ${floor} floor plan image?`)) return;
-  if (floorplanImages[propId]) { const cp = { ...floorplanImages[propId] }; delete cp[floor]; floorplanImages[propId] = cp; }
-  renderFloorplans(propId);
-  setSyncing(true);
-  try { await setDoc(doc(db, 'floorplan_images', propId), { [floor]: null }, { merge: true }); }
-  catch (e) { console.error('remove floor plan image failed', e); }
-  finally { setSyncing(false); }
-}
-
-function switchFP(propId, floor) {
-  fpFloors[propId] = floor;
-  renderFloorplans(propId);
-}
-
-// ── Floorplan EDITOR ──────────────────────────────────────────────────────────
-// Drag a box to move, drag its corner to resize, Save → Firestore floorplans/{propId}.
-// During a drag we update the dragged elements' attributes directly (no re-render),
-// so the SVG's coordinate frame (getScreenCTM) stays stable mid-drag.
-let fpEditing = null;   // { propId, floor }
-let fpDraft   = null;   // working copy of the whole layout { warehouse:{...}, office:{...} }
-let fpDrag    = null;   // active drag: { idx, mode, startX, startY, ox, oy, ow, oh }
-let fpSel     = null;   // selected item index (for the sq-ft editor)
-let fpSfEdits = {};     // unitId → new sq ft (pending; applied to availability on Save)
-let fpPair    = null;   // { aIdx, bIdx, total } — reallocate sq ft between two units, combined total locked
-let fpNewUnits = [];    // units created via Split (appended to availability.units on Save)
-
-function fpBlankFloor(floor){ return { viewBox: floor === 'office' ? '0 0 700 520' : '0 0 790 510', bg: null, items: [] }; }
-
-function fpStartEdit(propId){
-  if (typeof event !== 'undefined' && event) event.stopPropagation();
-  const cur = fpLayout(propId);
-  fpDraft = cur ? JSON.parse(JSON.stringify(cur)) : { warehouse: fpBlankFloor('warehouse'), office: fpBlankFloor('office') };
-  if (!fpDraft.warehouse) fpDraft.warehouse = fpBlankFloor('warehouse');
-  if (!fpDraft.office)    fpDraft.office    = fpBlankFloor('office');
-  let floor = fpFloors[propId];
-  if (!floor || !fpDraft[floor]) floor = (fpDraft.office.items.length && !fpDraft.warehouse.items.length) ? 'office' : 'warehouse';
-  fpEditing = { propId, floor };
-  fpFloors[propId] = floor;
-  fpSel = null; fpSfEdits = {}; fpPair = null; fpNewUnits = [];
-  fpSeedIfEmpty(floor);
-  renderFloorplans(propId);
-}
-function fpEditFloor(floor){ if (!fpEditing) return; fpEditing.floor = floor; fpFloors[fpEditing.propId] = floor; fpSeedIfEmpty(floor); renderFloorplans(fpEditing.propId); }
-function fpCancelEdit(){ const p = fpEditing && fpEditing.propId; fpEditing = null; fpDraft = null; fpDrag = null; if (p) renderFloorplans(p); }
-async function fpSaveEdit(){
-  if (!fpEditing) return;
-  const propId = fpEditing.propId;
-  const data = JSON.parse(JSON.stringify(fpDraft)); data.updatedAt = new Date().toISOString();
-  floorplanMap[propId] = data;                 // optimistic local
-  // SF edits write to the availability units (so the location list updates too).
-  // The SharePoint sync may later overwrite these — accepted tradeoff.
-  let updatedUnits = null;
-  if ((Object.keys(fpSfEdits).length || fpNewUnits.length) && availMap[propId] && Array.isArray(availMap[propId].units)) {
-    updatedUnits = availMap[propId].units.map(u => (u && fpSfEdits[u.unit] != null) ? { ...u, sf: fpSfEdits[u.unit] } : u);
-    fpNewUnits.forEach(nu => updatedUnits.push({ ...nu, sf: (nu.unit in fpSfEdits) ? fpSfEdits[nu.unit] : 0 }));   // split-created units
-    availMap[propId] = { ...availMap[propId], units: updatedUnits };
-  }
-  fpEditing = null; fpDraft = null; fpDrag = null; fpSel = null; fpSfEdits = {}; fpPair = null; fpNewUnits = [];
-  renderFloorplans(propId);
-  if (updatedUnits) renderAvailability();
-  setSyncing(true);
-  try {
-    await setDoc(doc(db, 'floorplans', propId), data);
-    if (updatedUnits) await setDoc(doc(db, 'availability', propId), { units: updatedUnits }, { merge: true });
-  } catch (e) { console.error('floorplan/sf save failed', e); }
-  finally { setSyncing(false); }
-}
-
-// client (px) → SVG user coordinates, via the live svg's CTM (re-fetched each call).
-function fpSvgPoint(cx, cy){
-  const svg = fpEditing && document.getElementById(`fp-edit-svg-${fpEditing.propId}`);
-  const m = svg && svg.getScreenCTM && svg.getScreenCTM();
-  if (!m) return { x: cx, y: cy };
-  const pt = svg.createSVGPoint(); pt.x = cx; pt.y = cy;
-  const r = pt.matrixTransform(m.inverse());
-  return { x: r.x, y: r.y };
-}
-function fpApplyGeom(it){
-  const p  = fpDrag._p;
-  const dx = p.x - fpDrag.startX, dy = p.y - fpDrag.startY;
-  if (fpDrag.mode === 'move') { it.x = Math.round(fpDrag.ox + dx); it.y = Math.round(fpDrag.oy + dy); }
-  else { it.w = Math.max(20, Math.round(fpDrag.ow + dx)); it.h = Math.max(16, Math.round(fpDrag.oh + dy)); }
-}
-function fpDragStart(e, idx, mode){
-  e.preventDefault(); e.stopPropagation();
-  const it = fpDraft[fpEditing.floor].items[idx]; if (!it) return;
-  if (fpPair && idx !== fpPair.aIdx && idx !== fpPair.bIdx) fpPair = null;   // grabbing a 3rd unit exits reallocation
-  fpSel = idx;
-  const p = fpSvgPoint(e.clientX, e.clientY);
-  fpDrag = { idx, mode, startX: p.x, startY: p.y, ox: it.x, oy: it.y, ow: it.w || 80, oh: it.h || 60, _p: p };
-  window.addEventListener('pointermove', fpDragMove);
-  window.addEventListener('pointerup', fpDragEnd, { once: true });
-}
-function fpDragMove(e){
-  if (!fpDrag || !fpEditing) return;
-  const it = fpDraft[fpEditing.floor].items[fpDrag.idx]; if (!it) return;
-  fpDrag._p = fpSvgPoint(e.clientX, e.clientY);
-  fpApplyGeom(it);
-  const r = document.getElementById(`fpr-${fpDrag.idx}`);
-  const t = document.getElementById(`fpt-${fpDrag.idx}`);
-  const h = document.getElementById(`fph-${fpDrag.idx}`);
-  if (r) { r.setAttribute('x', it.x); r.setAttribute('y', it.y); r.setAttribute('width', it.w); r.setAttribute('height', it.h); }
-  if (t) { t.setAttribute('x', it.x + it.w / 2); t.setAttribute('y', it.y + it.h / 2); }
-  if (h) { h.setAttribute('x', it.x + it.w - 11); h.setAttribute('y', it.y + it.h - 11); }
-}
-function fpDragEnd(){ fpDrag = null; window.removeEventListener('pointermove', fpDragMove); if (fpEditing) fpRenderEditor(fpEditing.propId); }
-function fpUnitSf(units, id){ const u = units.find(x => x.unit === id); return (u && u.sf != null && u.sf !== '') ? Number(u.sf) : null; }
-function fpSetSf(idx, val){
-  const it = fpDraft[fpEditing.floor].items[idx]; if (!it || it.k !== 'u') return;
-  const n = parseInt(String(val).replace(/[^0-9]/g, ''), 10);
-  fpSfEdits[it.id] = isNaN(n) ? 0 : n;
-  const t = document.getElementById(`fps-${idx}`);
-  if (t) t.textContent = fpSfEdits[it.id] ? fpSfEdits[it.id].toLocaleString() + ' sf' : '';
-}
-// Reallocate sq ft between two units (split / move a wall): combined total stays locked.
-function fpCurSf(units, it){ return (it && (it.id in fpSfEdits)) ? fpSfEdits[it.id] : (fpUnitSf(units, it && it.id) || 0); }
-function fpStartRealloc(bIdxStr){
-  if (!fpEditing || fpSel == null) return;
-  const bIdx = Number(bIdxStr); if (isNaN(bIdx)) return;
-  const units = fpUnitsFor(fpEditing.propId);
-  const items = fpDraft[fpEditing.floor].items;
-  const A = items[fpSel], B = items[bIdx];
-  if (!A || !B || A.k !== 'u' || B.k !== 'u') return;
-  fpPair = { aIdx: fpSel, bIdx, total: fpCurSf(units, A) + fpCurSf(units, B) };
-  renderFloorplans(fpEditing.propId);
-}
-function fpEndRealloc(){ fpPair = null; if (fpEditing) renderFloorplans(fpEditing.propId); }
-// Split a unit into two: create a new unit (box + availability record) and divide the sq ft.
-function fpSplitUnit(){
-  if (!fpEditing || fpSel == null) return;
-  const items = fpDraft[fpEditing.floor].items;
-  const origIdx = fpSel;
-  const A = items[origIdx]; if (!A || A.k !== 'u') return;
-  const units = fpUnitsFor(fpEditing.propId);
-  const curS = fpCurSf(units, A);
-  const taken = id => { const l = String(id).toLowerCase();
-    return units.some(u => String(u.unit).toLowerCase() === l)
-        || fpNewUnits.some(u => u.unit.toLowerCase() === l)
-        || items.some(it => it.k === 'u' && String(it.id).toLowerCase() === l); };
-  const base = A.id || 'UNIT';
-  let code = 66, suggestion = base + '-B';                       // -B, then -C, -D…
-  while (taken(suggestion)) { code++; suggestion = base + '-' + String.fromCharCode(code); }
-  const newId = (prompt(`Split ${A.id} into two units.\nID for the new unit:`, suggestion) || '').trim();
-  if (!newId) return;
-  if (taken(newId)) { alert(`Unit "${newId}" already exists — choose a different ID.`); return; }
-  // geometry: original keeps the left part, new unit takes a slice on the right
-  const slice = Math.max(20, Math.round(A.w / 2));
-  const newBox = { k: 'u', id: newId, x: A.x + (A.w - slice) + 3, y: A.y, w: Math.max(20, slice - 3), h: A.h };
-  A.w = A.w - slice;
-  items.push(newBox);
-  const newIdx = items.length - 1;
-  // data: split current sq ft 50/50, stage the new unit, open the reallocation slider
-  const sfNew = Math.round(curS / 2);
-  fpNewUnits.push({ unit: newId, type: (units.find(u => u.unit === A.id) || {}).type || 'WH', available: true, status: 'vacant', hold: false });
-  fpSfEdits[A.id]  = curS - sfNew;
-  fpSfEdits[newId] = sfNew;
-  fpPair = { aIdx: origIdx, bIdx: newIdx, total: curS };
-  fpSel = newIdx;
-  renderFloorplans(fpEditing.propId);
-}
-
-// Units in availability that belong to this floor (office floor = OFFICE type; warehouse = the rest).
-function fpFloorUnits(propId, floor){
-  return fpUnitsFor(propId).filter(u => floor === 'office' ? (u.type === 'OFFICE') : (u.type !== 'OFFICE'));
-}
-// Floor units that don't yet have a box on the plan.
-function fpUnplaced(propId, floor){
-  const fd = fpDraft[floor]; const placed = new Set((fd.items || []).filter(it => it.k === 'u').map(it => String(it.id).toLowerCase()));
-  return fpFloorUnits(propId, floor).filter(u => !placed.has(String(u.unit).toLowerCase()));
-}
-function fpMaxBottom(fd){ let m = 10; (fd.items || []).forEach(it => { if (it.k !== 'n') m = Math.max(m, (it.y || 0) + (it.h || 0)); }); return m; }
-function fpAddUnitsAsGrid(fd, units, startY){
-  if (!units.length) return;
-  const vw = Number((fd.viewBox || '0 0 790 510').split(' ')[2]) || 790;
-  const pad = 10, gap = 8;
-  const cols = Math.min(units.length, Math.max(2, Math.round(vw / 170)));
-  const cellW = Math.floor((vw - pad * 2 - gap * (cols - 1)) / cols);
-  units.forEach((u, i) => { const c = i % cols, r = Math.floor(i / cols);
-    fd.items.push({ k: 'u', id: u.unit, x: pad + c * (cellW + gap), y: startY + r * (70 + gap), w: cellW, h: 70 }); });
-}
-function fpSeedIfEmpty(floor){
-  if (!fpEditing) return;
-  const fd = fpDraft[floor]; if (!fd || (fd.items || []).length) return;   // only seed an empty floor
-  fpAddUnitsAsGrid(fd, fpFloorUnits(fpEditing.propId, floor), 10);
-}
-function fpAddUnplaced(){
-  if (!fpEditing) return;
-  const fd = fpDraft[fpEditing.floor];
-  fpAddUnitsAsGrid(fd, fpUnplaced(fpEditing.propId, fpEditing.floor), fpMaxBottom(fd) + 10);
-  renderFloorplans(fpEditing.propId);
-}
-function fpDeleteBox(){
-  if (!fpEditing || fpSel == null) return;
-  const items = fpDraft[fpEditing.floor].items;
-  const it = items[fpSel]; if (!it) return;
-  if (it.k === 'u') {                                  // removing a box = layout only; the unit stays in availability
-    const ni = fpNewUnits.findIndex(u => u.unit === it.id);
-    if (ni >= 0) { fpNewUnits.splice(ni, 1); delete fpSfEdits[it.id]; }   // unless it was a not-yet-saved split unit
-  }
-  items.splice(fpSel, 1);
-  fpSel = null; fpPair = null;
-  renderFloorplans(fpEditing.propId);
-}
-async function fpUploadBg(file){
-  if (!file || !fpEditing) return;
-  const propId = fpEditing.propId, floor = fpEditing.floor;
-  const ext = file.name.includes('.') ? '.' + file.name.split('.').pop().toLowerCase() : '.png';
-  setSyncing(true);
-  try {
-    const r = ref(storage, `floorplans/${propId}-${floor}-${Date.now()}${ext}`);
-    await uploadBytes(r, file, { contentType: file.type || 'image/png' });
-    const url = await getDownloadURL(r);
-    if (fpEditing && fpDraft[floor]) { fpDraft[floor].bg = url; renderFloorplans(propId); }
-  } catch (e) { console.error('blueprint upload failed', e); alert('Upload failed: ' + e.message); }
-  finally { setSyncing(false); }
-}
-function fpRemoveBg(){ if (fpEditing && fpDraft[fpEditing.floor]) { fpDraft[fpEditing.floor].bg = null; renderFloorplans(fpEditing.propId); } }
-function fpReallocFromA(val, source){
-  if (!fpPair) return;
-  const T = fpPair.total;
-  let a = parseInt(String(val).replace(/[^0-9]/g, ''), 10); if (isNaN(a)) a = 0;
-  a = Math.max(0, Math.min(T, a));
-  const b = T - a;
-  const items = fpDraft[fpEditing.floor].items;
-  fpSfEdits[items[fpPair.aIdx].id] = a;
-  fpSfEdits[items[fpPair.bIdx].id] = b;
-  if (source !== 'slider') { const s = document.getElementById('fp-realloc-slider'); if (s) s.value = a; }
-  if (source !== 'a') { const e = document.getElementById('fp-realloc-a'); if (e) e.value = a; }
-  if (source !== 'b') { const e = document.getElementById('fp-realloc-b'); if (e) e.value = b; }
-  const la = document.getElementById(`fps-${fpPair.aIdx}`); if (la) la.textContent = a ? a.toLocaleString() + ' sf' : '';
-  const lb = document.getElementById(`fps-${fpPair.bIdx}`); if (lb) lb.textContent = b ? b.toLocaleString() + ' sf' : '';
-}
-function fpReallocFromB(val){
-  if (!fpPair) return;
-  let b = parseInt(String(val).replace(/[^0-9]/g, ''), 10); if (isNaN(b)) b = 0;
-  b = Math.max(0, Math.min(fpPair.total, b));
-  fpReallocFromA(fpPair.total - b, 'b');
-}
-
-function fpRenderEditor(propId){
-  const el = document.getElementById(`fp-section-${propId}`); if (!el) return;
-  const floor = fpEditing.floor;
-  const fd = fpDraft[floor] || (fpDraft[floor] = fpBlankFloor(floor));
-  const units = fpUnitsFor(propId);
-  const boxes = (fd.items || []).map((it, idx) => {
-    if (it.k === 'n') return `<text id="fpt-${idx}" x="${it.x}" y="${it.y}" text-anchor="${it.anchor||'start'}" font-family="Inter,system-ui,sans-serif" font-size="9" fill="#6b7280" style="cursor:move" onpointerdown="fpDragStart(event,${idx},'move')">${esc(it.t)}</text>`;
-    const isUnit = it.k === 'u';
-    const sel    = idx === fpSel;
-    const fill   = isUnit ? fpFill(it.id, units)   : (it.bg || '#eef2ff');
-    const stroke = sel ? '#2563eb' : (isUnit ? fpStroke(it.id, units) : (it.tc || '#6366f1'));
-    const sw     = sel ? '3.5' : '2';
-    const label  = isUnit ? (it.id || '?') : (it.t || '');
-    const sf     = isUnit ? ((it.id in fpSfEdits) ? fpSfEdits[it.id] : fpUnitSf(units, it.id)) : null;
-    const showSf = sf != null && it.w > 50 && it.h > 34;
-    return `<g>
-      <rect id="fpr-${idx}" x="${it.x}" y="${it.y}" width="${it.w}" height="${it.h}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" rx="3" style="cursor:move" onpointerdown="fpDragStart(event,${idx},'move')"/>
-      <text id="fpt-${idx}" x="${it.x + it.w/2}" y="${it.y + it.h/2 + (showSf ? -6 : 0)}" text-anchor="middle" dominant-baseline="middle" font-family="Inter,system-ui,sans-serif" font-size="11" font-weight="700" fill="#374151" style="pointer-events:none">${esc(label)}</text>
-      <text id="fps-${idx}" x="${it.x + it.w/2}" y="${it.y + it.h/2 + 8}" text-anchor="middle" dominant-baseline="middle" font-family="Inter,system-ui,sans-serif" font-size="9" fill="#6b7280" style="pointer-events:none">${showSf ? Number(sf).toLocaleString() + ' sf' : ''}</text>
-      <rect id="fph-${idx}" x="${it.x + it.w - 11}" y="${it.y + it.h - 11}" width="13" height="13" fill="#111827" rx="2" style="cursor:nwse-resize" onpointerdown="fpDragStart(event,${idx},'resize')"/>
-    </g>`;
-  }).join('');
-  const bg = fd.bg ? `<image href="${esc(fd.bg)}" x="0" y="0" width="100%" height="100%" preserveAspectRatio="none" opacity="0.30"/>` : '';
-  const floorBtns = ['warehouse','office'].map(f => `<button class="fp-tab${f===floor?' active':''}" onclick="fpEditFloor('${f}')">${f==='warehouse'?'Warehouse':'Office'}</button>`).join('');
-  const selItem = (fpSel != null) ? fd.items[fpSel] : null;
-  const bldgTotal = units.reduce((s, u) => s + ((u && (u.unit in fpSfEdits)) ? fpSfEdits[u.unit] : (Number(u && u.sf) || 0)), 0);
-  const unplaced = fpUnplaced(propId, floor);
-  const inpCss = 'padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);';
-  let selPanel;
-  if (fpPair) {
-    const items = fd.items, A = items[fpPair.aIdx], B = items[fpPair.bIdx], T = fpPair.total;
-    const a = fpCurSf(units, A), b = fpCurSf(units, B);
-    selPanel = `<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 11px;margin-top:8px;font-size:13px;">
-        <div style="font-weight:700;margin-bottom:7px;">Reallocate sq ft — combined ${T.toLocaleString()} sf locked</div>
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-          <span><b>${esc(A.id || '?')}</b> <input id="fp-realloc-a" type="text" inputmode="numeric" value="${a}" oninput="fpReallocFromA(this.value,'a')" style="width:84px;${inpCss}"/></span>
-          <input id="fp-realloc-slider" type="range" min="0" max="${T}" value="${a}" oninput="fpReallocFromA(this.value,'slider')" style="flex:1;min-width:140px;"/>
-          <span><b>${esc(B.id || '?')}</b> <input id="fp-realloc-b" type="text" inputmode="numeric" value="${b}" oninput="fpReallocFromB(this.value)" style="width:84px;${inpCss}"/></span>
-          <button onclick="fpEndRealloc()" class="btn sm">Done</button>
-        </div>
-        <div style="font-size:11px;color:var(--text2);margin-top:5px;">Slide or type — the other unit adjusts so the two always sum to ${T.toLocaleString()}.</div>
-      </div>`;
-  } else if (selItem && selItem.k === 'u') {
-    const others = fd.items.map((x, i) => ({ x, i })).filter(o => o.x.k === 'u' && o.i !== fpSel);
-    const opts = others.map(o => `<option value="${o.i}">${esc(o.x.id || '?')}</option>`).join('');
-    selPanel = `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 11px;margin-top:8px;font-size:13px;">
-        <b>Unit ${esc(selItem.id || '?')}</b>
-        <label style="display:flex;align-items:center;gap:6px;">Sq ft <input type="text" inputmode="numeric" value="${(selItem.id in fpSfEdits) ? fpSfEdits[selItem.id] : (fpUnitSf(units, selItem.id) ?? '')}" oninput="fpSetSf(${fpSel}, this.value)" style="width:90px;${inpCss}"/></label>
-        ${others.length ? `<label style="display:flex;align-items:center;gap:6px;">⇄ reallocate with <select onchange="fpStartRealloc(this.value)" style="${inpCss}"><option value="">unit…</option>${opts}</select></label>` : ''}
-        <button onclick="fpSplitUnit()" class="btn sm">✂️ Split into two</button>
-        <button onclick="fpDeleteBox()" class="btn sm" style="color:#b91c1c;">🗑 Remove box</button>
-      </div>`;
-  } else {
-    selPanel = `<div style="font-size:12px;color:var(--text2);margin-top:8px;">Tip: tap a unit to edit its sq ft — or use "split with" to move footage between two units.</div>`;
-  }
-  selPanel += `<div style="font-size:11px;color:var(--text2);margin-top:6px;">Building total (sum of units): <b>${bldgTotal.toLocaleString()} sf</b></div>`;
-  el.innerHTML = `<div class="fp-section">
-    <div class="fp-hd">
-      <div class="fp-title">Editing floor plan</div>
-      <div class="fp-tabs">${floorBtns}</div>
-    </div>
-    <div style="font-size:12px;color:var(--text2);margin:4px 0 8px;">Drag a box to move · drag the dark corner to resize · tap a unit to edit its sq ft · colors are live.</div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 8px;">
-      ${unplaced.length ? `<button onclick="fpAddUnplaced()" class="btn sm">✚ Add ${unplaced.length} unplaced unit${unplaced.length!==1?'s':''}</button>` : `<span style="font-size:12px;color:#16a34a;">✓ all units placed</span>`}
-      <label class="btn sm" style="cursor:pointer;">📐 ${fd.bg ? 'Replace' : 'Upload'} tracing image<input type="file" accept="image/*" style="display:none" onchange="fpUploadBg(this.files && this.files[0])"></label>
-      ${fd.bg ? `<button onclick="fpRemoveBg()" class="btn sm">Remove blueprint</button>` : ''}
-    </div>
-    <div class="fp-svg-wrap"><svg id="fp-edit-svg-${propId}" viewBox="${esc(fd.viewBox)}" xmlns="http://www.w3.org/2000/svg" style="touch-action:none;width:100%;border:1.5px dashed var(--border);border-radius:8px;background:var(--surface);">${bg}${boxes}</svg></div>
-    ${selPanel}
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;">
-      <button onclick="fpCancelEdit()" class="btn sm">Cancel</button>
-      <button onclick="fpSaveEdit()" class="btn sm dark">Save floor plan</button>
+    <div class="fp-hd"><div class="fp-title">Floor Plan</div></div>
+    <div style="padding:10px 2px;font-size:13px;color:var(--text2);">
+      ${links.length
+        ? `Open the live Site Plan at the source:<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">${links.join('')}</div>`
+        : 'No SharePoint link on file for this location.'}
     </div>
   </div>`;
 }
-
-function showUnitPopup(propId, id) {
-  const u = fpUnitsFor(propId).find(x => x.unit === id);
-  const status   = u ? (u.available ? '✅ Available' : '🔶 Occupied') : '⬜ Unknown';
-  const sf       = u?.sf ? `${Number(u.sf).toLocaleString()} sf` : '';
-  const tenant   = u?.tenant || (u?.available ? 'HOLD' : '');
-  document.getElementById('up-id').textContent     = id;
-  document.getElementById('up-status').innerHTML   = `<b>Status:</b> ${status}`;
-  document.getElementById('up-sf').innerHTML       = sf ? `<b>Size:</b> ${sf}` : '';
-  document.getElementById('up-tenant').innerHTML   = tenant ? `<b>Tenant:</b> ${tenant}` : '';
-  document.getElementById('unit-popup').classList.add('open');
-}
-
-function closeUnitPopup() {
-  document.getElementById('unit-popup').classList.remove('open');
-}
-
-// Close popup when tapping outside
-document.addEventListener('click', e => {
-  const popup = document.getElementById('unit-popup');
-  if (popup?.classList.contains('open') && !popup.contains(e.target) && !e.target.closest('svg')) {
-    closeUnitPopup();
-  }
-});
 
 // ═══════════════════════════════════════════════════════════════
 //  ADD LOCATION
@@ -4325,26 +3815,6 @@ window.setNoteSort         = setNoteSort;
 window.setNoteSince        = setNoteSince;
 window.clearNoteSince      = clearNoteSince;
 window.triggerAvailSync    = triggerAvailSync;
-window.fpUploadPlanImage   = fpUploadPlanImage;
-window.fpRemovePlanImage   = fpRemovePlanImage;
-window.switchFP            = switchFP;
-window.fpStartEdit         = fpStartEdit;
-window.fpEditFloor         = fpEditFloor;
-window.fpCancelEdit        = fpCancelEdit;
-window.fpSaveEdit          = fpSaveEdit;
-window.fpDragStart         = fpDragStart;
-window.fpSetSf             = fpSetSf;
-window.fpStartRealloc      = fpStartRealloc;
-window.fpEndRealloc        = fpEndRealloc;
-window.fpReallocFromA      = fpReallocFromA;
-window.fpReallocFromB      = fpReallocFromB;
-window.fpSplitUnit         = fpSplitUnit;
-window.fpAddUnplaced       = fpAddUnplaced;
-window.fpDeleteBox         = fpDeleteBox;
-window.fpUploadBg          = fpUploadBg;
-window.fpRemoveBg          = fpRemoveBg;
-window.showUnitPopup       = showUnitPopup;
-window.closeUnitPopup      = closeUnitPopup;
 window.toggleAvailCard     = toggleAvailCard;
 window.setAvailFilter      = setAvailFilter;
 window.toggleUnitDetail    = toggleUnitDetail;
