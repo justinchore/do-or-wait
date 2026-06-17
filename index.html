@@ -3374,6 +3374,7 @@ let fpDrag    = null;   // active drag: { idx, mode, startX, startY, ox, oy, ow,
 let fpSel     = null;   // selected item index (for the sq-ft editor)
 let fpSfEdits = {};     // unitId → new sq ft (pending; applied to availability on Save)
 let fpPair    = null;   // { aIdx, bIdx, total } — reallocate sq ft between two units, combined total locked
+let fpNewUnits = [];    // units created via Split (appended to availability.units on Save)
 
 function fpBlankFloor(floor){ return { viewBox: floor === 'office' ? '0 0 700 520' : '0 0 790 510', bg: null, items: [] }; }
 
@@ -3387,7 +3388,7 @@ function fpStartEdit(propId){
   if (!floor || !fpDraft[floor]) floor = (fpDraft.office.items.length && !fpDraft.warehouse.items.length) ? 'office' : 'warehouse';
   fpEditing = { propId, floor };
   fpFloors[propId] = floor;
-  fpSel = null; fpSfEdits = {}; fpPair = null;
+  fpSel = null; fpSfEdits = {}; fpPair = null; fpNewUnits = [];
   renderFloorplans(propId);
 }
 function fpEditFloor(floor){ if (!fpEditing) return; fpEditing.floor = floor; fpFloors[fpEditing.propId] = floor; renderFloorplans(fpEditing.propId); }
@@ -3400,11 +3401,12 @@ async function fpSaveEdit(){
   // SF edits write to the availability units (so the location list updates too).
   // The SharePoint sync may later overwrite these — accepted tradeoff.
   let updatedUnits = null;
-  if (Object.keys(fpSfEdits).length && availMap[propId] && Array.isArray(availMap[propId].units)) {
+  if ((Object.keys(fpSfEdits).length || fpNewUnits.length) && availMap[propId] && Array.isArray(availMap[propId].units)) {
     updatedUnits = availMap[propId].units.map(u => (u && fpSfEdits[u.unit] != null) ? { ...u, sf: fpSfEdits[u.unit] } : u);
+    fpNewUnits.forEach(nu => updatedUnits.push({ ...nu, sf: (nu.unit in fpSfEdits) ? fpSfEdits[nu.unit] : 0 }));   // split-created units
     availMap[propId] = { ...availMap[propId], units: updatedUnits };
   }
-  fpEditing = null; fpDraft = null; fpDrag = null; fpSel = null; fpSfEdits = {};
+  fpEditing = null; fpDraft = null; fpDrag = null; fpSel = null; fpSfEdits = {}; fpPair = null; fpNewUnits = [];
   renderFloorplans(propId);
   if (updatedUnits) renderAvailability();
   setSyncing(true);
@@ -3474,6 +3476,39 @@ function fpStartRealloc(bIdxStr){
   renderFloorplans(fpEditing.propId);
 }
 function fpEndRealloc(){ fpPair = null; if (fpEditing) renderFloorplans(fpEditing.propId); }
+// Split a unit into two: create a new unit (box + availability record) and divide the sq ft.
+function fpSplitUnit(){
+  if (!fpEditing || fpSel == null) return;
+  const items = fpDraft[fpEditing.floor].items;
+  const origIdx = fpSel;
+  const A = items[origIdx]; if (!A || A.k !== 'u') return;
+  const units = fpUnitsFor(fpEditing.propId);
+  const curS = fpCurSf(units, A);
+  const taken = id => { const l = String(id).toLowerCase();
+    return units.some(u => String(u.unit).toLowerCase() === l)
+        || fpNewUnits.some(u => u.unit.toLowerCase() === l)
+        || items.some(it => it.k === 'u' && String(it.id).toLowerCase() === l); };
+  const base = A.id || 'UNIT';
+  let code = 66, suggestion = base + '-B';                       // -B, then -C, -D…
+  while (taken(suggestion)) { code++; suggestion = base + '-' + String.fromCharCode(code); }
+  const newId = (prompt(`Split ${A.id} into two units.\nID for the new unit:`, suggestion) || '').trim();
+  if (!newId) return;
+  if (taken(newId)) { alert(`Unit "${newId}" already exists — choose a different ID.`); return; }
+  // geometry: original keeps the left part, new unit takes a slice on the right
+  const slice = Math.max(20, Math.round(A.w / 2));
+  const newBox = { k: 'u', id: newId, x: A.x + (A.w - slice) + 3, y: A.y, w: Math.max(20, slice - 3), h: A.h };
+  A.w = A.w - slice;
+  items.push(newBox);
+  const newIdx = items.length - 1;
+  // data: split current sq ft 50/50, stage the new unit, open the reallocation slider
+  const sfNew = Math.round(curS / 2);
+  fpNewUnits.push({ unit: newId, type: (units.find(u => u.unit === A.id) || {}).type || 'WH', available: true, status: 'vacant', hold: false });
+  fpSfEdits[A.id]  = curS - sfNew;
+  fpSfEdits[newId] = sfNew;
+  fpPair = { aIdx: origIdx, bIdx: newIdx, total: curS };
+  fpSel = newIdx;
+  renderFloorplans(fpEditing.propId);
+}
 function fpReallocFromA(val, source){
   if (!fpPair) return;
   const T = fpPair.total;
@@ -3543,7 +3578,8 @@ function fpRenderEditor(propId){
     selPanel = `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 11px;margin-top:8px;font-size:13px;">
         <b>Unit ${esc(selItem.id || '?')}</b>
         <label style="display:flex;align-items:center;gap:6px;">Sq ft <input type="text" inputmode="numeric" value="${(selItem.id in fpSfEdits) ? fpSfEdits[selItem.id] : (fpUnitSf(units, selItem.id) ?? '')}" oninput="fpSetSf(${fpSel}, this.value)" style="width:90px;${inpCss}"/></label>
-        ${others.length ? `<label style="display:flex;align-items:center;gap:6px;">⇄ split with <select onchange="fpStartRealloc(this.value)" style="${inpCss}"><option value="">unit…</option>${opts}</select></label>` : ''}
+        ${others.length ? `<label style="display:flex;align-items:center;gap:6px;">⇄ reallocate with <select onchange="fpStartRealloc(this.value)" style="${inpCss}"><option value="">unit…</option>${opts}</select></label>` : ''}
+        <button onclick="fpSplitUnit()" class="btn sm">✂️ Split into two</button>
       </div>`;
   } else {
     selPanel = `<div style="font-size:12px;color:var(--text2);margin-top:8px;">Tip: tap a unit to edit its sq ft — or use "split with" to move footage between two units.</div>`;
@@ -4167,6 +4203,7 @@ window.fpStartRealloc      = fpStartRealloc;
 window.fpEndRealloc        = fpEndRealloc;
 window.fpReallocFromA      = fpReallocFromA;
 window.fpReallocFromB      = fpReallocFromB;
+window.fpSplitUnit         = fpSplitUnit;
 window.showUnitPopup       = showUnitPopup;
 window.closeUnitPopup      = closeUnitPopup;
 window.toggleAvailCard     = toggleAvailCard;
