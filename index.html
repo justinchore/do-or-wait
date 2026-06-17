@@ -3307,7 +3307,20 @@ function fpLabel(txt, x, y, w, h, bg='#f9fafb', tc='#9ca3af') {
 
 // Floorplan layout for a property: Firestore floorplans/{propId} (editor-saved) wins,
 // else the bundled FLOORPLAN_SEED. Returns null if neither has one.
-function fpLayout(propId){ return floorplanMap[propId] || (window.FLOORPLAN_SEED || {})[propId] || null; }
+function fpLayout(propId){
+  if (floorplanMap[propId]) return floorplanMap[propId];          // editor-saved (always keyed by the real propId)
+  const seed = window.FLOORPLAN_SEED || {};
+  if (seed[propId]) return seed[propId];                          // exact seed match
+  // Tolerant fallback: the seed key may be a slightly different slug of the same
+  // property (e.g. '11179-banana-fontana' vs 'banana-fontana'). Match if one
+  // normalized id contains the other (and is specific enough to avoid false hits).
+  const norm = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const np = norm(propId);
+  if (np.length >= 6) {
+    for (const k in seed) { const nk = norm(k); if (nk.length >= 6 && (nk.includes(np) || np.includes(nk))) return seed[k]; }
+  }
+  return null;
+}
 
 // Render one floor (a {viewBox, bg, items[]}) to SVG. Units keep live status colors.
 function floorplanSVG(fd, units, propId) {
