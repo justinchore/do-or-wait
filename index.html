@@ -3367,8 +3367,9 @@ function renderFloorplans(propId) {
   const layout = fpLayout(propId);
   const createBtn = `<button onclick="fpStartEdit('${propId}')" class="btn sm dark">✏️ Create floor plan</button>`;
   const genBtn = `<button id="fpgen-${propId}" onclick="triggerFloorplanSync('${propId}')" class="btn sm dark" title="Auto-generate from the SharePoint Site Plan">⚙ Generate from Site Plan</button>`;
+  const importBtn = `<label class="btn sm dark" style="cursor:pointer;" title="Import the SharePoint Site Plan .xlsx for a faithful layout">📥 Import .xlsx<input type="file" accept=".xlsx" style="display:none" onchange="fpImportXlsx(this.files && this.files[0], '${propId}'); this.value='';"></label>`;
   if (!layout) {
-    el.innerHTML = `<div class="fp-section"><div style="padding:14px;font-size:13px;color:var(--text2);text-align:center;">No floor plan for this location yet.<div style="margin-top:8px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">${genBtn}${createBtn}</div></div></div>`;
+    el.innerHTML = `<div class="fp-section"><div style="padding:14px;font-size:13px;color:var(--text2);text-align:center;">No floor plan for this location yet.<div style="margin-top:8px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">${importBtn}${genBtn}${createBtn}</div></div></div>`;
     return;
   }
   const floorsAvail = ['warehouse','office'].filter(f => layout[f] && (layout[f].items || []).length);
@@ -3389,6 +3390,7 @@ function renderFloorplans(propId) {
       <div class="fp-title">Floor Plan</div>
       <div style="display:flex;align-items:center;gap:8px;">
         ${tabs}
+        <label title="Import the SharePoint Site Plan .xlsx for a faithful layout" style="font-size:11px;border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:3px 9px;cursor:pointer;color:var(--text);">📥 Import<input type="file" accept=".xlsx" style="display:none" onchange="fpImportXlsx(this.files && this.files[0], '${propId}'); this.value='';"></label>
         <button id="fpgen-${propId}" onclick="triggerFloorplanSync('${propId}')" title="Regenerate from the SharePoint Site Plan (overwrites this layout)" style="font-size:11px;border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:3px 9px;cursor:pointer;color:var(--text);">⚙ Generate</button>
         <button onclick="fpStartEdit('${propId}')" style="font-size:11px;border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:3px 9px;cursor:pointer;color:var(--text);">✏️ Edit</button>
       </div>
@@ -3455,6 +3457,121 @@ async function fpSaveEdit(){
     if (updatedUnits) await setDoc(doc(db, 'availability', propId), { units: updatedUnits }, { merge: true });
   } catch (e) { console.error('floorplan/sf save failed', e); }
   finally { setSyncing(false); }
+}
+
+// ── Import Site Plan from the real .xlsx (faithful layout via merged-cell fill colors) ──
+// The Excel Site Plan draws each unit as a colored block of cells. Graph/CSV lose the
+// colors+merges; the raw .xlsx keeps them. We read them client-side with SheetJS, give
+// each unit-label a territory of nearby same-area cells (Voronoi), and turn each into a
+// box. Grid-text fallback for sheets whose drawing isn't color-filled (e.g. Banana).
+const FP_XLSX_PROFILES = {
+  'banana-fontana':    { tab: 'WH Site Plan', minCol: 14 },
+  'terminal-west-sac': { tab: 'Site Plan', officeTab: 'OFFICE SITEPLAN' }
+};
+function fpXlsxProfile(propId){
+  if (FP_XLSX_PROFILES[propId]) return FP_XLSX_PROFILES[propId];
+  const n = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g,''); const np = n(propId);
+  for (const k in FP_XLSX_PROFILES){ const nk = n(k); if (nk.length>=6 && (np.includes(nk)||nk.includes(np))) return FP_XLSX_PROFILES[k]; }
+  return {};
+}
+let _fpXlsxPromise = null;
+function fpEnsureXLSX(){
+  if (window.XLSX) return Promise.resolve();
+  if (_fpXlsxPromise) return _fpXlsxPromise;
+  _fpXlsxPromise = new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    s.onload = () => res(); s.onerror = () => rej(new Error('Could not load the spreadsheet library'));
+    document.head.appendChild(s);
+  });
+  return _fpXlsxPromise;
+}
+const FP_UNIT_RE = /\b([A-Z]{1,3}\d{1,3}(?:-[A-Z0-9]{1,2})?)\b/;
+const FP_DOCK_RE = /Dock\s*#?\s*(\d+)/i, FP_SF_RE = /([\d,]+)\s*SF/i, FP_BIG_RE = /^[A-Z]$/;
+const FP_NOISE = new Set(['M2','AC','CC','OHD','SF','HC']);
+const FP_WHITE = new Set(['','FFFFFF','FFFFFFFF','000000']);
+const fpHex = x => (x||'').replace(/^FF/,'').toUpperCase();
+function fpType(id){ id = String(id); if (id.startsWith('DOCK')) return 'DOCK'; const c = id[0]; return c==='R'?'OFFICE':c==='P'?'PARKING':'WH'; }
+function fpReconColor(ws, prof){
+  const A = XLSX.utils.encode_cell, dec = XLSX.utils.decode_range;
+  if (!ws || !ws['!ref']) return [];
+  const rng = dec(ws['!ref']), R = rng.e.r+1, C = rng.e.c+1, merges = ws['!merges']||[];
+  const fill = Array.from({length:R},()=>Array(C).fill('')), text = Array.from({length:R},()=>Array(C).fill(''));
+  const G = (r,c) => ws[A({r,c})];
+  for (let r=0;r<R;r++) for (let c=0;c<C;c++){ const cell=G(r,c); if(!cell) continue; text[r][c]=cell.v!=null?String(cell.v).trim():''; try{ const f=cell.s&&cell.s.fgColor&&cell.s.fgColor.rgb; if(f) fill[r][c]=f; }catch(e){} }
+  for (const m of merges){ const tl=G(m.s.r,m.s.c); let f=''; try{ f=tl&&tl.s&&tl.s.fgColor&&tl.s.fgColor.rgb||''; }catch(e){} for(let r=m.s.r;r<=m.e.r;r++) for(let c=m.s.c;c<=m.e.c;c++) if(f&&!fill[r][c]) fill[r][c]=f; }
+  const minCol = prof.minCol||0;
+  const isCol = (r,c) => { const f=fpHex(fill[r][c]); return f && !FP_WHITE.has(f); };
+  const seeds = [];
+  for (let r=3;r<R;r++) for (let c=minCol;c<C;c++){ const t=text[r][c]; if(!t) continue; let id=''; const m=t.match(FP_UNIT_RE); if(m) id=m[1]; else if(FP_BIG_RE.test(t)&&isCol(r,c)) id=t; if(id&&!FP_NOISE.has(id)) seeds.push({id,r,c}); }
+  const seen=new Set(), S=[]; for(const s of seeds){ if(seen.has(s.id)) continue; seen.add(s.id); S.push(s); }
+  if (!S.length) return [];
+  const terr={}; S.forEach(s=>terr[s.id]={minr:1e9,maxr:-1,minc:1e9,maxc:-1});
+  for (let r=3;r<R;r++) for (let c=minCol;c<C;c++){ if(!isCol(r,c)) continue; let best=null,bd=1e9; for(const s of S){ const d=Math.abs(s.r-r)+Math.abs(s.c-c); if(d<bd){bd=d;best=s;} } if(!best||bd>14) continue; const t=terr[best.id]; t.minr=Math.min(t.minr,r); t.maxr=Math.max(t.maxr,r); t.minc=Math.min(t.minc,c); t.maxc=Math.max(t.maxc,c); }
+  return S.map(s=>({id:s.id,type:fpType(s.id),...terr[s.id]})).filter(b=>b.maxr>=0);
+}
+function fpReconGrid(ws, prof){
+  if (!ws || !ws['!ref']) return [];
+  const values = XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:''});
+  const minCol = prof.minCol||0, units={};
+  for (let r=0;r<values.length;r++){ const row=values[r]||[]; for(let c=0;c<row.length;c++){ if(c<minCol) continue; let cell=row[c]; if(cell==null) continue; cell=String(cell).trim(); if(!cell||cell==='Â') continue;
+    const dm=cell.match(FP_DOCK_RE); if(dm){ const id='DOCK'+String(dm[1]).padStart(2,'0'); if(!units[id]) units[id]={id,type:'DOCK',col:c,row:r,sf:null}; continue; }
+    const re=new RegExp(FP_UNIT_RE.source,'g'); let m; while((m=re.exec(cell))){ const id=m[1]; if(FP_NOISE.has(id)) continue; let sf=null; const sm=cell.match(FP_SF_RE); if(sm) sf=parseInt(sm[1].replace(/,/g,'')); if(!units[id]) units[id]={id,type:fpType(id),col:c,row:r,sf}; } } }
+  return Object.values(units);
+}
+function fpScaleFit(items, cap){ let mx=0,my=0; for(const it of items){ mx=Math.max(mx,it.x+it.w); my=Math.max(my,it.y+it.h); } const k=Math.max(mx,my)>cap?cap/Math.max(mx,my):1; if(k<1) for(const it of items){ it.x=Math.round(it.x*k); it.y=Math.round(it.y*k); it.w=Math.max(18,Math.round(it.w*k)); it.h=Math.max(14,Math.round(it.h*k)); } mx=0;my=0; for(const it of items){ mx=Math.max(mx,it.x+it.w); my=Math.max(my,it.y+it.h); } return `0 0 ${mx+30} ${my+30}`; }
+function fpLayoutColor(boxes){
+  if (!boxes.length) return { viewBox:'0 0 700 400', bg:null, items:[] };
+  const CW=22, CH=17; let mnc=1e9,mnr=1e9; for(const b of boxes){ mnc=Math.min(mnc,b.minc); mnr=Math.min(mnr,b.minr); }
+  const items = boxes.map(b=>({k:'u',id:b.id,x:Math.round((b.minc-mnc)*CW),y:Math.round((b.minr-mnr)*CH),w:Math.max(24,Math.round((b.maxc-b.minc+1)*CW)),h:Math.max(18,Math.round((b.maxr-b.minr+1)*CH))}));
+  return { viewBox: fpScaleFit(items, 1400), bg:null, items };
+}
+function fpLayoutGrid(units){
+  if (!units.length) return { viewBox:'0 0 700 400', bg:null, items:[] };
+  let mnc=1e9,mnr=1e9,mxc=-1,mxr=-1; for(const u of units){ mnc=Math.min(mnc,u.col); mnr=Math.min(mnr,u.row); mxc=Math.max(mxc,u.col); mxr=Math.max(mxr,u.row); }
+  const spanC=Math.max(1,mxc-mnc), spanR=Math.max(1,mxr-mnr);
+  const COLW=Math.min(40,Math.max(10,1000/spanC)), ROWH=Math.min(40,Math.max(10,680/spanR));
+  const items = units.map(u=>{ let w,h; if(u.type==='DOCK'){w=18;h=18;} else if(u.type==='PARKING'){w=20;h=14;} else { w=Math.round(Math.max(40,Math.min(280,Math.sqrt(u.sf||600)*1.4))); h=Math.round(w*0.7); } return {k:'u',id:u.id,x:Math.round((u.col-mnc)*COLW),y:Math.round((u.row-mnr)*ROWH),w,h}; });
+  return { viewBox: fpScaleFit(items, 1400), bg:null, items };
+}
+function fpSplitFloors(arr, layoutFn){ return { warehouse: layoutFn(arr.filter(b=>b.type!=='OFFICE')), office: layoutFn(arr.filter(b=>b.type==='OFFICE')) }; }
+function fpPickTab(wb, want, office){
+  if (want){ const ex=wb.SheetNames.find(n=>n.toLowerCase()===String(want).toLowerCase()); if(ex) return ex; }
+  const ns=wb.SheetNames;
+  if (office) return ns.find(n=>/office/i.test(n)&&/(site|plan|layout|floor)/i.test(n))||'';
+  return ns.find(n=>/site\s*plan/i.test(n)&&!/office|off\s*site/i.test(n))||ns.find(n=>/warehouse|layout|floor\s*plan/i.test(n)&&!/office/i.test(n))||ns.find(n=>/site\s*plan|floor/i.test(n))||ns[0];
+}
+function fpXlsxToFloors(wb, propId){
+  const prof = fpXlsxProfile(propId);
+  const whName = fpPickTab(wb, prof.tab, false);
+  const ofName = fpPickTab(wb, prof.officeTab, true);
+  let boxes = fpReconColor(wb.Sheets[whName], prof), mode='color';
+  if (boxes.length < 4){ boxes = fpReconGrid(wb.Sheets[whName], prof); mode='grid'; }
+  const floors = mode==='color' ? fpSplitFloors(boxes, fpLayoutColor) : fpSplitFloors(boxes, fpLayoutGrid);
+  if (ofName && ofName !== whName){
+    let ob = fpReconColor(wb.Sheets[ofName], prof), om='color';
+    if (ob.length < 3){ ob = fpReconGrid(wb.Sheets[ofName], prof); om='grid'; }
+    floors.office = om==='color' ? fpLayoutColor(ob) : fpLayoutGrid(ob);
+  }
+  return { floors, mode, tab: whName, ofTab: (ofName!==whName?ofName:'') };
+}
+async function fpImportXlsx(file, propId){
+  if (!file) return;
+  try {
+    await fpEnsureXLSX();
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(new Uint8Array(buf), { type:'array', cellStyles:true });
+    const { floors, mode, tab, ofTab } = fpXlsxToFloors(wb, propId);
+    const total = floors.warehouse.items.length + floors.office.items.length;
+    if (!total){ alert('No units found in the Site Plan tab — check the file or the tab name.'); return; }
+    if (!(fpEditing && fpEditing.propId === propId)) fpStartEdit(propId);
+    fpDraft = floors;
+    fpEditing.floor = floors.warehouse.items.length ? 'warehouse' : 'office';
+    fpFloors[propId] = fpEditing.floor;
+    fpSel = null; fpPair = null; fpSfEdits = {}; fpNewUnits = [];
+    renderFloorplans(propId);
+    console.log(`Imported ${tab}${ofTab?(' + '+ofTab):''} (${mode}): ${total} units — review & Save.`);
+  } catch (e){ console.error('xlsx import failed', e); alert('Import failed: ' + e.message); }
 }
 
 // client (px) → SVG user coordinates, via the live svg's CTM (re-fetched each call).
@@ -3692,6 +3809,7 @@ function fpRenderEditor(propId){
     <div style="font-size:12px;color:var(--text2);margin:4px 0 8px;">Drag a box to move · drag the dark corner to resize · tap a unit to edit its sq ft · colors are live.</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 8px;">
       ${unplaced.length ? `<button onclick="fpAddUnplaced()" class="btn sm">✚ Add ${unplaced.length} unplaced unit${unplaced.length!==1?'s':''}</button>` : `<span style="font-size:12px;color:#16a34a;">✓ all units placed</span>`}
+      <label class="btn sm" style="cursor:pointer;">📥 Import Site Plan (.xlsx)<input type="file" accept=".xlsx" style="display:none" onchange="fpImportXlsx(this.files && this.files[0], '${propId}'); this.value='';"></label>
       <label class="btn sm" style="cursor:pointer;">📐 ${fd.bg ? 'Replace' : 'Upload'} blueprint<input type="file" accept="image/*" style="display:none" onchange="fpUploadBg(this.files && this.files[0])"></label>
       ${fd.bg ? `<button onclick="fpRemoveBg()" class="btn sm">Remove blueprint</button>` : ''}
     </div>
@@ -4297,6 +4415,7 @@ window.setNoteSince        = setNoteSince;
 window.clearNoteSince      = clearNoteSince;
 window.triggerAvailSync    = triggerAvailSync;
 window.triggerFloorplanSync = triggerFloorplanSync;
+window.fpImportXlsx        = fpImportXlsx;
 window.switchFP            = switchFP;
 window.fpStartEdit         = fpStartEdit;
 window.fpEditFloor         = fpEditFloor;
