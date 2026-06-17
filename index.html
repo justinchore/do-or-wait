@@ -1016,7 +1016,7 @@
 <div class="overlay" id="availexp-overlay" onclick="if(event.target===this)closeAvailExport()">
   <div class="modal">
     <h3>Export availability</h3>
-    <div class="modal-sub">Which locations should we pull from? We'll grab a fresh snapshot from the live database and download the selected sites as JSON.</div>
+    <div class="modal-sub">Which locations should we pull from? We'll trigger a fresh SharePoint sync for each, wait for it to land, then download the selected sites as JSON. (Takes a few seconds per location.)</div>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
       <button class="btn sm" onclick="availExpSelectAll(true)">Select all</button>
       <button class="btn sm" onclick="availExpSelectAll(false)">Clear</button>
@@ -1177,7 +1177,7 @@
 // ═══════════════════════════════════════════════════════════════
 import { initializeApp }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, onSnapshot }
+import { getFirestore, collection, doc, getDoc, getDocs, getDocsFromServer, setDoc, deleteDoc, onSnapshot }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js';
@@ -3093,15 +3093,47 @@ async function doAvailExport() {
   if (!chosen.length) { st.textContent = 'Pick at least one location.'; return; }
   const btn = document.getElementById('availexp-go');
   const orig = btn.textContent;
-  btn.disabled = true; btn.textContent = 'Pulling…'; st.textContent = 'Fetching a fresh snapshot from the database…';
+  btn.disabled = true;
   try {
-    const snap = await getDocs(collection(db, 'availability'));
+    // 1) Record each location's current sync time so we can detect n8n's write-back.
+    const baseline = {};
+    chosen.forEach(id => { baseline[id] = (availMap[id] || {}).synced_at || null; });
+
+    // 2) Trigger a fresh SharePoint sync (n8n workflow 4) for every chosen location.
+    btn.textContent = 'Syncing…';
+    st.textContent = `Triggering a fresh SharePoint sync for ${chosen.length} location${chosen.length !== 1 ? 's' : ''}…`;
+    const triggers = await Promise.allSettled(chosen.map(id =>
+      fetch(AVAIL_WEBHOOK, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ propId: id }) })
+    ));
+    const failed = chosen.filter((id, i) => triggers[i].status === 'rejected');
+
+    // 3) Wait for Firestore write-back: synced_at advances (data flows in via the live listener).
+    const advanced = id => { const s = (availMap[id] || {}).synced_at; return s && s !== baseline[id]; };
+    const pending = () => chosen.filter(id => !advanced(id) && !failed.includes(id));
+    const deadline = Date.now() + Math.min(300000, 45000 + chosen.length * 20000); // scale with count, cap 5 min
+    while (pending().length && Date.now() < deadline) {
+      const done = chosen.length - pending().length - failed.length;
+      st.textContent = `Syncing from SharePoint… ${done}/${chosen.length} confirmed`;
+      await new Promise(r => setTimeout(r, 1500));
+    }
+    const stale = pending(); // didn't confirm a write-back in time
+
+    // 4) Pull the fresh server snapshot and download the chosen locations.
+    btn.textContent = 'Exporting…';
+    st.textContent = 'Pulling fresh snapshot…';
+    let snap;
+    try { snap = await getDocsFromServer(collection(db, 'availability')); }
+    catch (netErr) { snap = await getDocs(collection(db, 'availability')); }
     const want = new Set(chosen);
     const out = [];
     snap.forEach(d => { if (want.has(d.id)) out.push({ _id: d.id, ...d.data() }); });
     const stamp = new Date().toISOString().slice(0, 10);
     downloadJSONFile(out, `do-or-wait-availability-${stamp}.json`);
-    st.textContent = `Exported ${out.length} location${out.length !== 1 ? 's' : ''} · ${new Date().toLocaleString()}`;
+
+    let msg = `Exported ${out.length} location${out.length !== 1 ? 's' : ''} · ${new Date().toLocaleString()}`;
+    const warnIds = [...failed, ...stale];
+    if (warnIds.length) msg += ` · ⚠ ${warnIds.length} couldn't confirm a fresh sync (exported last-known data): ${warnIds.map(id => (availMap[id] || {}).property || id).join(', ')}`;
+    st.textContent = msg;
   } catch (e) {
     st.textContent = 'Export failed: ' + (e.message || e);
   }
