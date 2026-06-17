@@ -5,7 +5,7 @@ A web app for Justin Cho (Justin.Cho@cubework.com) at Cubework. Tabs:
 1. **Tasks** — DO/WAIT topic threads (digital sticky note system)
 2. **Leads** — Sales pipeline for leasing prospects, same DO/WAIT thread model  
 3. **📞 Playbook** — cold-call flow script + a searchable **Battle Cards** quick-reference at the top (`PLAYBOOK_CARDS` / `renderPlaybookCards`): Triple-A value, objection rebuttals, vs-traditional-lease, pricing quick-ref, what's-included, TCO story, sell-by-decision-maker, products, taglines — distilled from the Cubework Sales Playbook `_kb` (in the `Sales/` project folder). Collapsible; searching auto-expands matches.
-4. **🏭 Avail** — Real-time availability dashboard for Cubework warehouse locations
+4. **🏭 Avail** — Real-time availability dashboard for Cubework warehouse locations. Has an **⬇ Export JSON** button (toolbar) that opens a location-picker modal (`openAvailExport` / `doAvailExport`, overlay `#availexp-overlay`): choose which sites to include, then it pulls a **fresh `getDocs` snapshot** of `availability` and downloads the selected docs as `do-or-wait-availability-YYYY-MM-DD.json` (array of `{_id, ...doc}`, same shape the listener consumes).
 5. **💲 Pricing** — National rate card (read-only). Searchable table grouped by state; click a row to expand full pricing detail. Reads `pricing/current` (n8n-synced), falls back to `pricing-seed.js` snapshot.
 6. **💡 Notes** — Ideas/issues notebook (two editable fields per note, filter by date created)
 

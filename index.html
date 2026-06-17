@@ -1012,6 +1012,25 @@
   </div>
 </div>
 
+<!-- Availability export modal (pick locations → fresh snapshot → JSON) -->
+<div class="overlay" id="availexp-overlay" onclick="if(event.target===this)closeAvailExport()">
+  <div class="modal">
+    <h3>Export availability</h3>
+    <div class="modal-sub">Which locations should we pull from? We'll grab a fresh snapshot from the live database and download the selected sites as JSON.</div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
+      <button class="btn sm" onclick="availExpSelectAll(true)">Select all</button>
+      <button class="btn sm" onclick="availExpSelectAll(false)">Clear</button>
+      <span id="availexp-count" style="font-size:12px;color:var(--text2);margin-left:auto;"></span>
+    </div>
+    <div id="availexp-list" style="max-height:46vh;overflow-y:auto;border:1px solid var(--border);border-radius:10px;padding:6px 4px;"></div>
+    <div id="availexp-status" style="font-size:12px;color:var(--text2);margin-top:10px;"></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeAvailExport()">Cancel</button>
+      <button class="btn dark" id="availexp-go" onclick="doAvailExport()">⬇ Pull fresh &amp; export</button>
+    </div>
+  </div>
+</div>
+
 <!-- Lead modal (new lead + edit details) -->
 <div class="overlay" id="lead-overlay" onclick="leadOverlayClick(event)">
   <div class="modal">
@@ -1158,7 +1177,7 @@
 // ═══════════════════════════════════════════════════════════════
 import { initializeApp }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getFirestore, collection, doc, getDoc, setDoc, deleteDoc, onSnapshot }
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, onSnapshot }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js';
@@ -2984,6 +3003,7 @@ function renderAvailability() {
         style="flex:1;min-width:200px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;font-size:14px;outline:none;background:var(--surface);color:var(--text);box-sizing:border-box;" />
       <span style="font-size:12px;color:var(--text2);">Sort:</span>
       ${sortBtn('sf','Most available')}${sortBtn('name','A–Z')}
+      <button onclick="openAvailExport()" title="Pick locations and export a fresh JSON snapshot" style="font-size:12px;border:1px solid var(--border);border-radius:8px;padding:5px 10px;cursor:pointer;background:var(--surface);color:var(--text);">⬇ Export JSON</button>
     </div>`;
 
   const sections = stateKeys.map(st => {
@@ -3031,6 +3051,68 @@ function applyAvailSearch() {
     });
     group.style.display = visible ? '' : 'none';
   });
+}
+
+// ── Availability JSON export: pick locations → fresh getDocs snapshot → download
+function openAvailExport() {
+  const ids = Object.keys(availMap);
+  const groups = {};
+  ids.forEach(id => { const s = stateOf(availMap[id]); (groups[s] = groups[s] || []).push(id); });
+  const stateKeys = Object.keys(groups).sort((a, b) => (a === 'Other') - (b === 'Other') || a.localeCompare(b));
+  const html = stateKeys.map(s => {
+    const label = STATE_NAMES[s] || s;
+    const rows = groups[s]
+      .sort((a, b) => String(availMap[a].property || a).localeCompare(String(availMap[b].property || b)))
+      .map(id => {
+        const d = availMap[id] || {};
+        return `<label style="display:flex;gap:8px;align-items:flex-start;padding:6px 8px;border-radius:8px;cursor:pointer;">
+            <input type="checkbox" value="${esc(id)}" checked onchange="availExpCount()" style="margin-top:3px;">
+            <span><span style="font-weight:600;">${esc(d.property || id)}</span>${d.address ? `<br><span style="font-size:12px;color:var(--text2);">${esc(d.address)}</span>` : ''}</span>
+          </label>`;
+      }).join('');
+    return `<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin:8px 6px 2px;">${esc(label)}</div>${rows}`;
+  }).join('');
+  document.getElementById('availexp-list').innerHTML = html || '<div style="padding:10px;color:var(--text2);">No locations loaded yet.</div>';
+  document.getElementById('availexp-status').textContent = '';
+  availExpCount();
+  document.getElementById('availexp-overlay').classList.add('open');
+}
+function closeAvailExport() { document.getElementById('availexp-overlay').classList.remove('open'); }
+function availExpSelectAll(v) {
+  document.querySelectorAll('#availexp-list input[type=checkbox]').forEach(c => { c.checked = v; });
+  availExpCount();
+}
+function availExpCount() {
+  const all = document.querySelectorAll('#availexp-list input[type=checkbox]');
+  const n = [...all].filter(c => c.checked).length;
+  document.getElementById('availexp-count').textContent = `${n} of ${all.length} selected`;
+}
+async function doAvailExport() {
+  const chosen = [...document.querySelectorAll('#availexp-list input[type=checkbox]:checked')].map(c => c.value);
+  const st = document.getElementById('availexp-status');
+  if (!chosen.length) { st.textContent = 'Pick at least one location.'; return; }
+  const btn = document.getElementById('availexp-go');
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Pulling…'; st.textContent = 'Fetching a fresh snapshot from the database…';
+  try {
+    const snap = await getDocs(collection(db, 'availability'));
+    const want = new Set(chosen);
+    const out = [];
+    snap.forEach(d => { if (want.has(d.id)) out.push({ _id: d.id, ...d.data() }); });
+    const stamp = new Date().toISOString().slice(0, 10);
+    downloadJSONFile(out, `do-or-wait-availability-${stamp}.json`);
+    st.textContent = `Exported ${out.length} location${out.length !== 1 ? 's' : ''} · ${new Date().toLocaleString()}`;
+  } catch (e) {
+    st.textContent = 'Export failed: ' + (e.message || e);
+  }
+  btn.textContent = orig; btn.disabled = false;
+}
+function downloadJSONFile(obj, filename) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
 function renderLocCard(propId, d) {
@@ -3908,6 +3990,11 @@ window.setNoteSince        = setNoteSince;
 window.clearNoteSince      = clearNoteSince;
 window.triggerAvailSync    = triggerAvailSync;
 window.setAvailSort        = setAvailSort;
+window.openAvailExport     = openAvailExport;
+window.closeAvailExport    = closeAvailExport;
+window.availExpSelectAll   = availExpSelectAll;
+window.availExpCount       = availExpCount;
+window.doAvailExport       = doAvailExport;
 window.toggleAvailCard     = toggleAvailCard;
 window.setAvailFilter      = setAvailFilter;
 window.toggleUnitDetail    = toggleUnitDetail;
