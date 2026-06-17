@@ -2914,6 +2914,7 @@ const fpFloors   = {};          // propId → 'warehouse' | 'office'
 const PROXY                = 'https://plain-credit-5962.jchoustin91.workers.dev';
 const AVAIL_WEBHOOK        = `${PROXY}/webhook/availability-sync`;
 const ADD_LOCATION_WEBHOOK = `${PROXY}/webhook/add-location`;
+const FLOORPLAN_WEBHOOK    = `${PROXY}/webhook/floorplan-sync`;
 
 // Listen to ALL availability docs (scales to multiple locations)
 unsubAvail = onSnapshot(collection(db, 'availability'), snap => {
@@ -3255,6 +3256,29 @@ async function triggerAvailSync(propId) {
   }
 }
 
+// Regenerate a location's floor plan from its SharePoint Site Plan tab via the
+// n8n Floorplan Sync (workflow 8). Overwrites floorplans/{propId}; card re-renders
+// via onSnapshot when n8n writes back.
+async function triggerFloorplanSync(propId) {
+  const btn = document.getElementById(`fpgen-${propId}`);
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.textContent = '⟳ Generating…'; btn.disabled = true; }
+  const reset = () => { if (btn) { btn.textContent = orig || '⚙ Generate'; btn.disabled = false; } };
+  const timeout = setTimeout(reset, 45000);
+  try {
+    await fetch(FLOORPLAN_WEBHOOK, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ propId })
+    });
+    // floorplans/{propId} write triggers the onSnapshot listener → re-render
+  } catch (e) {
+    clearTimeout(timeout);
+    console.error('Floorplan sync trigger failed:', e);
+    if (btn) { btn.textContent = '⚠'; setTimeout(reset, 3000); }
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  FLOORPLAN
 // ═══════════════════════════════════════════════════════════════
@@ -3342,8 +3366,9 @@ function renderFloorplans(propId) {
   const units  = fpUnitsFor(propId);
   const layout = fpLayout(propId);
   const createBtn = `<button onclick="fpStartEdit('${propId}')" class="btn sm dark">✏️ Create floor plan</button>`;
+  const genBtn = `<button id="fpgen-${propId}" onclick="triggerFloorplanSync('${propId}')" class="btn sm dark" title="Auto-generate from the SharePoint Site Plan">⚙ Generate from Site Plan</button>`;
   if (!layout) {
-    el.innerHTML = `<div class="fp-section"><div style="padding:14px;font-size:13px;color:var(--text2);text-align:center;">No floor plan for this location yet.<div style="margin-top:8px;">${createBtn}</div></div></div>`;
+    el.innerHTML = `<div class="fp-section"><div style="padding:14px;font-size:13px;color:var(--text2);text-align:center;">No floor plan for this location yet.<div style="margin-top:8px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">${genBtn}${createBtn}</div></div></div>`;
     return;
   }
   const floorsAvail = ['warehouse','office'].filter(f => layout[f] && (layout[f].items || []).length);
@@ -3364,6 +3389,7 @@ function renderFloorplans(propId) {
       <div class="fp-title">Floor Plan</div>
       <div style="display:flex;align-items:center;gap:8px;">
         ${tabs}
+        <button id="fpgen-${propId}" onclick="triggerFloorplanSync('${propId}')" title="Regenerate from the SharePoint Site Plan (overwrites this layout)" style="font-size:11px;border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:3px 9px;cursor:pointer;color:var(--text);">⚙ Generate</button>
         <button onclick="fpStartEdit('${propId}')" style="font-size:11px;border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:3px 9px;cursor:pointer;color:var(--text);">✏️ Edit</button>
       </div>
     </div>
@@ -4270,6 +4296,7 @@ window.setNoteSort         = setNoteSort;
 window.setNoteSince        = setNoteSince;
 window.clearNoteSince      = clearNoteSince;
 window.triggerAvailSync    = triggerAvailSync;
+window.triggerFloorplanSync = triggerFloorplanSync;
 window.switchFP            = switchFP;
 window.fpStartEdit         = fpStartEdit;
 window.fpEditFloor         = fpEditFloor;

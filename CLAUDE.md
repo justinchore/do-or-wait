@@ -226,13 +226,27 @@ do_or_wait/
     3_reply_detector.json
     6_followup_scanner.json    ← Follow-up Scanner: flags leads cold 3+ days (Outlook/Graph → Firestore, with direction). No sending.
     7_pricing_sync.json        ← Pricing Sync: reads the Sales_US master price sheet (Graph workbook API) → Firestore pricing/current. Daily 6am.
+    8_floorplan_sync.json      ← Floorplan Sync: reads each location's Site Plan tab(s) via Graph workbook usedRange (preserves the cell grid), runs the shared parser + per-location profile, writes floorplans/{propId}. Weekly Mon 5am + on-demand webhook {propId}. OVERWRITES (incl. manual editor layouts — accepted tradeoff, same as availability).
     templates.json
     SETUP.md
+  location_blueprints_sp/      ← per-location Site Plan tab CSV exports (one subfolder per location), used to BUILD & verify floorplan parser profiles. Not read at runtime — the sync reads the live tabs via Graph; these CSVs are the profile-dev fixtures.
 ```
+
+## Floorplan Sync (n8n workflow 8) — shared parser + per-location profiles
+Auto-generates floor-plan layouts from each location's SharePoint **Site Plan tab(s)** so we don't hand-trace blueprints. Same SharePoint→Firestore pattern as availability/pricing. The Site Plan layout rarely changes, so it runs **weekly (Mon 5am)** plus an **on-demand "⚙ Generate" button** per location (`triggerFloorplanSync` → `FLOORPLAN_WEBHOOK` → n8n). It writes `floorplans/{propId}`, **overwriting** any manual editor layout (Justin's call 2026-06-17 — keep it simple; editor tweaks hold until the next sync).
+
+**Why Graph, not CSV/the SharePoint connector:** Graph workbook `usedRange(valuesOnly=true)` returns a **2D `values` array that preserves cell row/col** — which is what encodes unit positions. The SharePoint MCP connector and plain text extraction *flatten* the grid (positions lost), so they can't drive a layout. (Confirmed against Fresno: connector gave every unit + SF + tenant but no positions.)
+
+**Shared parser + profiles (decided 2026-06-17).** One parser; a small `FLOORPLAN_PROFILES` map keyed by propId tunes the few things that differ per location. The n8n "Pick tabs" node switches on propId → profile (tolerant/normalized match, like `fpLayout`), but the branch only selects *parameters*, not separate code. New locations use the **auto default** (`{}`); add a 3-line override only when one looks off. A profile may also set `custom: fn` as an escape hatch.
+- Profile fields (all optional): `tabs:[names]`, `officeTabs:[names]` (else auto-pick by name pattern `/site plan|warehouse|wh|layout|floor/i`, office = `/office/i`), `minCol/maxCol/minRow/maxRow` (clip region), `colw/rowh` (fixed scale; else auto-fit to ~960×680 preserving aspect).
+- Current overrides: `banana-fontana → { tabs:['WH Site Plan'], minCol:14 }` (its Site Plan tab has a left **data list** in cols 1–6 that would otherwise stack every unit into one column; the real drawing is cols ≥14). `terminal-west-sac → { tabs:['Site Plan'], officeTabs:['OFFICE SITEPLAN'] }` (two-tab WH+office). All other 10 locations parse on the auto default.
+
+**Parser rules (carry all observed formats — Banana grid, La Mirada free-form art, Terminal two-tab+parking):** (1) unit-ID regex `/[A-Z]{1,3}\d{1,3}(?:-[A-Z0-9]{1,2})?/` + a `Dock #N` rule; (2) NOISE denylist (`M2/AC/CC/OHD`) + skip blank/nbsp/`Â` mojibake cells; (3) type by prefix (`R`→OFFICE, `P`→PARKING, `DOCK`→DOCK, else WH); (4) cell `(col,row)`→`(x,y)`, box width from any nearby `… SF`, dock/parking = small markers; (5) **floors split by unit TYPE** (OFFICE→office floor, rest→warehouse) so a single combined tab AND separate WH/office tabs both work. Units present in the BOT availability data but **not drawn** on the Site Plan (e.g. Banana's DD docks / P / R04–R08) get no box — backfill them via the editor's "add unplaced units". `parse_build_patch`-style logic lives in workflow 8's "Build floorplan patch" Code node.
 
 ---
 
 ## Quick reference — webhook URLs
 - Availability sync: `https://plain-credit-5962.jchoustin91.workers.dev/webhook/availability-sync`
 - Add location: `https://plain-credit-5962.jchoustin91.workers.dev/webhook/add-location`
+- Floorplan sync: `https://plain-credit-5962.jchoustin91.workers.dev/webhook/floorplan-sync`
 - n8n base: `https://ailinker.item.com`
