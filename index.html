@@ -3389,9 +3389,10 @@ function fpStartEdit(propId){
   fpEditing = { propId, floor };
   fpFloors[propId] = floor;
   fpSel = null; fpSfEdits = {}; fpPair = null; fpNewUnits = [];
+  fpSeedIfEmpty(floor);
   renderFloorplans(propId);
 }
-function fpEditFloor(floor){ if (!fpEditing) return; fpEditing.floor = floor; fpFloors[fpEditing.propId] = floor; renderFloorplans(fpEditing.propId); }
+function fpEditFloor(floor){ if (!fpEditing) return; fpEditing.floor = floor; fpFloors[fpEditing.propId] = floor; fpSeedIfEmpty(floor); renderFloorplans(fpEditing.propId); }
 function fpCancelEdit(){ const p = fpEditing && fpEditing.propId; fpEditing = null; fpDraft = null; fpDrag = null; if (p) renderFloorplans(p); }
 async function fpSaveEdit(){
   if (!fpEditing) return;
@@ -3509,6 +3510,63 @@ function fpSplitUnit(){
   fpSel = newIdx;
   renderFloorplans(fpEditing.propId);
 }
+
+// Units in availability that belong to this floor (office floor = OFFICE type; warehouse = the rest).
+function fpFloorUnits(propId, floor){
+  return fpUnitsFor(propId).filter(u => floor === 'office' ? (u.type === 'OFFICE') : (u.type !== 'OFFICE'));
+}
+// Floor units that don't yet have a box on the plan.
+function fpUnplaced(propId, floor){
+  const fd = fpDraft[floor]; const placed = new Set((fd.items || []).filter(it => it.k === 'u').map(it => String(it.id).toLowerCase()));
+  return fpFloorUnits(propId, floor).filter(u => !placed.has(String(u.unit).toLowerCase()));
+}
+function fpMaxBottom(fd){ let m = 10; (fd.items || []).forEach(it => { if (it.k !== 'n') m = Math.max(m, (it.y || 0) + (it.h || 0)); }); return m; }
+function fpAddUnitsAsGrid(fd, units, startY){
+  if (!units.length) return;
+  const vw = Number((fd.viewBox || '0 0 790 510').split(' ')[2]) || 790;
+  const pad = 10, gap = 8;
+  const cols = Math.min(units.length, Math.max(2, Math.round(vw / 170)));
+  const cellW = Math.floor((vw - pad * 2 - gap * (cols - 1)) / cols);
+  units.forEach((u, i) => { const c = i % cols, r = Math.floor(i / cols);
+    fd.items.push({ k: 'u', id: u.unit, x: pad + c * (cellW + gap), y: startY + r * (70 + gap), w: cellW, h: 70 }); });
+}
+function fpSeedIfEmpty(floor){
+  if (!fpEditing) return;
+  const fd = fpDraft[floor]; if (!fd || (fd.items || []).length) return;   // only seed an empty floor
+  fpAddUnitsAsGrid(fd, fpFloorUnits(fpEditing.propId, floor), 10);
+}
+function fpAddUnplaced(){
+  if (!fpEditing) return;
+  const fd = fpDraft[fpEditing.floor];
+  fpAddUnitsAsGrid(fd, fpUnplaced(fpEditing.propId, fpEditing.floor), fpMaxBottom(fd) + 10);
+  renderFloorplans(fpEditing.propId);
+}
+function fpDeleteBox(){
+  if (!fpEditing || fpSel == null) return;
+  const items = fpDraft[fpEditing.floor].items;
+  const it = items[fpSel]; if (!it) return;
+  if (it.k === 'u') {                                  // removing a box = layout only; the unit stays in availability
+    const ni = fpNewUnits.findIndex(u => u.unit === it.id);
+    if (ni >= 0) { fpNewUnits.splice(ni, 1); delete fpSfEdits[it.id]; }   // unless it was a not-yet-saved split unit
+  }
+  items.splice(fpSel, 1);
+  fpSel = null; fpPair = null;
+  renderFloorplans(fpEditing.propId);
+}
+async function fpUploadBg(file){
+  if (!file || !fpEditing) return;
+  const propId = fpEditing.propId, floor = fpEditing.floor;
+  const ext = file.name.includes('.') ? '.' + file.name.split('.').pop().toLowerCase() : '.png';
+  setSyncing(true);
+  try {
+    const r = ref(storage, `floorplans/${propId}-${floor}-${Date.now()}${ext}`);
+    await uploadBytes(r, file, { contentType: file.type || 'image/png' });
+    const url = await getDownloadURL(r);
+    if (fpEditing && fpDraft[floor]) { fpDraft[floor].bg = url; renderFloorplans(propId); }
+  } catch (e) { console.error('blueprint upload failed', e); alert('Upload failed: ' + e.message); }
+  finally { setSyncing(false); }
+}
+function fpRemoveBg(){ if (fpEditing && fpDraft[fpEditing.floor]) { fpDraft[fpEditing.floor].bg = null; renderFloorplans(fpEditing.propId); } }
 function fpReallocFromA(val, source){
   if (!fpPair) return;
   const T = fpPair.total;
@@ -3557,6 +3615,7 @@ function fpRenderEditor(propId){
   const floorBtns = ['warehouse','office'].map(f => `<button class="fp-tab${f===floor?' active':''}" onclick="fpEditFloor('${f}')">${f==='warehouse'?'Warehouse':'Office'}</button>`).join('');
   const selItem = (fpSel != null) ? fd.items[fpSel] : null;
   const bldgTotal = units.reduce((s, u) => s + ((u && (u.unit in fpSfEdits)) ? fpSfEdits[u.unit] : (Number(u && u.sf) || 0)), 0);
+  const unplaced = fpUnplaced(propId, floor);
   const inpCss = 'padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);';
   let selPanel;
   if (fpPair) {
@@ -3580,6 +3639,7 @@ function fpRenderEditor(propId){
         <label style="display:flex;align-items:center;gap:6px;">Sq ft <input type="text" inputmode="numeric" value="${(selItem.id in fpSfEdits) ? fpSfEdits[selItem.id] : (fpUnitSf(units, selItem.id) ?? '')}" oninput="fpSetSf(${fpSel}, this.value)" style="width:90px;${inpCss}"/></label>
         ${others.length ? `<label style="display:flex;align-items:center;gap:6px;">⇄ reallocate with <select onchange="fpStartRealloc(this.value)" style="${inpCss}"><option value="">unit…</option>${opts}</select></label>` : ''}
         <button onclick="fpSplitUnit()" class="btn sm">✂️ Split into two</button>
+        <button onclick="fpDeleteBox()" class="btn sm" style="color:#b91c1c;">🗑 Remove box</button>
       </div>`;
   } else {
     selPanel = `<div style="font-size:12px;color:var(--text2);margin-top:8px;">Tip: tap a unit to edit its sq ft — or use "split with" to move footage between two units.</div>`;
@@ -3591,6 +3651,11 @@ function fpRenderEditor(propId){
       <div class="fp-tabs">${floorBtns}</div>
     </div>
     <div style="font-size:12px;color:var(--text2);margin:4px 0 8px;">Drag a box to move · drag the dark corner to resize · tap a unit to edit its sq ft · colors are live.</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 8px;">
+      ${unplaced.length ? `<button onclick="fpAddUnplaced()" class="btn sm">✚ Add ${unplaced.length} unplaced unit${unplaced.length!==1?'s':''}</button>` : `<span style="font-size:12px;color:#16a34a;">✓ all units placed</span>`}
+      <label class="btn sm" style="cursor:pointer;">📐 ${fd.bg ? 'Replace' : 'Upload'} blueprint<input type="file" accept="image/*" style="display:none" onchange="fpUploadBg(this.files && this.files[0])"></label>
+      ${fd.bg ? `<button onclick="fpRemoveBg()" class="btn sm">Remove blueprint</button>` : ''}
+    </div>
     <div class="fp-svg-wrap"><svg id="fp-edit-svg-${propId}" viewBox="${esc(fd.viewBox)}" xmlns="http://www.w3.org/2000/svg" style="touch-action:none;width:100%;border:1.5px dashed var(--border);border-radius:8px;background:var(--surface);">${bg}${boxes}</svg></div>
     ${selPanel}
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;">
@@ -4204,6 +4269,10 @@ window.fpEndRealloc        = fpEndRealloc;
 window.fpReallocFromA      = fpReallocFromA;
 window.fpReallocFromB      = fpReallocFromB;
 window.fpSplitUnit         = fpSplitUnit;
+window.fpAddUnplaced       = fpAddUnplaced;
+window.fpDeleteBox         = fpDeleteBox;
+window.fpUploadBg          = fpUploadBg;
+window.fpRemoveBg          = fpRemoveBg;
 window.showUnitPopup       = showUnitPopup;
 window.closeUnitPopup      = closeUnitPopup;
 window.toggleAvailCard     = toggleAvailCard;
