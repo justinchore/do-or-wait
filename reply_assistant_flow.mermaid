@@ -1,0 +1,28 @@
+flowchart TD
+    A([Open a lead with an inbound email]) --> B[Click 'Draft reply']
+    B --> C[Pick reply type + tone]
+    C --> D[Trigger fresh availability sync]
+
+    subgraph BROWSER [In the browser - Do or Wait]
+        D --> E[Read live availability + pricing from Firestore]
+        E --> F[Run matcher - deterministic JS, no LLM]
+        F --> G[Load per-lead Profile profile_md]
+        G --> H[Send: email + reply type + tone + matched units + pricing + house style + profile + chat history]
+    end
+
+    subgraph SERVER [Server side - holds the API key]
+        H --> I[Cloudflare Worker or n8n]
+        I --> J[Call LLM - Claude Sonnet 4.6]
+        J --> K[Return draft + optional profile-update suggestion]
+    end
+
+    K --> L[Draft appears in editable panel]
+    L --> M{Refine it?}
+    M -->|Yes - type an instruction| H
+    M -->|No| N{Profile update suggested?}
+    N -->|Yes| O[Review diff and accept] --> P
+    N -->|No| P[Save]
+    P --> Q[Write draft to lead thread]
+    P --> R[Push draft to Outlook for review/send]
+    Q --> S([Done - human reviews and sends])
+    R --> S

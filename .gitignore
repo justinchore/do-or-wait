@@ -5,3 +5,6 @@ Copy of New Master List_ Price.xlsx
 
 # stray workspace temp
 .writetest.tmp
+
+# npm install cruft (never commit)
+node_modules/

@@ -1591,6 +1591,7 @@ function renderCard(topic) {
     </div>
     <div class="thread">
       ${topic.entries.map(e => renderEntry(topic, e)).join('')}
+      ${renderEmailLinks(topic, 'topics')}
       <div class="thread-foot">
         <button class="archive-btn" onclick="toggleArchive('${topic.id}')">
           ${topic.archived ? '↩ Unarchive' : '📁 Archive topic'}
@@ -2431,6 +2432,7 @@ function renderLeadCard(lead) {
       ${lead.pending_email ? renderEmailPreview(lead) : ''}
       ${due && !lead.pending_email ? renderFollowupBlock(lead) : ''}
       ${renderLeadDetails(lead)}
+      ${renderEmailLinks(lead, 'leads')}
       ${lead.wl_on ? renderWaitlistBlock(lead) : ''}
       ${lead.entries.map(e => renderLeadEntry(lead, e)).join('')}
       <div class="thread-foot">
@@ -2504,6 +2506,69 @@ function renderEmailPreview(lead) {
       <button class="email-skip-btn"   onclick="skipEmail('${lead.id}',event)">Skip this touch</button>
     </div>
   </div>`;
+}
+
+// ── Linked email threads (manual, isolated — no n8n/scanner) ──────
+// Each item (task or lead) can hold a list of labeled Outlook-thread links.
+// You paste the thread URL (Outlook on the web → conversation → ··· → Copy link,
+// or the browser address bar) and give it a label, so multiple threads on one
+// item stay distinguishable (e.g. "Track Parking Club — VP" vs "Debbie Bernal — onboarding times").
+function renderEmailLinks(item, coll) {
+  const links = Array.isArray(item.email_links) ? item.email_links : [];
+  const rows = links.map(l => `
+    <div style="display:flex;align-items:center;gap:6px;margin:3px 0;">
+      <a href="${esc(l.url)}" target="_blank" rel="noopener"
+         style="flex:1;min-width:0;font-size:13px;color:#0969da;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+         title="${esc(l.url)}">📧 ${esc(l.label || 'Email thread')} ↗</a>
+      <button onclick="editEmailLink('${item.id}','${coll}','${l.id}',event)" title="Edit label / link"
+              style="border:none;background:none;cursor:pointer;font-size:12px;color:var(--text2);">✏️</button>
+      <button onclick="removeEmailLink('${item.id}','${coll}','${l.id}',event)" title="Remove"
+              style="border:none;background:none;cursor:pointer;font-size:13px;color:var(--text2);">✖</button>
+    </div>`).join('');
+  return `
+  <div class="email-links" style="margin:8px 0;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);">
+    <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">🔗 Email threads</div>
+    ${rows || '<div style="font-size:12px;color:var(--text2);margin:2px 0 4px;">No linked threads yet.</div>'}
+    <button onclick="addEmailLink('${item.id}','${coll}',event)"
+            style="font-size:12px;font-weight:600;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:14px;padding:3px 11px;cursor:pointer;margin-top:4px;">＋ Link email thread</button>
+  </div>`;
+}
+
+async function addEmailLink(id, coll, ev) {
+  if (ev) ev.stopPropagation();
+  const url = (prompt('Paste the Outlook email-thread link.\n\nIn Outlook on the web: open the conversation → ··· menu → Copy link (or copy the browser address bar URL).') || '').trim();
+  if (!url) return;
+  const label = (prompt('Label for this thread\n(e.g. "Track Parking Club — VP", "Debbie Bernal — onboarding times"):') || '').trim();
+  const item = findItem(id, coll);
+  if (!item) return;
+  if (!Array.isArray(item.email_links)) item.email_links = [];
+  item.email_links.push({ id: 'el' + Date.now(), label: label || 'Email thread', url });
+  rerender(coll);
+  await persistItem(item, coll);
+}
+
+async function editEmailLink(id, coll, linkId, ev) {
+  if (ev) ev.stopPropagation();
+  const item = findItem(id, coll);
+  const link = item?.email_links?.find(l => l.id === linkId);
+  if (!link) return;
+  const label = prompt('Label for this thread:', link.label || '');
+  if (label === null) return;               // cancelled
+  const url = prompt('Thread link (URL):', link.url || '');
+  if (url === null) return;                  // cancelled
+  link.label = label.trim() || 'Email thread';
+  if (url.trim()) link.url = url.trim();
+  rerender(coll);
+  await persistItem(item, coll);
+}
+
+async function removeEmailLink(id, coll, linkId, ev) {
+  if (ev) ev.stopPropagation();
+  const item = findItem(id, coll);
+  if (!item || !Array.isArray(item.email_links)) return;
+  item.email_links = item.email_links.filter(l => l.id !== linkId);
+  rerender(coll);
+  await persistItem(item, coll);
 }
 
 function renderLeadDetails(lead) {
@@ -4069,6 +4134,9 @@ window.saveLeadDetails     = saveLeadDetails;
 window.deleteLead          = deleteLead;
 window.toggleLeadCard      = toggleLeadCard;
 window.logTouch            = logTouch;
+window.addEmailLink        = addEmailLink;
+window.editEmailLink       = editEmailLink;
+window.removeEmailLink     = removeEmailLink;
 window.wlAddLocation       = wlAddLocation;
 window.wlRemoveLocation    = wlRemoveLocation;
 window.wlToggleCollapse    = wlToggleCollapse;

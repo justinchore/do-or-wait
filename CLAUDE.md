@@ -219,7 +219,7 @@ Each active lead card shows a compact button row (`renderLeadCard` → `quickLog
 do_or_wait/
   index.html            ← entire app (push to GitHub to deploy)
   pricing-seed.js       ← auto-generated snapshot of the price sheet, loaded by index.html as the Pricing-tab fallback before/without the n8n sync. Regenerate from the master xlsx; NOT hand-edited. (Loaded via <script src> just before the module — the one static data asset outside index.html.)
-  floorplan-seed.js     ← bundled fallback floor-plan layouts (Pellissier). Editor saves override these to Firestore floorplans/{propId}. Loaded via <script src> before the module.
+  REPLY_ASSISTANT_SPEC.md ← design spec (2026-06-17, status: Proposed) for an in-app "Reply Assistant": on a lead with an inbound email, ✍️ Draft reply → fresh availability sync + matcher → Claude drafts an availability/pricing-matched reply in house style → conversational refine ("wider net", "drop Fontana") → save to thread / Outlook draft. NOT yet built into index.html.
   CLAUDE.md             ← this file
   .gitignore            ← keeps the master price xlsx (large, internal, repo is public) and *.xlsx out of git
   sharepoint_location_links.txt ← SharePoint URLs for the CA locations (input for presets)
@@ -236,16 +236,16 @@ do_or_wait/
     7_pricing_sync.json        ← Pricing Sync: reads the Sales_US master price sheet (Graph workbook API) → Firestore pricing/current. Daily 6am.
     10_renewals_sync.json      ← Renewals Sync: reads the Google renewal tracker sheet (CSV export, no creds) → Firestore renewals/current. Daily 7:30am. Uses only the Google Service Account cred for the Firestore write.
     parse_renewals.node.js     ← clean paste-ready copy of the "Parse renewals" node code (workflow 10)
-    8_floorplan_sync.json      ← (DEPRECATED — do not import) old Graph-usedRange box reconstruction; scatter quality, abandoned.
-    9_floorplan_image_render.json ← Floorplan Image Render (CURRENT): weekly, renders each location's Site Plan tab to a PNG via LibreOffice on the n8n host (render_siteplan.py) → Firebase Storage → floorplan_images/{propId}. Faithful, scales to 80+.
-    render_siteplan.py         ← runs on the n8n host: isolates the Site Plan tab, fit-to-one-page, LibreOffice→PDF→PNG→trim. Install: apt-get install libreoffice-calc poppler-utils imagemagick; place at /opt/cubework/.
-    templates.json
+    8_prospect_finder.json     ← Prospect Finder: nightly (4am) workflow that imports/scores leasing prospect leads (Claude scoring) → Firestore. See its README.
+    8_prospect_finder.README.md ← docs for the prospect-finder workflow
+    prospect_score.node.js     ← clean paste-ready copy of the prospect-scoring Code node (workflow 8 prospect-finder)
+    templates.json             ← email-sequencer message templates (used by the 5-touch sequencer, currently OFF)
     SETUP.md
   location_blueprints_sp/      ← per-location Site Plan tab CSV exports (one subfolder per location), used to BUILD & verify floorplan parser profiles. Not read at runtime — the sync reads the live tabs via Graph; these CSVs are the profile-dev fixtures.
 ```
 
 ## Floor plans = LINK to the SharePoint Site Plan (FINAL — decided 2026-06-17)
-**Whole floor-plan feature abandoned in-app.** After trying auto-reconstruction (Graph + `.xlsx` color-region), uploaded images, and a LibreOffice weekly auto-render, Justin's final call: the n8n host can't install LibreOffice, and manual screenshots don't scale to 80+. So the in-app "Floor Plan" section is now **just a link** — `renderFloorplans` reads `availMap[propId].sharepoint_url` (+ `yardi_url`) and renders "📄 Open Site Plan (SharePoint) ↗". No rendering, upload, editor, or n8n. Workflows **8 and 9 + `render_siteplan.py` are dead/unused** (left in repo as history; don't import). The dormant in-app machinery (`fpUploadPlanImage`/`fpRemovePlanImage`/editor `fpStartEdit…`/`floorplanImages` listener/`FLOORPLAN_SEED`/`floorplan-seed.js`) is unreferenced and can be deleted in a cleanup pass. Everything below this line is historical record.
+**Whole floor-plan feature abandoned in-app.** After trying auto-reconstruction (Graph + `.xlsx` color-region), uploaded images, and a LibreOffice weekly auto-render, Justin's final call: the n8n host can't install LibreOffice, and manual screenshots don't scale to 80+. So the in-app "Floor Plan" section is now **just a link** — `renderFloorplans` reads `availMap[propId].sharepoint_url` (+ `yardi_url`) and renders "📄 Open Site Plan (SharePoint) ↗". No rendering, upload, editor, or n8n. **Cleanup done 2026-06-18:** the dead floorplan artifacts were deleted from the repo — `n8n/8_floorplan_sync.json`, `n8n/9_floorplan_image_render.json`, `n8n/render_siteplan.py`, and the root `floorplan-seed.js` (the in-app machinery `fpUploadPlanImage`/`fpRemovePlanImage`/editor `fpStartEdit…`/`floorplanImages` listener/`FLOORPLAN_SEED` was already gone from `index.html`). The two sections below are kept as the written record of what was tried and why it didn't work — the files they describe no longer exist.
 
 ## (HISTORICAL) Floor plans = UPLOADED Site Plan images
 **Auto-reconstruction was abandoned.** Both the n8n Graph sync (workflow 8) and the in-app `.xlsx` color-region importer were built and tested, but neither reliably matched the hand-drawn SharePoint plans (scattered boxes, misread dock-label letters like "LOADING", missing unlabeled big blocks). Justin's call: stop reconstructing — **just show the real drawing as an image.**
