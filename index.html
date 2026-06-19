@@ -1977,6 +1977,7 @@ let showWonLost  = false;
 let hideWaitlist = false;
 const wlCollapsed = new Set();   // lead ids whose waitlist block is collapsed
 let expandedLeadIds = new Set();
+const addingLink = new Set();    // `${coll}:${id}` keys with an open "add email thread" form
 
 const LEAD_STAGES = {
   cold:      { label:'Cold',      color:'#6b7280' },
@@ -2509,40 +2510,103 @@ function renderEmailPreview(lead) {
 }
 
 // ── Linked email threads (manual, isolated — no n8n/scanner) ──────
-// Each item (task or lead) can hold a list of labeled Outlook-thread links.
-// You paste the thread URL (Outlook on the web → conversation → ··· → Copy link,
-// or the browser address bar) and give it a label, so multiple threads on one
-// item stay distinguishable (e.g. "Track Parking Club — VP" vs "Debbie Bernal — onboarding times").
+// Each item (task or lead) holds a list of labeled threads. Instead of a brittle
+// pasted message URL (the EntryID/address-bar link rots when mail is moved or
+// archived), each link fires an Outlook-on-the-web SEARCH deep link built from a
+// SUBJECT (+ optional contact). That can't break — it always opens a live search,
+// so it lands on the thread no matter what folder it's in. The subject is what
+// disambiguates several threads with the same person (e.g. two threads with Kuan).
+// Legacy entries that still carry a pasted `url` keep using it.
+function emailLinkHref(l) {
+  if (l && l.url) return l.url;                       // back-compat: old pasted link
+  const q = [
+    l && l.subject ? `subject:"${l.subject}"` : '',
+    l && l.contact ? l.contact : '',
+  ].filter(Boolean).join(' ').trim();
+  return 'https://outlook.office.com/mail/deeplink/search?query=' + encodeURIComponent(q);
+}
+function emailLinkTip(l) {
+  if (l && l.url) return l.url;
+  return 'Outlook search: ' + [l && l.subject ? `subject "${l.subject}"` : '', l && l.contact ? `· ${l.contact}` : ''].filter(Boolean).join(' ');
+}
+// Every contact you've already linked anywhere (task or lead threads + lead emails),
+// so the add-form can offer them as pick-don't-type suggestions.
+function knownContacts() {
+  const set = new Set();
+  [...(topics || []), ...(leads || [])].forEach(it =>
+    (it.email_links || []).forEach(l => { if (l && l.contact) set.add(String(l.contact).trim()); }));
+  (leads || []).forEach(l => {
+    if (l.email) set.add(String(l.email).trim());
+    if (l.contact) set.add(String(l.contact).trim());
+  });
+  return [...set].filter(Boolean).sort((a, b) => a.localeCompare(b));
+}
+
 function renderEmailLinks(item, coll) {
   const links = Array.isArray(item.email_links) ? item.email_links : [];
   const rows = links.map(l => `
     <div style="display:flex;align-items:center;gap:6px;margin:3px 0;">
-      <a href="${esc(l.url)}" target="_blank" rel="noopener"
+      <a href="${esc(emailLinkHref(l))}" target="_blank" rel="noopener"
          style="flex:1;min-width:0;font-size:13px;color:#0969da;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
-         title="${esc(l.url)}">📧 ${esc(l.label || 'Email thread')} ↗</a>
-      <button onclick="editEmailLink('${item.id}','${coll}','${l.id}',event)" title="Edit label / link"
+         title="${esc(emailLinkTip(l))}">${l.url ? '📧' : '🔍'} ${esc(l.label || l.subject || 'Email thread')} ↗</a>
+      <button onclick="editEmailLink('${item.id}','${coll}','${l.id}',event)" title="Edit"
               style="border:none;background:none;cursor:pointer;font-size:12px;color:var(--text2);">✏️</button>
       <button onclick="removeEmailLink('${item.id}','${coll}','${l.id}',event)" title="Remove"
               style="border:none;background:none;cursor:pointer;font-size:13px;color:var(--text2);">✖</button>
     </div>`).join('');
+
+  const adding = addingLink.has(coll + ':' + item.id);
+  let addUI;
+  if (adding) {
+    const dlId = 'el-contacts-' + coll + '-' + item.id;
+    const opts = knownContacts().map(c => `<option value="${esc(c)}"></option>`).join('');
+    const prefill = (coll === 'leads' && item.email) ? esc(item.email) : '';
+    const inS = 'font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);width:100%;box-sizing:border-box;';
+    addUI = `<div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;">
+      <input id="eladd-subj-${coll}-${item.id}" placeholder="Email subject (the search anchor)" style="${inS}">
+      <input id="eladd-contact-${coll}-${item.id}" list="${dlId}" value="${prefill}" placeholder="Contact email/name — pick a saved one or type new" style="${inS}">
+      <datalist id="${dlId}">${opts}</datalist>
+      <input id="eladd-label-${coll}-${item.id}" placeholder="Label (optional — defaults to the subject)" style="${inS}">
+      <div style="display:flex;gap:6px;">
+        <button class="btn sm dark" onclick="submitAddEmailLink('${item.id}','${coll}',event)">Save thread</button>
+        <button class="btn sm" onclick="cancelAddEmailLink('${item.id}','${coll}',event)">Cancel</button>
+      </div>
+    </div>`;
+  } else {
+    addUI = `<button onclick="openAddEmailLink('${item.id}','${coll}',event)"
+            style="font-size:12px;font-weight:600;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:14px;padding:3px 11px;cursor:pointer;margin-top:4px;">＋ Link email thread</button>`;
+  }
+
   return `
   <div class="email-links" style="margin:8px 0;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);">
     <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">🔗 Email threads</div>
     ${rows || '<div style="font-size:12px;color:var(--text2);margin:2px 0 4px;">No linked threads yet.</div>'}
-    <button onclick="addEmailLink('${item.id}','${coll}',event)"
-            style="font-size:12px;font-weight:600;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:14px;padding:3px 11px;cursor:pointer;margin-top:4px;">＋ Link email thread</button>
+    ${addUI}
   </div>`;
 }
 
-async function addEmailLink(id, coll, ev) {
+function openAddEmailLink(id, coll, ev) {
   if (ev) ev.stopPropagation();
-  const url = (prompt('Paste the Outlook email-thread link.\n\nIn Outlook on the web: open the conversation → ··· menu → Copy link (or copy the browser address bar URL).') || '').trim();
-  if (!url) return;
-  const label = (prompt('Label for this thread\n(e.g. "Track Parking Club — VP", "Debbie Bernal — onboarding times"):') || '').trim();
+  addingLink.add(coll + ':' + id);
+  rerender(coll);
+}
+function cancelAddEmailLink(id, coll, ev) {
+  if (ev) ev.stopPropagation();
+  addingLink.delete(coll + ':' + id);
+  rerender(coll);
+}
+async function submitAddEmailLink(id, coll, ev) {
+  if (ev) ev.stopPropagation();
+  const g = sel => (document.getElementById(sel)?.value || '').trim();
+  const subject = g('eladd-subj-' + coll + '-' + id);
+  if (!subject) { alert('Add a subject — it’s the search anchor that finds the thread.'); return; }
+  const contact = g('eladd-contact-' + coll + '-' + id);
+  const label   = g('eladd-label-' + coll + '-' + id);
   const item = findItem(id, coll);
   if (!item) return;
   if (!Array.isArray(item.email_links)) item.email_links = [];
-  item.email_links.push({ id: 'el' + Date.now(), label: label || 'Email thread', url });
+  item.email_links.push({ id: 'el' + Date.now(), label: label || subject, subject, contact });
+  addingLink.delete(coll + ':' + id);
   rerender(coll);
   await persistItem(item, coll);
 }
@@ -2552,12 +2616,24 @@ async function editEmailLink(id, coll, linkId, ev) {
   const item = findItem(id, coll);
   const link = item?.email_links?.find(l => l.id === linkId);
   if (!link) return;
-  const label = prompt('Label for this thread:', link.label || '');
-  if (label === null) return;               // cancelled
-  const url = prompt('Thread link (URL):', link.url || '');
-  if (url === null) return;                  // cancelled
-  link.label = label.trim() || 'Email thread';
-  if (url.trim()) link.url = url.trim();
+  if (link.url) {                            // legacy pasted-URL entry — edit the URL
+    const url = prompt('Thread link (URL):', link.url);
+    if (url === null) return;
+    const label = prompt('Label:', link.label || '');
+    if (label === null) return;
+    if (url.trim()) link.url = url.trim();
+    link.label = label.trim() || 'Email thread';
+  } else {
+    const subject = prompt('Email subject (search anchor):', link.subject || '');
+    if (subject === null) return;
+    const contact = prompt('Contact email/name to narrow (optional):', link.contact || '');
+    if (contact === null) return;
+    const label = prompt('Label (optional — defaults to the subject):', link.label || link.subject || '');
+    if (label === null) return;
+    link.subject = subject.trim();
+    link.contact = contact.trim();
+    link.label = label.trim() || link.subject || 'Email thread';
+  }
   rerender(coll);
   await persistItem(item, coll);
 }
@@ -4134,7 +4210,9 @@ window.saveLeadDetails     = saveLeadDetails;
 window.deleteLead          = deleteLead;
 window.toggleLeadCard      = toggleLeadCard;
 window.logTouch            = logTouch;
-window.addEmailLink        = addEmailLink;
+window.openAddEmailLink    = openAddEmailLink;
+window.cancelAddEmailLink  = cancelAddEmailLink;
+window.submitAddEmailLink  = submitAddEmailLink;
 window.editEmailLink       = editEmailLink;
 window.removeEmailLink     = removeEmailLink;
 window.wlAddLocation       = wlAddLocation;
