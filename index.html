@@ -1586,6 +1586,7 @@ function renderCard(topic) {
           ${noteCount ? ` · 🎤 ${noteCount} note${noteCount !== 1 ? 's' : ''}` : ''}
           · last ${fmtDate(last?.createdAt || topic.createdAt)}
         </div>
+        ${emailLinkChips(topic)}
       </div>
       <span class="chevron">▼</span>
     </div>
@@ -2425,6 +2426,7 @@ function renderLeadCard(lead) {
           ${noteCount ? ` · 🎤 ${noteCount} note${noteCount!==1?'s':''}` : ''}
           · last ${fmtDate(last?.createdAt || lead.createdAt)}
         </div>
+        ${emailLinkChips(lead)}
         ${quickLog}
       </div>
       <span class="chevron">▼</span>
@@ -2530,6 +2532,24 @@ function knownContacts() {
     if (l.contact) set.add(String(l.contact).trim());
   });
   return [...set].filter(Boolean).sort((a, b) => a.localeCompare(b));
+}
+
+// Compact email-thread chips for the COLLAPSED card summary, so a thread is one
+// click away without expanding. Shows resolved (clickable) threads; if links
+// exist but none are resolved yet, a muted hint. Clicks stop propagation so the
+// card doesn't toggle.
+function emailLinkChips(item) {
+  const links = Array.isArray(item.email_links) ? item.email_links : [];
+  if (!links.length) return '';
+  const resolved = links.filter(l => l.url);
+  if (!resolved.length) {
+    return `<div style="margin-top:4px;font-size:11px;color:var(--text2);">🔗 ${links.length} email thread${links.length > 1 ? 's' : ''}</div>`;
+  }
+  const chips = resolved.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()"
+       title="Open the Outlook thread" style="display:inline-flex;align-items:center;gap:3px;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:#0969da;text-decoration:none;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1px 8px;margin:0 4px 0 0;">📧 ${esc(l.label || l.subject || 'thread')}</a>`).join('');
+  const extra = links.length > resolved.length
+    ? `<span style="font-size:11px;color:var(--text2);">+${links.length - resolved.length}</span>` : '';
+  return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:3px;margin-top:5px;">${chips}${extra}</div>`;
 }
 
 function renderEmailLinks(item, coll) {

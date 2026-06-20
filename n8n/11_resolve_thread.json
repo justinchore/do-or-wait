@@ -30,7 +30,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "=https://graph.microsoft.com/v1.0/users/{{ $env.OUTLOOK_USER_ID }}/messages",
+        "url": "https://graph.microsoft.com/v1.0/me/messages",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "microsoftOAuth2Api",
         "sendQuery": true,
