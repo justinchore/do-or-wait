@@ -2509,26 +2509,16 @@ function renderEmailPreview(lead) {
   </div>`;
 }
 
-// ── Linked email threads (manual, isolated — no n8n/scanner) ──────
-// Each item (task or lead) holds a list of labeled threads. Instead of a brittle
-// pasted message URL (the EntryID/address-bar link rots when mail is moved or
-// archived), each link fires an Outlook-on-the-web SEARCH deep link built from a
-// SUBJECT (+ optional contact). That can't break — it always opens a live search,
-// so it lands on the thread no matter what folder it's in. The subject is what
-// disambiguates several threads with the same person (e.g. two threads with Kuan).
-// Legacy entries that still carry a pasted `url` keep using it.
-function emailLinkHref(l) {
-  if (l && l.url) return l.url;                       // back-compat: old pasted link
-  const q = [
-    l && l.subject ? `subject:"${l.subject}"` : '',
-    l && l.contact ? l.contact : '',
-  ].filter(Boolean).join(' ').trim();
-  return 'https://outlook.office.com/mail/deeplink/search?query=' + encodeURIComponent(q);
-}
-function emailLinkTip(l) {
-  if (l && l.url) return l.url;
-  return 'Outlook search: ' + [l && l.subject ? `subject "${l.subject}"` : '', l && l.contact ? `· ${l.contact}` : ''].filter(Boolean).join(' ');
-}
+// ── Linked email threads (manual, isolated — own n8n webhook, NOT the scanner) ──
+// Each item (task or lead) holds a list of labeled threads. You give a SUBJECT
+// (+ optional contact); the app posts that to the resolve-thread webhook (n8n
+// workflow 11), which searches Outlook via Graph and returns the message's real
+// `webLink` — the OFFICIAL URL that OPENS that thread in Outlook on the web.
+// We store that webLink as `url` and the link opens the actual thread on click.
+// (Outlook has NO working search-by-URL and NO desktop deep link — webLink is the
+//  only supported "open this thread" link, hence the Graph round-trip.)
+// Link states: l.url = resolved/working · l.resolving = lookup in flight ·
+//              neither = Graph found no match (show retry). Legacy pasted `url` entries still work.
 // Every contact you've already linked anywhere (task or lead threads + lead emails),
 // so the add-form can offer them as pick-don't-type suggestions.
 function knownContacts() {
@@ -2544,16 +2534,27 @@ function knownContacts() {
 
 function renderEmailLinks(item, coll) {
   const links = Array.isArray(item.email_links) ? item.email_links : [];
-  const rows = links.map(l => `
-    <div style="display:flex;align-items:center;gap:6px;margin:3px 0;">
-      <a href="${esc(emailLinkHref(l))}" target="_blank" rel="noopener"
-         style="flex:1;min-width:0;font-size:13px;color:#0969da;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
-         title="${esc(emailLinkTip(l))}">${l.url ? '📧' : '🔍'} ${esc(l.label || l.subject || 'Email thread')} ↗</a>
+  const lblStyle = 'flex:1;min-width:0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+  const rows = links.map(l => {
+    const editRm = `
       <button onclick="editEmailLink('${item.id}','${coll}','${l.id}',event)" title="Edit"
               style="border:none;background:none;cursor:pointer;font-size:12px;color:var(--text2);">✏️</button>
       <button onclick="removeEmailLink('${item.id}','${coll}','${l.id}',event)" title="Remove"
-              style="border:none;background:none;cursor:pointer;font-size:13px;color:var(--text2);">✖</button>
-    </div>`).join('');
+              style="border:none;background:none;cursor:pointer;font-size:13px;color:var(--text2);">✖</button>`;
+    let main;
+    if (l.url) {                                   // resolved (or legacy pasted) — real working link
+      main = `<a href="${esc(l.url)}" target="_blank" rel="noopener"
+         style="${lblStyle}color:#0969da;text-decoration:none;" title="Open the Outlook thread">📧 ${esc(l.label || l.subject || 'Email thread')} ↗</a>`;
+    } else if (l.resolving) {                       // looking the thread up via Graph
+      main = `<span style="${lblStyle}color:var(--text2);">⏳ ${esc(l.label || l.subject || '')} — finding link…</span>`;
+    } else {                                        // Graph found no match (or it failed)
+      const q = ((l.subject || '') + ' ' + (l.contact || '')).trim();
+      main = `<span style="${lblStyle}color:#9a3412;" title="Couldn't find this thread in Outlook. Retry, or open Outlook and search: ${esc(q)}">⚠ ${esc(l.label || l.subject || '')} — not found</span>
+        <button onclick="resolveThreadLink('${item.id}','${coll}','${l.id}',event)" title="Try again"
+                style="border:none;background:none;cursor:pointer;font-size:13px;color:var(--text2);">↻</button>`;
+    }
+    return `<div style="display:flex;align-items:center;gap:6px;margin:3px 0;">${main}${editRm}</div>`;
+  }).join('');
 
   const adding = addingLink.has(coll + ':' + item.id);
   let addUI;
@@ -2605,8 +2606,42 @@ async function submitAddEmailLink(id, coll, ev) {
   const item = findItem(id, coll);
   if (!item) return;
   if (!Array.isArray(item.email_links)) item.email_links = [];
-  item.email_links.push({ id: 'el' + Date.now(), label: label || subject, subject, contact });
+  const linkId = 'el' + Date.now();
+  item.email_links.push({ id: linkId, label: label || subject, subject, contact, resolving: true });
   addingLink.delete(coll + ':' + id);
+  rerender(coll);
+  await persistItem(item, coll);          // save the pending entry first
+  await resolveThreadLink(id, coll, linkId); // then ask Graph for the real webLink
+}
+
+// Ask the resolve-thread webhook (n8n workflow 11) to turn subject+contact into
+// the message's real Outlook webLink, then store it on the link so it opens the
+// actual thread on click. No match / error -> leave it unresolved with a retry.
+async function resolveThreadLink(id, coll, linkId, ev) {
+  if (ev) ev.stopPropagation();
+  const item = findItem(id, coll);
+  const link = item?.email_links?.find(l => l.id === linkId);
+  if (!link) return;
+  link.resolving = true;
+  rerender(coll);
+  try {
+    const res  = await fetch(RESOLVE_THREAD_WEBHOOK, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subject: link.subject || '', contact: link.contact || '' })
+    });
+    const data = await res.json().catch(() => null);
+    if (data && data.found && data.webLink) {
+      link.url = data.webLink;
+      if (data.conversationId) link.conversationId = data.conversationId;
+    } else {
+      link.url = '';                       // searched, but no match in the mailbox
+    }
+  } catch (e) {
+    console.error('resolveThreadLink failed:', e);
+    link.url = '';                         // webhook unreachable — retry button shows
+  }
+  link.resolving = false;
   rerender(coll);
   await persistItem(item, coll);
 }
@@ -2616,15 +2651,10 @@ async function editEmailLink(id, coll, linkId, ev) {
   const item = findItem(id, coll);
   const link = item?.email_links?.find(l => l.id === linkId);
   if (!link) return;
-  if (link.url) {                            // legacy pasted-URL entry — edit the URL
-    const url = prompt('Thread link (URL):', link.url);
-    if (url === null) return;
-    const label = prompt('Label:', link.label || '');
-    if (label === null) return;
-    if (url.trim()) link.url = url.trim();
-    link.label = label.trim() || 'Email thread';
-  } else {
-    const subject = prompt('Email subject (search anchor):', link.subject || '');
+  // Search-based entry (resolved or not): edit subject/contact, then re-resolve.
+  // Legacy entry with a pasted url and no subject: just edit the url directly.
+  if (link.subject !== undefined || !link.url) {
+    const subject = prompt('Email subject (the search anchor):', link.subject || '');
     if (subject === null) return;
     const contact = prompt('Contact email/name to narrow (optional):', link.contact || '');
     if (contact === null) return;
@@ -2633,9 +2663,20 @@ async function editEmailLink(id, coll, linkId, ev) {
     link.subject = subject.trim();
     link.contact = contact.trim();
     link.label = label.trim() || link.subject || 'Email thread';
+    link.url = '';                         // force a fresh lookup against the new subject
+    rerender(coll);
+    await persistItem(item, coll);
+    await resolveThreadLink(id, coll, linkId);
+  } else {
+    const url = prompt('Thread link (URL):', link.url);
+    if (url === null) return;
+    const label = prompt('Label:', link.label || '');
+    if (label === null) return;
+    if (url.trim()) link.url = url.trim();
+    link.label = label.trim() || 'Email thread';
+    rerender(coll);
+    await persistItem(item, coll);
   }
-  rerender(coll);
-  await persistItem(item, coll);
 }
 
 async function removeEmailLink(id, coll, linkId, ev) {
@@ -3101,6 +3142,7 @@ function yardiSpaces(url) {
 const PROXY                = 'https://plain-credit-5962.jchoustin91.workers.dev';
 const AVAIL_WEBHOOK        = `${PROXY}/webhook/availability-sync`;
 const ADD_LOCATION_WEBHOOK = `${PROXY}/webhook/add-location`;
+const RESOLVE_THREAD_WEBHOOK = `${PROXY}/webhook/resolve-thread`; // subject+contact → real Outlook webLink (n8n workflow 11)
 
 // Listen to ALL availability docs (scales to multiple locations)
 unsubAvail = onSnapshot(collection(db, 'availability'), snap => {
@@ -4213,6 +4255,7 @@ window.logTouch            = logTouch;
 window.openAddEmailLink    = openAddEmailLink;
 window.cancelAddEmailLink  = cancelAddEmailLink;
 window.submitAddEmailLink  = submitAddEmailLink;
+window.resolveThreadLink   = resolveThreadLink;
 window.editEmailLink       = editEmailLink;
 window.removeEmailLink     = removeEmailLink;
 window.wlAddLocation       = wlAddLocation;

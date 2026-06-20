@@ -1,0 +1,106 @@
+{
+  "name": "CW — 11. Resolve Thread Link",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "resolve-thread",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "cw-rt-001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "resolve-thread"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Turn the {subject, contact} the app posts into a single Graph $search string.\n// We keep it as FREE TEXT (subject words + contact) rather than KQL keyword\n// syntax (subject:\"...\" participants:...), because $search is wrapped in quotes\n// downstream and nesting quotes inside that breaks the query. Graph relevance-\n// ranks the hits; the newest matching message is almost always the right thread.\nconst b = ($json.body && typeof $json.body === 'object') ? $json.body : $json;\nconst clean = s => String(s || '').replace(/[\"\\r\\n]/g, ' ').trim();\nconst subject = clean(b.subject);\nconst contact = clean(b.contact);\nconst search  = [subject, contact].filter(Boolean).join(' ').trim();\nreturn [{ json: { search, subject, contact, hasQuery: !!search } }];"
+      },
+      "id": "cw-rt-002",
+      "name": "Build search",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://graph.microsoft.com/v1.0/users/{{ $env.OUTLOOK_USER_ID }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "$search", "value": "=\"{{ $json.search }}\"" },
+            { "name": "$select", "value": "webLink,subject,from,receivedDateTime,sentDateTime,conversationId" },
+            { "name": "$top",    "value": "25" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cw-rt-003",
+      "name": "Search messages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300],
+      "continueOnFail": true,
+      "credentials": {
+        "microsoftOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Microsoft OAuth2 — Cubework Outlook"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pick the newest message across the relevance-ranked hits and return its\n// webLink — the official Graph property that OPENS that message/thread in\n// Outlook on the web. $search can't be combined with $orderby, so we sort in\n// code. If Graph errored (continueOnFail) or returned nothing, found:false.\nconst resp = $input.first().json || {};\nconst msgs = Array.isArray(resp.value) ? resp.value : [];\nlet best = null, bestMs = null;\nfor (const m of msgs) {\n  if (!m) continue;\n  const t = Date.parse(m.receivedDateTime || m.sentDateTime || '');\n  if (isNaN(t)) continue;\n  if (bestMs === null || t > bestMs) { bestMs = t; best = m; }\n}\nif (!best || !best.webLink) {\n  return [{ json: { found: false } }];\n}\nreturn [{ json: {\n  found: true,\n  webLink: best.webLink,\n  conversationId: best.conversationId || '',\n  subject: best.subject || '',\n  from: (best.from && best.from.emailAddress && best.from.emailAddress.address) || '',\n  date: best.receivedDateTime || best.sentDateTime || ''\n} }];"
+      },
+      "id": "cw-rt-004",
+      "name": "Pick newest hit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              { "name": "Access-Control-Allow-Origin", "value": "*" }
+            ]
+          }
+        }
+      },
+      "id": "cw-rt-005",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1120, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Build search", "type": "main", "index": 0 }]]
+    },
+    "Build search": {
+      "main": [[{ "node": "Search messages", "type": "main", "index": 0 }]]
+    },
+    "Search messages": {
+      "main": [[{ "node": "Pick newest hit", "type": "main", "index": 0 }]]
+    },
+    "Pick newest hit": {
+      "main": [[{ "node": "Respond", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "cw-workflow-011"
+}

@@ -42,10 +42,12 @@ Source: `C:\Users\jcho\Documents\Claude\Projects\do_or_wait\index.html` (single 
 ## Firestore collections
 
 ### `topics/{id}`
-Task threads. Fields: `title`, `archived`, `entries[]`, `createdAt`
+Task threads. Fields: `title`, `archived`, `entries[]`, `createdAt`, `email_links[]` (see Linked email threads below).
 
 ### `leads/{id}`
-Sales leads. Thread structure + lead-specific fields: `company`, `first_name`, `email`, `contact`, `phone`, `segment`, `stage`, `location`, `sqft`, `leaseLength`, `moveIn`, `unit`, `unit_sf`, `dock`, `rate`, `included_items`, `alt_option`, `is_importer`, `current_step`, `last_touch_date`, `next_due_date`, `seq_status`, `pending_email` (written by n8n when email ready to approve)
+Sales leads. Thread structure + lead-specific fields: `company`, `first_name`, `email`, `contact`, `phone`, `segment`, `stage`, `location`, `sqft`, `leaseLength`, `moveIn`, `unit`, `unit_sf`, `dock`, `rate`, `included_items`, `alt_option`, `is_importer`, `current_step`, `last_touch_date`, `next_due_date`, `seq_status`, `pending_email` (written by n8n when email ready to approve), `email_links[]` (see Linked email threads below).
+
+**Linked email threads — `email_links[]` (both topics AND leads).** Each item holds a list of labeled Outlook threads. Per entry: `{ id, label, subject, contact, url, conversationId, resolving }`. The app surface is `renderEmailLinks(item, coll)` (rendered on every lead card after details, and inside every task thread) + a `🔗 Email threads` block. **Why it's built this way:** Outlook has NO working search-by-URL (`deeplink/search` is unsupported — it opens a blank Outlook PWA) and NO desktop deep link. The ONLY supported "open this thread" link is a message's Graph **`webLink`**. So adding a thread is a resolve step: the inline add-form (`openAddEmailLink`/`submitAddEmailLink`, state `addingLink` Set, contact field is a pick-or-type `<datalist>` of `knownContacts()` — every contact linked anywhere + lead emails) collects **subject + contact**, then `resolveThreadLink(id,coll,linkId)` POSTs `{subject,contact}` to `RESOLVE_THREAD_WEBHOOK` (n8n workflow 11), which searches Graph and returns the newest hit's `webLink`; that's stored as `url` and the link opens the real thread on click. Link render states: `url` set = resolved/working (📧, opens OWA) · `resolving` = lookup in flight (⏳) · neither = Graph found no match / webhook unreachable (⚠ + ↻ retry). `editEmailLink` re-resolves when subject/contact change; legacy entries with a hand-pasted `url` and no `subject` keep editing the url directly. **Isolated from the Follow-up Scanner** — its own webhook workflow, reusing the same Graph cred. Caveats: opens in Outlook on the web / PWA (not classic desktop — Microsoft limitation), and a `webLink` can rot if that message is later moved between folders (re-resolve via ✏️ Edit or ↻). All inline handlers exposed on `window.*`.
 
 **Follow-up fields** (written by the n8n Follow-up Scanner — workflow 6 — from Outlook/Graph): `last_contact_date` (YYYY-MM-DD of the most recent email to/from the lead), `last_contact_dir` (`out`/`in` — direction of that newest email: `in` = received from the lead, `out` = we sent it), `days_since_contact` (int), `followup_contacted` (bool — false if no email history was found and the date fell back to lead creation), `followup_due` (bool — true at ≥3 **business** days **and** `last_contact_dir==='out'`), `followup_checked_at` (ISO of last scan), `followup_snooze_until` (YYYY-MM-DD — set by the app's "Snooze" button, suppresses the lead until that date).
 
@@ -236,6 +238,8 @@ do_or_wait/
     7_pricing_sync.json        ← Pricing Sync: reads the Sales_US master price sheet (Graph workbook API) → Firestore pricing/current. Daily 6am.
     10_renewals_sync.json      ← Renewals Sync: reads the Google renewal tracker sheet (CSV export, no creds) → Firestore renewals/current. Daily 7:30am. Uses only the Google Service Account cred for the Firestore write.
     parse_renewals.node.js     ← clean paste-ready copy of the "Parse renewals" node code (workflow 10)
+    11_resolve_thread.json     ← Resolve Thread Link: webhook (path `resolve-thread`) that takes {subject,contact}, searches Graph, and RESPONDS with the newest message's `webLink` (+conversationId). Powers the app's 🔗 Email threads links. Reuses the `Microsoft OAuth2 — Cubework Outlook` cred + `OUTLOOK_USER_ID` env. Synchronous (Respond to Webhook node). Isolated from the scanner. Import + activate it (NOT cron — it's request-driven).
+    resolve_thread.nodes.js    ← clean paste-ready copy of workflow 11's two Code nodes (Build search / Pick newest hit)
     8_prospect_finder.json     ← Prospect Finder: nightly (4am) workflow that imports/scores leasing prospect leads (Claude scoring) → Firestore. See its README.
     8_prospect_finder.README.md ← docs for the prospect-finder workflow
     prospect_score.node.js     ← clean paste-ready copy of the prospect-scoring Code node (workflow 8 prospect-finder)
@@ -286,5 +290,6 @@ The Graph sync (workflow 8) only sees cell *text*, so its layout is a rough scaf
 ## Quick reference — webhook URLs
 - Availability sync: `https://plain-credit-5962.jchoustin91.workers.dev/webhook/availability-sync`
 - Add location: `https://plain-credit-5962.jchoustin91.workers.dev/webhook/add-location`
+- Resolve thread link: `https://plain-credit-5962.jchoustin91.workers.dev/webhook/resolve-thread` (POST `{subject,contact}` → `{found,webLink,conversationId,…}`; n8n workflow 11)
 - Floorplan sync: `https://plain-credit-5962.jchoustin91.workers.dev/webhook/floorplan-sync`
 - n8n base: `https://ailinker.item.com`
