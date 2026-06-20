@@ -19,7 +19,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Turn the {subject, contact} the app posts into a single Graph $search string.\n// We keep it as FREE TEXT (subject words + contact) rather than KQL keyword\n// syntax (subject:\"...\" participants:...), because $search is wrapped in quotes\n// downstream and nesting quotes inside that breaks the query. Graph relevance-\n// ranks the hits; the newest matching message is almost always the right thread.\nconst b = ($json.body && typeof $json.body === 'object') ? $json.body : $json;\nconst clean = s => String(s || '').replace(/[\"\\r\\n]/g, ' ').trim();\nconst subject = clean(b.subject);\nconst contact = clean(b.contact);\nconst search  = [subject, contact].filter(Boolean).join(' ').trim();\nreturn [{ json: { search, subject, contact, hasQuery: !!search } }];"
+        "jsCode": "// Turn the {subject, contact} the app posts into a Graph $search string.\n// Subject stays free-text (no subject:\"...\" KQL — nesting quotes inside the\n// already-quoted $search value breaks it). A contact that's an EMAIL uses the\n// participants: keyword (precise); a name is added as free text. KQL keywords\n// are fine inside the outer quotes; only nested double-quotes are the problem.\nconst b = ($json.body && typeof $json.body === 'object') ? $json.body : $json;\nconst clean = s => String(s || '').replace(/[\"\\r\\n]/g, ' ').trim();\nconst subject = clean(b.subject);\nconst contact = clean(b.contact);\nconst terms = [];\nif (subject) terms.push(subject);\nif (contact) terms.push(contact.includes('@') ? ('participants:' + contact) : contact);\nconst search = terms.join(' ').trim();\nreturn [{ json: { search, subject, contact, hasQuery: !!search } }];"
       },
       "id": "cw-rt-002",
       "name": "Build search",
@@ -68,8 +68,7 @@
     },
     {
       "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify($json) }}",
+        "respondWith": "firstIncomingItem",
         "options": {
           "responseCode": 200,
           "responseHeaders": {

@@ -4,15 +4,19 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 // ===== NODE "Build search" ===============================================
-// Turn the {subject, contact} the app posts into one Graph $search string.
-// Kept as FREE TEXT (not KQL subject:"..." participants:...) because the
-// $search value is wrapped in quotes in the HTTP node, and nesting quotes
-// inside breaks the query. Graph relevance-ranks; the newest hit is the thread.
+// Turn the {subject, contact} the app posts into a Graph $search string.
+// Subject stays free-text (no subject:"..." KQL — nesting quotes inside the
+// already-quoted $search value breaks it). A contact that's an EMAIL uses the
+// participants: keyword (precise); a name is added as free text. KQL keywords
+// are fine inside the outer quotes; only nested double-quotes are the problem.
 const b = ($json.body && typeof $json.body === 'object') ? $json.body : $json;
 const clean = s => String(s || '').replace(/["\r\n]/g, ' ').trim();
 const subject = clean(b.subject);
 const contact = clean(b.contact);
-const search  = [subject, contact].filter(Boolean).join(' ').trim();
+const terms = [];
+if (subject) terms.push(subject);
+if (contact) terms.push(contact.includes('@') ? ('participants:' + contact) : contact);
+const search = terms.join(' ').trim();
 return [{ json: { search, subject, contact, hasQuery: !!search } }];
 
 

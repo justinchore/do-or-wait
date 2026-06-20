@@ -2547,9 +2547,14 @@ function renderEmailLinks(item, coll) {
          style="${lblStyle}color:#0969da;text-decoration:none;" title="Open the Outlook thread">📧 ${esc(l.label || l.subject || 'Email thread')} ↗</a>`;
     } else if (l.resolving) {                       // looking the thread up via Graph
       main = `<span style="${lblStyle}color:var(--text2);">⏳ ${esc(l.label || l.subject || '')} — finding link…</span>`;
-    } else {                                        // Graph found no match (or it failed)
+    } else {                                        // unresolved: distinguish "offline" vs "no match"
       const q = ((l.subject || '') + ' ' + (l.contact || '')).trim();
-      main = `<span style="${lblStyle}color:#9a3412;" title="Couldn't find this thread in Outlook. Retry, or open Outlook and search: ${esc(q)}">⚠ ${esc(l.label || l.subject || '')} — not found</span>
+      const offline = l.resolveErr === 'offline';
+      const msg = offline ? 'resolver offline' : 'no match';
+      const tip = offline
+        ? "Couldn't reach the resolve-thread webhook — is n8n workflow 11 imported and Active? Retry after."
+        : `No Outlook message matched. Retry, or widen the subject/contact. Searched: ${esc(q)}`;
+      main = `<span style="${lblStyle}color:#9a3412;" title="${tip}">⚠ ${esc(l.label || l.subject || '')} — ${msg}</span>
         <button onclick="resolveThreadLink('${item.id}','${coll}','${l.id}',event)" title="Try again"
                 style="border:none;background:none;cursor:pointer;font-size:13px;color:var(--text2);">↻</button>`;
     }
@@ -2623,6 +2628,7 @@ async function resolveThreadLink(id, coll, linkId, ev) {
   const link = item?.email_links?.find(l => l.id === linkId);
   if (!link) return;
   link.resolving = true;
+  link.resolveErr = '';
   rerender(coll);
   try {
     const res  = await fetch(RESOLVE_THREAD_WEBHOOK, {
@@ -2630,16 +2636,24 @@ async function resolveThreadLink(id, coll, linkId, ev) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ subject: link.subject || '', contact: link.contact || '' })
     });
-    const data = await res.json().catch(() => null);
-    if (data && data.found && data.webLink) {
+    const text = await res.text();
+    console.log('[resolve-thread]', res.status, text);   // raw response, for debugging
+    let data = null;
+    try { data = JSON.parse(text); } catch (_) {}
+    if (Array.isArray(data)) data = data[0];              // tolerate array-wrapped response
+    if (typeof data === 'string') { try { data = JSON.parse(data); } catch (_) {} } // tolerate double-encoded
+    if (!res.ok) {
+      link.url = ''; link.resolveErr = 'offline';        // webhook returned an error/404 (active? imported?)
+    } else if (data && data.found && data.webLink) {
       link.url = data.webLink;
+      link.resolveErr = '';
       if (data.conversationId) link.conversationId = data.conversationId;
     } else {
-      link.url = '';                       // searched, but no match in the mailbox
+      link.url = ''; link.resolveErr = 'nomatch';        // searched OK, but no message matched
     }
   } catch (e) {
     console.error('resolveThreadLink failed:', e);
-    link.url = '';                         // webhook unreachable — retry button shows
+    link.url = ''; link.resolveErr = 'offline';          // couldn't reach the webhook at all
   }
   link.resolving = false;
   rerender(coll);
