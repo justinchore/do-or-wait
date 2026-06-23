@@ -1,0 +1,39 @@
+rules_version = '2';
+
+// ─────────────────────────────────────────────────────────────────────────
+// Do-or-Wait Firestore security rules
+//
+// IMPORTANT SEQUENCING: do NOT paste the RECOMMENDED block into the Firebase
+// console until the app signs users in (see FIRESTORE_SECURITY.md). The app
+// currently connects with NO auth, so these rules would lock it out.
+// n8n is unaffected — its Google service account bypasses rules entirely.
+// ─────────────────────────────────────────────────────────────────────────
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // A signed-in, verified user on the explicit allowlist. This MUST match
+    // the ALLOWED_EMAILS list in index.html. Emails are lowercased to compare.
+    function isAllowed() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.lower() in [
+          'jchoustin91@gmail.com',
+          'justin.cho@cubework.com',
+          'cubeworkautomation@gmail.com'
+        ];
+    }
+
+    // ===== RECOMMENDED (turn on AFTER the app has Google sign-in) =====
+    match /{document=**} {
+      allow read, write: if isAllowed();
+    }
+
+    // ===== INTERIM (weak, low-effort) — any signed-in user incl. anonymous =====
+    // Stops drive-by access from anyone who merely has the project ID, but
+    // anyone who loads the app can still get a token. Use only as a stopgap.
+    // match /{document=**} {
+    //   allow read, write: if request.auth != null;
+    // }
+  }
+}

@@ -11,7 +11,7 @@ For each prospect company it: finds the right warehousing decision-makers in Apo
 ```
 Run / Test (manual) → Household Durables input → Loop companies
   → Build people search → Apollo People Search (FREE) → Pick best contacts
-  → Build scoring prompt → Score + draft (Claude) → Gate + build email reveal
+  → Build scoring prompt → Score + draft (OpenAI) → Gate + build email reveal
   → Apollo reveal email (1 credit) → Build sheet row → Append to Google Sheet → (loop)
 ```
 
@@ -34,7 +34,7 @@ Search + scoring are **free**. An Apollo email credit (1 each) is spent only on 
 ## Credentials (2 — both already exist + 1 new Apollo)
 
 - **Apollo API — do-or-wait** *(new)* — `httpHeaderAuth`, header **`X-Api-Key`**, value = your Apollo **master** API key (Settings → Integrations → API; must be a *master* key — the search endpoint rejects regular keys).
-- **Anthropic API — do-or-wait** — reused (scoring/draft).
+- **OpenAI API — do-or-wait** *(new)* — n8n `openAiApi` credential (your OpenAI API key). Powers the scoring + draft node (model `gpt-4o`; swap to `gpt-4o-mini` in "Build scoring prompt" for cheaper volume).
 - **Google Service Account — do-or-wait** — reused (writes the sheet).
 
 ## How to run

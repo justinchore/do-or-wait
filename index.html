@@ -606,8 +606,21 @@
 </head>
 <body>
 
+<!-- Sign-in gate (shown until an allowlisted Google account signs in) -->
+<div id="auth-screen" style="display:none;min-height:100vh;align-items:center;justify-content:center;">
+  <div class="auth-card">
+    <div class="auth-logo">📋</div>
+    <h1>Do or Wait</h1>
+    <p id="auth-msg">Sign in with your authorized Google account.</p>
+    <button class="google-btn" onclick="doSignIn()">
+      <svg class="google-icon" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+      Sign in with Google
+    </button>
+  </div>
+</div>
+
 <!-- Main app -->
-<div id="app">
+<div id="app" style="display:none">
 
   <div class="print-hd">
     <h1>Do or Wait</h1>
@@ -1200,6 +1213,8 @@ import { getFirestore, collection, doc, getDoc, getDocs, getDocsFromServer, setD
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
+  from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 
 const firebaseConfig = {
   apiKey:            "AIzaSyBQ-1dSWkXnh5Ju2lVKsUieCx3r-lZc08U",
@@ -1211,6 +1226,65 @@ const firebaseConfig = {
 const fbApp   = initializeApp(firebaseConfig);
 const db      = getFirestore(fbApp);
 const storage = getStorage(fbApp);
+const auth    = getAuth(fbApp);
+
+// ═══════════════════════════════════════════════════════════════
+//  AUTH GATE — Google sign-in restricted to an explicit allowlist.
+//  Firestore listeners are DEFERRED until a valid user is signed in,
+//  so they don't hit permission-denied once the rules are locked down.
+//  (n8n's service account bypasses rules and is unaffected.)
+// ═══════════════════════════════════════════════════════════════
+const ALLOWED_EMAILS = [
+  'jchoustin91@gmail.com',
+  'justin.cho@cubework.com',
+  'cubeworkautomation@gmail.com'
+];
+const authProvider = new GoogleAuthProvider();
+
+// Defer every Firestore listener until auth is ready, then flush.
+let _authReady = false;
+const _pendingListeners = [];
+function liveSnapshot(target, next, error){
+  if (_authReady) return onSnapshot(target, next, error);
+  _pendingListeners.push([target, next, error]);
+  return () => {};
+}
+function startLiveData(){
+  if (_authReady) return;
+  _authReady = true;
+  _pendingListeners.splice(0).forEach(([t, n, e]) => {
+    try { onSnapshot(t, n, e); } catch (err) { console.warn('listener attach', err); }
+  });
+}
+// Current user's Firebase ID token (for direct Firestore REST writes under locked rules).
+async function authToken(){ try { return auth.currentUser ? await auth.currentUser.getIdToken() : ''; } catch(e){ return ''; } }
+
+function doSignIn(){
+  signInWithPopup(auth, authProvider).catch(e => {
+    const m = document.getElementById('auth-msg');
+    if (m) m.textContent = 'Sign-in failed: ' + (e.code || e.message || e);
+  });
+}
+function doSignOut(){ signOut(auth); }
+
+onAuthStateChanged(auth, user => {
+  const appEl  = document.getElementById('app');
+  const authEl = document.getElementById('auth-screen');
+  const email  = ((user && user.email) || '').toLowerCase();
+  if (user && ALLOWED_EMAILS.includes(email)) {
+    if (authEl) authEl.style.display = 'none';
+    if (appEl)  appEl.style.display  = '';
+    startLiveData();                          // attach Firestore listeners (once)
+  } else {
+    if (user) {                               // signed in but not on the allowlist
+      const m = document.getElementById('auth-msg');
+      if (m) m.textContent = (email || 'That account') + ' isn’t authorized. Use an approved account.';
+      signOut(auth);
+    }
+    if (appEl)  appEl.style.display  = 'none';
+    if (authEl) authEl.style.display = 'flex';
+  }
+});
 
 // ═══════════════════════════════════════════════════════════════
 //  STATE
@@ -1242,7 +1316,7 @@ const audioUrls = {};
 // ═══════════════════════════════════════════════════════════════
 //  FIRESTORE LISTENER (starts immediately, no auth needed)
 // ═══════════════════════════════════════════════════════════════
-unsubTopics = onSnapshot(collection(db, 'topics'), snapshot => {
+unsubTopics = liveSnapshot(collection(db, 'topics'), snapshot => {
   topics = snapshot.docs.map(d => d.data());
   topics.forEach(t => t.entries?.forEach(e => { if (!e.notes) e.notes = []; }));
   render();
@@ -2179,7 +2253,7 @@ function followupMsgFor(lead) {
 }
 
 // Firestore listener
-unsubLeads = onSnapshot(collection(db, 'leads'), snap => {
+unsubLeads = liveSnapshot(collection(db, 'leads'), snap => {
   leads = snap.docs.map(d => d.data()).filter(l => !l._deleted);
   leads.forEach(l => { if (!l.entries) l.entries = []; l.entries.forEach(e => { if (!e.notes) e.notes = []; }); });
   renderLeadsSection();
@@ -3333,7 +3407,7 @@ const ADD_LOCATION_WEBHOOK = `${PROXY}/webhook/add-location`;
 const RESOLVE_THREAD_WEBHOOK = `${PROXY}/webhook/resolve-thread`; // subject+contact → real Outlook webLink (n8n workflow 11)
 
 // Listen to ALL availability docs (scales to multiple locations)
-unsubAvail = onSnapshot(collection(db, 'availability'), snap => {
+unsubAvail = liveSnapshot(collection(db, 'availability'), snap => {
   snap.forEach(d => { availMap[d.id] = d.data(); });
   snap.docChanges().forEach(c => { if (c.type === 'removed') delete availMap[c.doc.id]; });
   renderAvailability();
@@ -4029,9 +4103,10 @@ async function savePA() {
 
   setSyncing(true);
   try {
+    const _tok = await authToken();
     await fetch(
       `https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/availability/${propId}?updateMask.fieldPaths=pa`,
-      { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patchBody) }
+      { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(_tok ? { Authorization: 'Bearer ' + _tok } : {}) }, body: JSON.stringify(patchBody) }
     );
     // onSnapshot will update the card automatically
   } catch(e) { console.error('Save PA failed:', e); }
@@ -4065,9 +4140,10 @@ async function saveOwnership() {
   }};
   setSyncing(true);
   try {
+    const _tok = await authToken();
     await fetch(
       `https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/availability/${propId}?updateMask.fieldPaths=ownership&updateMask.fieldPaths=lease_expiration`,
-      { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patchBody) }
+      { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(_tok ? { Authorization: 'Bearer ' + _tok } : {}) }, body: JSON.stringify(patchBody) }
     );
   } catch (e) { console.error('Save ownership failed:', e); }
   finally { setSyncing(false); }
@@ -4083,7 +4159,7 @@ let noteSort   = 'new';   // 'new' | 'old'
 let noteSince  = '';      // YYYY-MM-DD lower bound on createdAt (inclusive)
 const editingNotes = new Set(); // note ids currently in edit mode
 
-unsubNotes = onSnapshot(collection(db, 'notes'), snap => {
+unsubNotes = liveSnapshot(collection(db, 'notes'), snap => {
   const prevIds = ideaNotes.map(n => n.id).join(',');
   ideaNotes = snap.docs.map(d => d.data()).filter(n => !n._deleted);
   const newIds = ideaNotes.map(n => n.id).join(',');
@@ -4278,7 +4354,7 @@ function renderPricing(){
 
 // Live override from Firestore (written by the n8n Pricing Sync). Falls back to the snapshot if the doc is absent/empty.
 try {
-  onSnapshot(doc(db,'pricing','current'), snap => {
+  liveSnapshot(doc(db,'pricing','current'), snap => {
     const d = snap.exists() ? snap.data() : null;
     if(d && Array.isArray(d.rows) && d.rows.length){ pricingRows = d.rows; pricingSource = 'live'; normalizePricing(); renderPricing(); }
   }, err => console.warn('pricing listener', err));
@@ -4384,7 +4460,7 @@ function copyOutreachDraft(id, e){
 
 // Live overlay from Firestore (written by the n8n Apollo Ingestion workflow).
 try {
-  unsubOutreach = onSnapshot(collection(db,'outreach'), snap => {
+  unsubOutreach = liveSnapshot(collection(db,'outreach'), snap => {
     outreachMap = {};
     snap.forEach(d => { outreachMap[d.id] = { id:d.id, ...d.data() }; });
     const v = document.getElementById('outreach-view');
@@ -4395,7 +4471,7 @@ try {
 // Renewals — per-tenant lease expiration / renewal status (written by the n8n Renewals
 // Sync, workflow 10). Surfaced on occupied unit rows in the Avail tab. No snapshot fallback.
 try {
-  onSnapshot(doc(db,'renewals','current'), snap => {
+  liveSnapshot(doc(db,'renewals','current'), snap => {
     const d = snap.exists() ? snap.data() : null;
     renewalRows = (d && Array.isArray(d.rows)) ? d.rows : [];
     renewalVer++;                                   // invalidate per-location memo
@@ -4583,6 +4659,8 @@ window.onOutreachSearch    = onOutreachSearch;
 window.setOutreachFilter   = setOutreachFilter;
 window.toggleOutreachRow   = toggleOutreachRow;
 window.copyOutreachDraft   = copyOutreachDraft;
+window.doSignIn            = doSignIn;
+window.doSignOut           = doSignOut;
 window.setPricingState     = setPricingState;
 window.togglePriceRow      = togglePriceRow;
 window.onPlaybookSearch    = onPlaybookSearch;

@@ -1,4 +1,4 @@
-// Apollo Ingestion (→ Firestore `outreach` → app Outreach tab) — paste-ready Code node bodies.
+// Apollo Ingestion (OpenAI scoring → Firestore `outreach` → app Outreach tab) — paste-ready Code node bodies.
 
 // ===== "Household Durables input" =====
 // Household Durables prospect companies (importers tab, domain-ready, ranked by TEU).
@@ -274,20 +274,22 @@ const org = (people[0] && people[0].organization) || {};
 return [{ json: { company:ctx.company, domain:ctx.domain, city:ctx.city, state:ctx.state, teu:ctx.teu, industry:ctx.industry, emp:org.estimated_num_employees||null, org_industry:org.industry||'', picked } }];
 
 // ===== "Build scoring prompt" =====
-// Score vs Cubework fit rubric and draft a Household-Durables opener.
+// Score vs Cubework fit rubric and draft a Household-Durables opener (OpenAI). Model: gpt-4o (swap to gpt-4o-mini for cheaper volume).
 const c = $json;
 const rubric = `You are scoring an importer of household-durables goods (furniture, appliances, home) as a prospect for Cubework's flexible, month-to-month warehouse space near the Ports of LA/Long Beach (Inland Empire) and other Cubework metros. The ideal prospect moves real container volume but is NOT so large it already owns its distribution.\nScore 7 factors: volume_trend(0-20 higher TEU=outgrowing space); right_size(0-20 mid-size; PENALIZE giants that own DCs and tiny importers); seasonality(0-15); dtc(0-15 holds own inventory); bulk(0-10 furniture/home score high); recurring(0-10); timing(0-10).\nTiers: Hot>=70, Warm 45-69, Watch<45. Score conservatively when data is thin.\nReturn ONLY minified JSON: {\"total\":n,\"tier\":\"Hot|Warm|Watch\",\"why_now\":\"one sentence\",\"email_subject\":\"...\",\"email_body\":\"~80 words, value-led, lead with port-proximity + flexible space for bulky/seasonal inventory, reference this company specifically, offer to share how similar importers structure overflow space, never use the phrase follow up, sign as Justin\"}`;
 const candidate = JSON.stringify({ company:c.company, domain:c.domain, state:c.state, teu:c.teu, employees:c.emp, org_industry:c.org_industry });
-const requestBody = { model:'claude-3-5-sonnet-20241022', max_tokens:700, system:rubric, messages:[{role:'user',content:'Company:\n'+candidate}] };
+// OpenAI chat completions. response_format forces clean JSON (rubric already asks for JSON).
+const requestBody = { model:'gpt-4o', max_tokens:700, response_format:{ type:'json_object' },
+  messages:[ { role:'system', content:rubric }, { role:'user', content:'Company:\n'+candidate } ] };
 return [{ json: { ...c, requestBody } }];
 
 // ===== "Gate + build email reveal" =====
-// Claude response on $json.content; context from 'Pick best contacts'.
+// OpenAI response on $json.choices[0].message.content; context from 'Pick best contacts'.
 // Keep Hot/Warm only (giants tier Watch -> dropped BEFORE spending any email credit).
 // Email reveal: reveal_personal_emails=true (1 credit each); phones=false (revealed later on reply).
 const ctx = $('Pick best contacts').item.json;
 let parsed = {};
-try { const t=($json.content&&$json.content[0]&&$json.content[0].text)||$json.text||'{}';
+try { const t=($json.choices&&$json.choices[0]&&$json.choices[0].message&&$json.choices[0].message.content)||$json.text||'{}';
   parsed = JSON.parse(t.trim().replace(/^```json/i,'').replace(/```$/,'').trim()); } catch(e){ return []; }
 const tier = parsed.tier || 'Watch';
 if (tier === 'Watch') return [];
