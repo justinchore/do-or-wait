@@ -1,0 +1,19 @@
+{
+  "name": "do-or-wait-firestore-mcp",
+  "version": "1.0.0",
+  "description": "Local MCP connector that lets Claude read/write the do-or-wait Firestore database (tasks, leads, notes) so updates show up live in the app.",
+  "type": "module",
+  "bin": {
+    "do-or-wait-mcp": "server.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node selftest.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  }
+}

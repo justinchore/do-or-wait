@@ -1,0 +1,321 @@
+// Apollo Ingestion (→ Firestore `outreach` → app Outreach tab) — paste-ready Code node bodies.
+
+// ===== "Household Durables input" =====
+// Household Durables prospect companies (importers tab, domain-ready, ranked by TEU).
+// SCALE: regenerate this array for another industry and paste here.
+// TEST vs FULL: while TEST_DOMAINS is non-empty only those run (agreed test set);
+//   set TEST_DOMAINS = [] to run the entire Household Durables list (238 companies).
+const TEST_DOMAINS = ['flexsteel.com','mylibertyfurniture.com','curtisint.com'];
+const companies = [
+  {c:"Lg Electronics Usa. Inc. 1000 Sy",d:"lg.com",city:"Englewood Cliffs",st:"New Jersey",t:142613},
+  {c:"Curtis & Co.",d:"curtisint.com",city:"Toronto",st:"Ontario",t:8733},
+  {c:"Flexsteel Industries Inc.",d:"flexsteel.com",city:"Dubuque",st:"Iowa",t:7061},
+  {c:"Tramontina Usa Inc.",d:"tramontina.com.br",city:"Sugar Land",st:"Texas",t:6832},
+  {c:"Tempur Pedic North America Llc",d:"somnigroup.com",city:"Lexington",st:"Kentucky",t:5105},
+  {c:"Harman International",d:"samsung.com",city:"Moreno Valley",st:"California",t:5069},
+  {c:"Leggett & Platt Inc.",d:"leggett.com",city:"El Paso",st:"Texas",t:4077},
+  {c:"Liberty Furniture Atlanta",d:"mylibertyfurniture.com",city:"Atlanta",st:"Georgia",t:3627},
+  {c:"Stihl Inc.",d:"stihl.com",city:"Virginia Beach",st:"Virginia",t:3556},
+  {c:"Engineered Floors Llc",d:"engineeredfloorsllc.com",city:"Dalton",st:"Georgia",t:3417},
+  {c:"Electrolux Home Care Products",d:"midea.com",city:"El Paso",st:"Texas",t:3346},
+  {c:"Loloi Rugs",d:"loloirugs.com",city:"Dallas",st:"Texas",t:3002},
+  {c:"Evenflo Co. Inc.",d:"gbinternational.com.hk",city:"Ontario",st:"California",t:2918},
+  {c:"Home Dynamix Llc",d:"tncliving.com",city:"Elk Grove Village",st:"Illinois",t:2874},
+  {c:"Bernhardt Furniture Co.",d:"bernhardt.com",city:"Lenoir",st:"North Carolina",t:2539},
+  {c:"Bosch Thermotechnology Corp.",d:"bosch.com",city:"North Aurora",st:"Illinois",t:2512},
+  {c:"Nostalgia Products Group Llc",d:"nostalgiaelectrics.com",city:"De Pere",st:"Wisconsin",t:2502},
+  {c:"Miele Inc.",d:"miele.com",city:"Princeton",st:"New Jersey",t:2443},
+  {c:"Fiskars Brands Inc. Gol Whse",d:"fiskarsgroup.com",city:"",st:"",t:2062},
+  {c:"Nourison Industries",d:"nourison.com",city:"Saddle Brook",st:"New Jersey",t:2006},
+  {c:"La Z Boy Casegoods",d:"la-z-boy.com",city:"Hudson",st:"North Carolina",t:1896},
+  {c:"University Furnishings",d:"universityfurnishings.com",city:"Dallas",st:"Texas",t:1798},
+  {c:"Princess House Inc.",d:"princesshouse.com",city:"Taunton",st:"Massachusetts",t:1784},
+  {c:"Sceptre",d:"sceptre.com",city:"City of Industry",st:"California",t:1784},
+  {c:"Jackson Furniture Industries",d:"jacksonfurniture.com",city:"Cleveland",st:"Tennessee",t:1751},
+  {c:"Orbit Irrigation Products Inc.",d:"husqvarnagroup.com",city:"North Salt Lake",st:"Utah",t:1674},
+  {c:"Sonos Inc.",d:"sonos.com",city:"",st:"California",t:1625},
+  {c:"Stylecraft Home Collection, Inc.",d:"stylecraftonline.com",city:"Southaven",st:"Mississippi",t:1594},
+  {c:"Breville Usa",d:"brevillegroup.com",city:"",st:"",t:1589},
+  {c:"Modern Marketing Concepts Inc.",d:"modernmktg.com",city:"Louisville",st:"Kentucky",t:1588},
+  {c:"Imusa Usa Llc",d:"groupeseb.com",city:"Doral",st:"Florida",t:1582},
+  {c:"The Cookware Co. (Usa) Llc",d:"cookware-co.com",city:"Irvington",st:"New York",t:1526},
+  {c:"Marquis Industries Inc.",d:"liveventures.com",city:"Chatsworth",st:"Georgia",t:1522},
+  {c:"Friedrich Air Conditioning Co.",d:"paloma.co.jp",city:"San Antonio",st:"Texas",t:1501},
+  {c:"Danby Products Inc.",d:"danby.com",city:"Findlay",st:"Ohio",t:1471},
+  {c:"Casper Sleep Inc.",d:"carpenter.com",city:"New York",st:"New York",t:1470},
+  {c:"Sony Interactive Entertainment",d:"sony.com",city:"Foster City",st:"California",t:1392},
+  {c:"E&E Co., Ltd.",d:"ee1994.com",city:"Fremont",st:"California",t:1376},
+  {c:"Spectrum Brands Inc. Attn Teran",d:"spectrumbrands.com",city:"Middleton",st:"Wisconsin",t:1368},
+  {c:"Hunter Fan Co.",d:"griffon.com",city:"Holiday City",st:"Ohio",t:1349},
+  {c:"Riverside Furniture Corp.",d:"riverside-furniture.com",city:"Fort Smith",st:"Arkansas",t:1343},
+  {c:"Ergomotion Inc.",d:"keeson.com",city:"Santa Barbara",st:"California",t:1274},
+  {c:"Bissell Homecare Inc.",d:"bissell.com",city:"Grand Rapids",st:"Michigan",t:1246},
+  {c:"Apache Mills Inc.",d:"apachemills.com",city:"",st:"",t:1243},
+  {c:"Zinus Inc.",d:"zinus.co.kr",city:"Tracy",st:"California",t:1232},
+  {c:"Bexco Enterprises Inc.",d:"milliondollarbaby.com",city:"",st:"",t:1213},
+  {c:"Wolf Steel Ltd.",d:"napoleon.com",city:"",st:"",t:1178},
+  {c:"Creative Co Op Inc.",d:"regent-holding.com",city:"Memphis",st:"Tennessee",t:1163},
+  {c:"Whitewood Industries",d:"whitewoodfurniture.com",city:"Thomasville",st:"North Carolina",t:1134},
+  {c:"Interdesign Inc.",d:"idesignlivesimply.com",city:"Solon",st:"Ohio",t:1131},
+  {c:"New View Gifts & Accessories Ltd.",d:"newviewgifts.com",city:"Media",st:"Pennsylvania",t:1081},
+  {c:"Lovesac",d:"lovesac.com",city:"",st:"",t:1073},
+  {c:"Italkraft Llc",d:"italkraft.com",city:"Miami",st:"Florida",t:1070},
+  {c:"Ardmore Home Design Llc",d:"madegoods.com",city:"Hacienda Heights",st:"California",t:1017},
+  {c:"Golden Goose Logistics Llc",d:"kickstarter.com",city:"",st:"",t:994},
+  {c:"Topway Global Inc.",d:"watts.com",city:"Brea",st:"California",t:992},
+  {c:"The Dixie Group Inc.",d:"thedixiegroup.com",city:"Dalton",st:"Georgia",t:976},
+  {c:"Uniek Inc.",d:"pylegroup.ca",city:"Waunakee",st:"Wisconsin",t:966},
+  {c:"Wahl Clipper Corporation",d:"wahl.com",city:"Sterling",st:"Illinois",t:959},
+  {c:"Currey & Co. (Us)",d:"curreycodealers.com",city:"",st:"",t:950},
+  {c:"Tradewinds Climate Systems",d:"twclimate.com",city:"Jacksonville",st:"Florida",t:922},
+  {c:"Fit Fresh",d:"fit-fresh.com",city:"Providence",st:"Rhode Island",t:890},
+  {c:"Homestretch, Llc.",d:"homestretchva.org",city:"",st:"",t:878},
+  {c:"Caba Design Corp.",d:"cabadesign.co",city:"Rancho Cordova",st:"California",t:868},
+  {c:"Knape & Vogt Mfg. Co.",d:"knapeandvogt.com",city:"",st:"",t:864},
+  {c:"Summer Classics",d:"gabbyhome.com",city:"Pelham",st:"Alabama",t:861},
+  {c:"Barcalounger",d:"barcalounger.com",city:"Morristown",st:"Tennessee",t:857},
+  {c:"Tacony Corporation",d:"tacony.com",city:"Fenton",st:"Missouri",t:846},
+  {c:"Pioneer Automotive Technologies Inc.",d:"global.pioneer",city:"Springboro",st:"Ohio",t:844},
+  {c:"M Design Village Llc",d:"mdesignvillage.com",city:"Franklin Township",st:"New Jersey",t:842},
+  {c:"Brumate Llc",d:"brumate.com",city:"Denver",st:"Colorado",t:835},
+  {c:"Stillwater Designs",d:"kicker.com",city:"Stillwater",st:"Oklahoma",t:833},
+  {c:"Rollease Acmeda",d:"jmfamily.com",city:"",st:"",t:829},
+  {c:"Rev A Shelf Ras 2 Location",d:"jonesplastic.com",city:"Louisville",st:"Kentucky",t:829},
+  {c:"Pentair Residential Filtration Llc",d:"pentair.com",city:"Milwaukee",st:"Wisconsin",t:804},
+  {c:"Jonathan Louis Inernational Inc.",d:"jonathanlouis.net",city:"",st:"",t:804},
+  {c:"Hollywood Bed & Spring Mfg. Co. Inc.",d:"hollywoodbed.com",city:"",st:"",t:800},
+  {c:"National Christmas Products Inc.",d:"nationaltree.com",city:"Cranford",st:"New Jersey",t:771},
+  {c:"Lasko Products",d:"lasko.com",city:"Fort Worth",st:"Texas",t:759},
+  {c:"Keeco, Llc.",d:"hollandersleepproducts.com",city:"Hayward",st:"California",t:752},
+  {c:"Sirio North America Inc.",d:"shopsirio.com",city:"",st:"",t:751},
+  {c:"Ekornes Inc.",d:"qumei.com",city:"Franklin Township",st:"New Jersey",t:750},
+  {c:"Thuma Inc.",d:"thuma.co",city:"",st:"",t:741},
+  {c:"Hills Point Industries Llc",d:"gorillagrip.com",city:"",st:"",t:725},
+  {c:"Westfield Outdoor Inc.",d:"westfieldoutdoor.com",city:"Indianapolis",st:"Indiana",t:722},
+  {c:"Elsa",d:"www2.elsal.com",city:"",st:"",t:705},
+  {c:"Gale Pacific Usa Inc.",d:"galepacific.com",city:"Rancho Cucamonga",st:"California",t:703},
+  {c:"Cozey Inc.",d:"cozey.ca",city:"",st:"",t:689},
+  {c:"Ac Infinity Inc.",d:"acinfinity.com",city:"City of Industry",st:"California",t:688},
+  {c:"Rinnai America Corp.",d:"rinnai.co.jp",city:"Peachtree City",st:"Georgia",t:685},
+  {c:"Grafiti Home Inc. (Dba 7 Th Avenue)",d:"grafitihome.com",city:"Compton",st:"California",t:684},
+  {c:"Supply Chain Sources Llc",d:"lifesmartproducts.com",city:"",st:"",t:674},
+  {c:"Springs Window Fashions Llc",d:"springswindowfashions.com",city:"Middleton",st:"Wisconsin",t:671},
+  {c:"Vanguard Furniture",d:"vanguardfurniture.com",city:"Conover",st:"North Carolina",t:669},
+  {c:"Mackenzie Childs, Llc",d:"mackenziechilds.com",city:"",st:"",t:655},
+  {c:"Ardisam Inc.",d:"ardisam.com",city:"Cumberland",st:"Wisconsin",t:649},
+  {c:"Aristocrat Technologies",d:"aristocrat.com",city:"Las Vegas",st:"Nevada",t:634},
+  {c:"Lamplight Farms Inc.",d:"wcbradley.com",city:"",st:"",t:633},
+  {c:"Brewster Home Fashions",d:"brewsterwallcovering.com",city:"Randolph",st:"Massachusetts",t:619},
+  {c:"Thermos Llc",d:"thermos.com",city:"Schaumburg",st:"Illinois",t:618},
+  {c:"Nexgrill Industries Inc.",d:"globalleisuregroup.com",city:"Chino",st:"California",t:611},
+  {c:"Levtex Llc.",d:"wholesale.levtexhome.com",city:"Santa Monica",st:"California",t:609},
+  {c:"Renin Us Llc",d:"bbxcapital.com",city:"Tupelo",st:"Mississippi",t:608},
+  {c:"Q.E.P. Co. Inc.",d:"qep.com",city:"Boca Raton",st:"Florida",t:607},
+  {c:"The Shekia Group Llc",d:"forevermarkcabinetry.com",city:"Edison",st:"New Jersey",t:602},
+  {c:"Foliot Furniture Pacific",d:"foliot.com",city:"Las Vegas",st:"Nevada",t:596},
+  {c:"Hillpointe Construction",d:"hillpointe.com",city:"Athens",st:"Georgia",t:594},
+  {c:"Lennox Industries Inc.",d:"lennox.com",city:"Marshalltown",st:"Iowa",t:587},
+  {c:"Walker Edison Furniture Co.",d:"walkeredison.com",city:"",st:"",t:583},
+  {c:"Aico Amini Innovation Corp.",d:"amini.com",city:"Pico Rivera",st:"California",t:582},
+  {c:"Universal Granite & Marble",d:"universalgranite.com",city:"Naperville",st:"Illinois",t:575},
+  {c:"Over And Back Inc.",d:"overback.com",city:"Hauppauge",st:"New York",t:575},
+  {c:"Intralin Corp.",d:"intralin.com",city:"",st:"Maryland",t:566},
+  {c:"Highland Cabinetry Inc.",d:"highlandcabinetry.com",city:"Phoenix",st:"Arizona",t:560},
+  {c:"Sound United",d:"masimo.com",city:"Vista",st:"California",t:558},
+  {c:"Flemish Master Weavers",d:"natcohome.com",city:"Sanford",st:"Maine",t:552},
+  {c:"Peag Llc",d:"jlab.com",city:"Carlsbad",st:"California",t:546},
+  {c:"The Uttermost Co.",d:"uttermost.com",city:"Rocky Mount",st:"Virginia",t:539},
+  {c:"Jaipur Living Inc.",d:"jaipurliving.com",city:"Acworth",st:"Georgia",t:533},
+  {c:"Phifer Inc.",d:"phifer.com",city:"Tuscaloosa",st:"Alabama",t:526},
+  {c:"Diono Llc",d:"us.diono.com",city:"Puyallup",st:"Washington",t:523},
+  {c:"Boston Warehouse Trading Corp.",d:"bwtc.com",city:"Seekonk",st:"Massachusetts",t:510},
+  {c:"Atlantic Promotions Inc.",d:"starfrit.com",city:"",st:"",t:510},
+  {c:"Stokke Llc",d:"stokke.com",city:"Kennesaw",st:"Georgia",t:506},
+  {c:"Mgr Design International",d:"mgrdesign.com",city:"Oxnard",st:"California",t:504},
+  {c:"Zagg",d:"evercel.com",city:"Salt Lake City",st:"Utah",t:496},
+  {c:"Empire Candle Co Llc",d:"langleyempirecandle.com",city:"",st:"",t:494},
+  {c:"C&T International",d:"sorellefurniture.com",city:"East Rutherford",st:"New Jersey",t:492},
+  {c:"Scs Direct Inc.",d:"scsdirectinc.com",city:"Milford",st:"Connecticut",t:489},
+  {c:"Noritz America",d:"noritzglobal.com",city:"Fountain Valley",st:"California",t:488},
+  {c:"Jeffrey Court Inc.",d:"jeffreycourt.com",city:"Norco",st:"California",t:487},
+  {c:"Universal Electronics Inc.",d:"uei.com",city:"Cypress",st:"California",t:485},
+  {c:"Bradshaw International Inc.",d:"bradshawhome.com",city:"Rancho Cucamonga",st:"California",t:483},
+  {c:"Surya Carpet Inc.",d:"surya.com",city:"White",st:"Georgia",t:479},
+  {c:"Joneca Corp.",d:"joneca.com",city:"Anaheim",st:"California",t:478},
+  {c:"Primo International",d:"primointernational.com",city:"Mississauga",st:"Ontario",t:474},
+  {c:"Mercana Furniture & Decor Ltd.",d:"mercana.com",city:"Surrey",st:"British Columbia",t:459},
+  {c:"Goodman Mfg. Co. L.P.",d:"daikin.com",city:"Houston",st:"Texas",t:450},
+  {c:"Leoben Co.",d:"leobenco.com",city:"",st:"",t:446},
+  {c:"Liberty Hardware",d:"masco.com",city:"Winston-Salem",st:"North Carolina",t:446},
+  {c:"Home Trends & Design",d:"htddirect.com",city:"Austin",st:"Texas",t:442},
+  {c:"Carlisle Foodservice Products",d:"cfsbrands.com",city:"Oklahoma City",st:"Oklahoma",t:439},
+  {c:"Theodore Alexander Usa Inc.",d:"oxfordcreations.com",city:"High Point",st:"North Carolina",t:433},
+  {c:"Loud Audio Llc",d:"rode.com",city:"Fife",st:"Washington",t:432},
+  {c:"One Diamond Electronics Inc.",d:"diamond-electronics.com",city:"Los Angeles",st:"California",t:431},
+  {c:"Infinite Creative Enterprises Inc.",d:"icesigns.com",city:"Seabrook",st:"New Hampshire",t:429},
+  {c:"Traeger Pellet Grills Llc",d:"traegergrills.com",city:"Salt Lake City",st:"Utah",t:402},
+  {c:"Ispring Water Systems Llc",d:"123filter.com",city:"Alpharetta",st:"Georgia",t:396},
+  {c:"Multy Home Lp",d:"multyhome.com",city:"Vaughan",st:"Ontario",t:389},
+  {c:"Home Legend",d:"homelegend.com",city:"Fontana",st:"California",t:385},
+  {c:"Wilton Industries",d:"oetker-gruppe.com",city:"Woodridge",st:"Illinois",t:382},
+  {c:"Paddywax",d:"paddywax.com",city:"Nashville",st:"Tennessee",t:379},
+  {c:"Snap On Equipment",d:"snapon.com",city:"Conway",st:"Arkansas",t:379},
+  {c:"Esi Cases Accessories",d:"esicellular.net",city:"Newark",st:"New Jersey",t:377},
+  {c:"Blu Dot Design",d:"bludot.com",city:"Minneapolis",st:"Minnesota",t:376},
+  {c:"Southern Motion",d:"southernmotion.com",city:"",st:"",t:375},
+  {c:"Stellar Innovations Group Inc.",d:"stellarhomes.us",city:"",st:"",t:375},
+  {c:"Tablecraft Products Co.",d:"tablecraft.com",city:"Gurnee",st:"Illinois",t:368},
+  {c:"Beaulieu Canada",d:"bintg.com",city:"Acton Vale",st:"Qu\u00e9bec",t:365},
+  {c:"Zak Designs",d:"zak.com",city:"",st:"",t:363},
+  {c:"Visuar Sa",d:"visuar.com.ar",city:"Buenos Aires",st:"Ciudad Aut\u00f3noma de Buenos Aires",t:358},
+  {c:"Stiebel Eltron",d:"stiebel-eltron.de",city:"Hatfield",st:"Massachusetts",t:358},
+  {c:"Seminole Consulting And Marketing",d:"scmdesigns.com",city:"Bentonville",st:"Arkansas",t:357},
+  {c:"Tyco Fire Protection Products",d:"johnsoncontrols.com",city:"Marinette",st:"Wisconsin",t:356},
+  {c:"Gourmet Home Products Llc",d:"gourmethomeproducts.com",city:"New York",st:"New York",t:350},
+  {c:"Cleva North America",d:"cleva-na.com",city:"Greenville",st:"South Carolina",t:349},
+  {c:"Butler Specialty Co.",d:"butlerspecialty.net",city:"Chicago",st:"Illinois",t:347},
+  {c:"Avanti Products",d:"thelegacycompanies.com",city:"Miami",st:"Florida",t:347},
+  {c:"Tropitone Furniture Co. Inc.",d:"brownjordaninc.com",city:"Irvine",st:"California",t:333},
+  {c:"Melnor Inc.",d:"melnor.com",city:"",st:"",t:332},
+  {c:"L & J.G. Stickley",d:"stickley.com",city:"Manlius",st:"New York",t:331},
+  {c:"Jonathan Adler",d:"jonathanadler.com",city:"New York",st:"New York",t:331},
+  {c:"Parachute Home Inc.",d:"parachutehome.com",city:"Culver City",st:"California",t:331},
+  {c:"G&T Industries",d:"gtindustries.com",city:"Byron Center",st:"Michigan",t:329},
+  {c:"Ginsey Industries. Inc.Ginsey Industries",d:"ginsey.com",city:"Logan Township",st:"New Jersey",t:329},
+  {c:"Woodard Cm Llc",d:"litexindustries.com",city:"Owosso",st:"Michigan",t:323},
+  {c:"Blue Ridge Home Fashions Inc.",d:"blueridgehome.com",city:"Baldwin Park",st:"California",t:323},
+  {c:"Mygift Enterprise Llc",d:"mygift.com",city:"Woodinville",st:"Washington",t:323},
+  {c:"Crown Awards",d:"crownawards.com",city:"",st:"",t:319},
+  {c:"Flextronics Technologies San L",d:"flex.com",city:"San Agust\u00edn",st:"Jalisco",t:317},
+  {c:"Purple Innovation",d:"purple.com",city:"Alpine",st:"Utah",t:316},
+  {c:"Healthcare Arizona Llc",d:"hkfoam.com",city:"",st:"",t:315},
+  {c:"Meyer Sound Laboratories Inc.",d:"meyersound.com",city:"Berkeley",st:"California",t:311},
+  {c:"Pacific Blue Corp.",d:"pacificblueconstruction.com",city:"Capitol Heights",st:"Maryland",t:307},
+  {c:"Bassett Mirror Co. Inc.",d:"bassettmirror.com",city:"Henry",st:"Virginia",t:306},
+  {c:"Primitives By Kathy, Inc.",d:"primitivesbykathy.com",city:"Lancaster",st:"Pennsylvania",t:305},
+  {c:"Business & Pleasure Co. Llc",d:"businessandpleasureco.com",city:"Compton",st:"California",t:304},
+  {c:"Makita Corporation Of America",d:"makita.co.jp",city:"Buford",st:"Georgia",t:304},
+  {c:"Ikano Industries Mexico S.A. De C.V.",d:"group.ikano",city:"Saltillo",st:"Coahuila de Zaragoza",t:302},
+  {c:"Mr. Bar B Q Products",d:"mrbarbq.com",city:"Rural Hall",st:"North Carolina",t:302},
+  {c:"Couristan Inc.",d:"couristan.com",city:"Fort Lee",st:"New Jersey",t:295},
+  {c:"Conair Consumer Products Ulc",d:"conair.com",city:"",st:"",t:292},
+  {c:"Precision Trading Corp.",d:"precisiontrading.com",city:"Pella",st:"Iowa",t:290},
+  {c:"Le Chandelle Inc.",d:"lechandellecandles.com",city:"Diamond Bar",st:"California",t:290},
+  {c:"Gare Inc.",d:"gareceramics.com",city:"Haverhill",st:"Massachusetts",t:286},
+  {c:"Electrolux Home Products",d:"electroluxgroup.com",city:"Fletcher",st:"North Carolina",t:281},
+  {c:"Enriquez Materials & Quilting Inc.",d:"enriquezquilting.com",city:"Commerce",st:"California",t:274},
+  {c:"Forever Gifts Inc.",d:"forevergiftsinc.com",city:"",st:"",t:273},
+  {c:"Ocv Mexico S De Rl De Cv",d:"owenscorning.com",city:"Tetla",st:"Tlaxcala",t:270},
+  {c:"Bernina Of America",d:"bernina.com",city:"Aurora",st:"Illinois",t:268},
+  {c:"Viscosoft Inc.",d:"viscosoft.com",city:"",st:"",t:268},
+  {c:"Q And V Power Inc.",d:"qpowerinc.com",city:"Houston",st:"Texas",t:266},
+  {c:"Revival Rugs Inc.",d:"revivalrugs.com",city:"Oakland",st:"California",t:265},
+  {c:"Punch Studio",d:"punchstudio.com",city:"Culver City",st:"California",t:265},
+  {c:"Zylux America Inc.",d:"zyluxacoustic.com",city:"Washington",st:"Pennsylvania",t:261},
+  {c:"Phase Ii Products Inc.",d:"phaseii.com",city:"San Diego",st:"California",t:259},
+  {c:"Jl Audio Inc.",d:"garmin.com",city:"Miramar",st:"Florida",t:255},
+  {c:"American Metalcraft Inc.",d:"amnow.com",city:"Melrose Park",st:"Illinois",t:249},
+  {c:"Sweet Home Kitchen & Bath Inc.",d:"procraftcabinetry.com",city:"",st:"",t:248},
+  {c:"Teka Mexicana Sa De Cv",d:"teka.com.mx",city:"Mexico City",st:"Federal District",t:247},
+  {c:"Door Kraft Products Inc.",d:"doorkraft.com",city:"",st:"",t:246},
+  {c:"Fairfield Chair Co.",d:"fairfieldchair.com",city:"Lenoir",st:"North Carolina",t:245},
+  {c:"O2 Cool Llc",d:"maurice.net",city:"Chicago",st:"Illinois",t:240},
+  {c:"Stark Carpet Corp.",d:"starkcarpet.com",city:"Calhoun",st:"Georgia",t:232},
+  {c:"Gemmy Industries Corp.",d:"gemmy.com",city:"Coppell",st:"Texas",t:232},
+  {c:"Bear Down Brands Llc",d:"pureenrichment.com",city:"Huntington Beach",st:"California",t:227},
+  {c:"Creative Brands",d:"autom.com",city:"",st:"New York",t:220},
+  {c:"Sauder Woodworking",d:"sauder.com",city:"Archbold",st:"Ohio",t:217},
+  {c:"The Singing Machine Co. Inc.",d:"singingmachine.com",city:"",st:"",t:211},
+  {c:"T3 Micro Inc.",d:"t3micro.com",city:"Venice",st:"California",t:209},
+  {c:"Bia Cordon Bleu Inc.",d:"biacordonblu.com",city:"Galt",st:"California",t:207},
+  {c:"Momeni Inc.",d:"momeni.com",city:"Carlstadt",st:"New Jersey",t:207},
+  {c:"Restoration Hardware",d:"rh.com",city:"Corte Madera",st:"California",t:202},
+  {c:"Adven Group Inc.",d:"adven.com",city:"",st:"",t:200},
+  {c:"Forestal Alfa Sa De Cv",d:"forestalalfa.com.mx",city:"Durango",st:"Durango",t:200},
+  {c:"Shure Inc.",d:"shure.com",city:"El Paso",st:"Texas",t:198},
+  {c:"Tabletops Unlimited Inc.",d:"tabletopsunltd.com",city:"Carson",st:"California",t:197},
+  {c:"Vesture Corp",d:"microcoretechnology.com",city:"Burbank",st:"California",t:196},
+  {c:"Nurturen Inc.",d:"nurtureand.com",city:"",st:"",t:196},
+  {c:"Carrier Interamerica Corporation",d:"watsco.com",city:"Miami",st:"Florida",t:195},
+  {c:"Aver Information Inc.",d:"aver.com",city:"Fremont",st:"California",t:195},
+  {c:"Mvp Group Corp.",d:"mvpgroupint.com",city:"",st:"Connecticut",t:194},
+  {c:"Marshall Pottery Inc.",d:"deromausa.myshopify.com",city:"Marshall",st:"Texas",t:193},
+  {c:"Dundas Jafine Inc.",d:"dundasjafine.com",city:"",st:"",t:193},
+  {c:"Express Homes",d:"impresamodular.com",city:"Phoenix",st:"Arizona",t:193},
+  {c:"The Metal Ware Corp.",d:"nesco.com",city:"Two Rivers",st:"Wisconsin",t:189},
+  {c:"Canarm Ltd.",d:"canarm.com",city:"Laval",st:"Qu\u00e9bec",t:188},
+  {c:"The Howard Elliott Collection",d:"howardelliott.com",city:"Addison",st:"Illinois",t:187}
+];
+let list = companies;
+if (TEST_DOMAINS.length) list = companies.filter(c => TEST_DOMAINS.includes(c.d));
+return list.map(c => ({ json: { company:c.c, domain:c.d, city:c.city, state:c.st, teu:c.t, industry:'Household Durables' } }));
+
+// ===== "Build people search" =====
+// Apollo People Search body for this company's domain. FREE (no credits); returns no emails.
+const c = $json;
+const searchBody = {
+  q_organization_domains_list: [c.domain],
+  person_titles: ["owner", "president", "ceo", "chief operating officer", "coo", "vp operations", "vice president operations", "director of operations", "vp supply chain", "director of supply chain", "head of supply chain", "vp logistics", "director of logistics", "head of logistics", "director of distribution", "distribution manager", "warehouse manager", "director of warehousing", "head of fulfillment", "vp fulfillment"],
+  person_seniorities: ["owner", "founder", "c_suite", "vp", "director", "head"],
+  include_similar_titles: true, per_page: 10, page: 1
+};
+return [{ json: { ...c, searchBody } }];
+
+// ===== "Pick best contacts" =====
+// Search response on $json (Apollo `people`); company context from prior code node (HTTP replaced the item).
+const ctx = $('Build people search').item.json;
+const people = ($json.people || $json.contacts || []);
+const PRI = ['owner','president','ceo','coo','chief operating','operations','supply chain','logistics','distribution','warehouse','fulfillment'];
+const rank = p => { const t=(p.title||'').toLowerCase(); const i=PRI.findIndex(k=>t.includes(k)); return i<0?99:i; };
+const picked = people.filter(p=>p&&(p.id||p.first_name)).sort((a,b)=>rank(a)-rank(b)).slice(0,2)
+  .map(p=>({ id:p.id, first_name:p.first_name, last_name:p.last_name, title:p.title, linkedin_url:p.linkedin_url, seniority:p.seniority }));
+if (!picked.length) return [];
+const org = (people[0] && people[0].organization) || {};
+return [{ json: { company:ctx.company, domain:ctx.domain, city:ctx.city, state:ctx.state, teu:ctx.teu, industry:ctx.industry, emp:org.estimated_num_employees||null, org_industry:org.industry||'', picked } }];
+
+// ===== "Build scoring prompt" =====
+// Score vs Cubework fit rubric and draft a Household-Durables opener.
+const c = $json;
+const rubric = `You are scoring an importer of household-durables goods (furniture, appliances, home) as a prospect for Cubework's flexible, month-to-month warehouse space near the Ports of LA/Long Beach (Inland Empire) and other Cubework metros. The ideal prospect moves real container volume but is NOT so large it already owns its distribution.\nScore 7 factors: volume_trend(0-20 higher TEU=outgrowing space); right_size(0-20 mid-size; PENALIZE giants that own DCs and tiny importers); seasonality(0-15); dtc(0-15 holds own inventory); bulk(0-10 furniture/home score high); recurring(0-10); timing(0-10).\nTiers: Hot>=70, Warm 45-69, Watch<45. Score conservatively when data is thin.\nReturn ONLY minified JSON: {\"total\":n,\"tier\":\"Hot|Warm|Watch\",\"why_now\":\"one sentence\",\"email_subject\":\"...\",\"email_body\":\"~80 words, value-led, lead with port-proximity + flexible space for bulky/seasonal inventory, reference this company specifically, offer to share how similar importers structure overflow space, never use the phrase follow up, sign as Justin\"}`;
+const candidate = JSON.stringify({ company:c.company, domain:c.domain, state:c.state, teu:c.teu, employees:c.emp, org_industry:c.org_industry });
+const requestBody = { model:'claude-3-5-sonnet-20241022', max_tokens:700, system:rubric, messages:[{role:'user',content:'Company:\n'+candidate}] };
+return [{ json: { ...c, requestBody } }];
+
+// ===== "Gate + build email reveal" =====
+// Claude response on $json.content; context from 'Pick best contacts'.
+// Keep Hot/Warm only (giants tier Watch -> dropped BEFORE spending any email credit).
+// Email reveal: reveal_personal_emails=true (1 credit each); phones=false (revealed later on reply).
+const ctx = $('Pick best contacts').item.json;
+let parsed = {};
+try { const t=($json.content&&$json.content[0]&&$json.content[0].text)||$json.text||'{}';
+  parsed = JSON.parse(t.trim().replace(/^```json/i,'').replace(/```$/,'').trim()); } catch(e){ return []; }
+const tier = parsed.tier || 'Watch';
+if (tier === 'Watch') return [];
+const enrichBody = { reveal_personal_emails:true, reveal_phone_number:false,
+  details: ctx.picked.map(p => p.id ? { id:p.id } : { first_name:p.first_name, last_name:p.last_name, domain:ctx.domain }) };
+return [{ json: { ...ctx, parsed, tier, enrichBody } }];
+
+// ===== "Build prospect doc" =====
+// Build a Firestore `outreach` doc — the app's 📧 Outreach tab reads this collection (matched by domain).
+// Watch-tier & no-contact already dropped upstream. Deterministic id ap-<domain> => re-runs return
+// ALREADY_EXISTS (409) and skip, so your Status edits are never clobbered. Phone empty until reveal-on-reply.
+const ctx = $('Gate + build email reveal').item.json;
+const m0 = ($json.matches || [])[0] || {};
+const p0 = (ctx.picked && ctx.picked[0]) || {};
+const email = m0.email || (m0.personal_emails && m0.personal_emails[0]) || '';
+const first = ((m0.first_name||p0.first_name||'') + ' ' + (m0.last_name||p0.last_name||'')).trim();
+const title = m0.title || p0.title || '';
+const now = new Date().toISOString();
+const slug = 'ap-' + ctx.domain.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'');
+const S = v => ({ stringValue: String(v==null?'':v) });
+const fields = {
+  company:S(ctx.company), domain:S(ctx.domain), first_name:S(first), contact:S(title),
+  email:S(email), phone:S(''), city:S(ctx.city), state:S(ctx.state),
+  teu:{ integerValue:String(ctx.teu||0) }, prospect_tier:S(ctx.tier),
+  prospect_score:{ integerValue:String(ctx.parsed.total!=null?ctx.parsed.total:0) },
+  why_now:S(ctx.parsed.why_now||''), email_subject:S(ctx.parsed.email_subject||''),
+  email_body:S(ctx.parsed.email_body||''), linkedin:S(p0.linkedin_url||''),
+  status:S(''), prospect_source:S('Apollo'), createdAt:{ timestampValue:now }
+};
+return [{ json: { slug, hasEmail: !!email, fsBody: { fields } } }];
+

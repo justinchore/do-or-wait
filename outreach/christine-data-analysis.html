@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Christine's Workbook — What's In It & How We Use It</title>
+<style>
+body{
+  color:#1f2328; background:#ffffff;
+  font-family:Georgia,"New York",ui-serif,Cambria,"Times New Roman",serif;
+  font-size:17px; line-height:1.7;
+  max-width:760px; margin:0 auto; padding:48px 32px 90px;
+  -webkit-font-smoothing:antialiased;
+}
+h1{ font-size:1.9em; font-weight:700; line-height:1.25; margin:0 0 8px; letter-spacing:-.01em; }
+.subtitle{ color:#6e7781; font-size:1.05em; margin:0 0 4px; }
+.subtitle strong{ color:#1f2328; font-weight:700; }
+h2{ font-size:1.35em; font-weight:700; line-height:1.3; margin:32px 0 12px; }
+h3{ font-size:1.1em; font-weight:700; margin:22px 0 8px; }
+p{ margin:0 0 16px; }
+hr{ height:2px; border:0; background:#38D430; margin:26px 0; }
+ul,ol{ margin:0 0 16px; padding-left:1.6em; }
+li{ margin:.35em 0; padding-left:.2em; }
+strong,.lbl{ font-weight:700; color:#1f2328; }
+a{ color:#0969da; text-decoration:none; }
+a:hover{ text-decoration:underline; }
+blockquote{
+  margin:0 0 16px; padding:2px 0 2px 18px; border-left:4px solid #38D430;
+  color:#59636e;
+}
+table{ width:100%; border-collapse:collapse; margin:0 0 16px; font-size:.95em; }
+th{ text-align:left; font-weight:700; padding:8px 12px; border-bottom:2px solid #38D430; }
+td{ padding:8px 12px; border-bottom:1px solid #38D430; vertical-align:top; }
+td.term{ font-weight:700; white-space:nowrap; width:34%; }
+ul.check{ list-style:none; padding-left:0; }
+ul.check li{ padding-left:1.7em; position:relative; }
+ul.check li::before{ content:"\2610"; position:absolute; left:0; color:#6e7781; }
+.note{ color:#6e7781; font-size:.9em; font-style:italic; margin-top:24px; }
+@media print{ body{ padding:0; max-width:none; } }
+</style>
+</head>
+<body>
+
+<h1>Christine's workbook — what's in it & how we use it</h1>
+<p class="subtitle"><strong>June 23, 2026</strong> · source: <em>Copy of Industries_ Services_ CUBEWORK.xlsx</em> · feeds the Apollo outreach build</p>
+<hr>
+
+<blockquote>
+<strong>Headline:</strong> This isn't just an industry list — tab <strong>"importers" holds 10,000 real companies that import through US ports</strong>, with location, industry, parent website, and shipment volume (TEU / value / KG). That's Cubework's exact ICP, pre-built. It means we can <strong>skip blind Apollo searching</strong>, feed these companies' domains straight into Apollo to find decision-makers, and <strong>only spend email credits on the highest-volume prospects</strong> — perfectly matching "test first, then scale by industry."
+</blockquote>
+
+<h2>What's in the 12 tabs</h2>
+<table>
+<tr><th>Tab</th><th>Contents</th><th>Use to us</th></tr>
+<tr><td class="term">importers ⭐</td><td>10,000 importers (S&P / Panjiva): name, city/state, industry, SIC, ultimate parent + website (4,620 have a site), Shipments, KG, VALUE(usd), TEU, LCL</td><td><strong>The prospect feed.</strong> Pre-qualified port importers + volume to rank by</td></tr>
+<tr><td class="term">carrier (SCAC)</td><td>2,731 freight carriers / forwarders: SCAC, name, address, phone (2,695 have phones), shipments, TEU, value</td><td>Second segment (3PL/logistics) — phone-first outreach</td></tr>
+<tr><td class="term">Industry_ Services</td><td>82-industry master list + 11 Cubework service columns (Coworking, Flex, Yard/Parking, Warehouse Leasing, Micro-Fulfillment, etc.) with sub-services</td><td>Segmentation backbone + which service to pitch per industry</td></tr>
+<tr><td class="term">us ports / railroad / railyards / airlines / US Airports / global carriers / global hubs</td><td>Logistics-network reference: US ports + shipping lines, rail carriers/yards, top airlines/airports, top-50 global carriers, largest metros</td><td>Port/hub-proximity scoring + geo context for targeting</td></tr>
+<tr><td class="term">glossary</td><td>1,080 industrial / CRE / warehouse / coworking terms</td><td>SEO + content engine (Phase 2 / marketing)</td></tr>
+<tr><td class="term">resources</td><td>Resource-center content plan (FAQs, case studies, testimonials, rate structure, departments)</td><td>Content roadmap (not outreach)</td></tr>
+</table>
+
+<h2>How it upgrades the Apollo ingestion plan</h2>
+
+<h3>1. We already have the target companies — so searching gets cheaper and sharper</h3>
+<p>Apollo People Search accepts a list of company domains (<em>q_organization_domains_list[]</em>, up to 1,000 per request) and costs zero credits. So instead of guessing filters, we feed the importers' real domains into Apollo and pull the right titles (founder / ops / supply-chain / logistics) at companies we already know move containers through US ports.</p>
+
+<h3>2. Pre-rank by volume before spending a single credit</h3>
+<p>The importers tab carries Shipments, TEU, and VALUE per company. We rank each industry by volume first, then run Apollo email reveal (1 credit each) only on the top of the list. That's the exact knob for "test a couple, then scale by industry" while the premium window lasts.</p>
+
+<h3>3. Industry scaling is ready-made (two layers)</h3>
+<p>The 82-industry master list (e.g. Apparel &amp; Footwear, Automotive, CE/IT, Cold Chain, Ecommerce Fulfillment, Furniture, Home Goods, 3PL, Pharma) sits alongside the importers' own S&amp;P industry tags. Top industries by company count in the file: Distributors (507), Trading Companies (432), Specialty Retail (330), Machinery (326), Household Durables (298), Auto Components (252), Textiles/Apparel (240), Chemicals (226), Food Retail (215), Air Freight &amp; Logistics (211).</p>
+
+<h3>4. Geography lines up with our footprint</h3>
+<p>1,688 importers are in <strong>California</strong> (then TX 458, NJ 449, IL 336, FL 316, GA 277) — right on top of Cubework's CA locations and the LA/Long Beach port gate in the existing scoring rubric. We target where we actually have space.</p>
+
+<h3>5. Service-per-industry mapping sharpens the pitch</h3>
+<p>The Industry_Services matrix tells us which Cubework service fits each industry — Perishable/Pharma → Cold Storage; Ecommerce → Micro-Fulfillment / Last-Mile; IOS users → Yard/Parking; 3PL → multi-site flex. That feeds both the Claude scoring and the Phase-2 personalized emails (lead with the right service, not a generic pitch).</p>
+
+<h2>New uses worth considering</h2>
+<ul>
+<li><strong>Replace the workflow-8 stub feed entirely.</strong> Prospect Finder was waiting on ImportYeti — but this importers tab <em>is</em> the import data. We build a volume-ranked, deduped company queue from it and that becomes the feed.</li>
+<li><strong>Carrier/forwarder call campaign.</strong> 2,695 carriers have phone numbers — pair with the app's one-tap 📞 Call / 💬 Text quick-log. No Apollo email credits needed for that segment.</li>
+<li><strong>Port-proximity score.</strong> Use the ports + global-hubs tabs to weight prospects by how close their US location is to a Cubework site.</li>
+<li><strong>Content/SEO engine.</strong> The glossary (1,080 terms) + resources plan can seed location market reports, leasing guides, and FAQ pages later.</li>
+</ul>
+
+<h2>Data-quality caveats (so we target the right entity)</h2>
+<ul>
+<li><strong>Only 4,620 of 10,000 rows have a parent website.</strong> The rest need domain resolution (Apollo Organization Search by name) before domain-based People Search — or we simply start with the ~4,620 that are ready.</li>
+<li><strong>"Ultimate Parent" is often the global HQ</strong> (e.g. LG → Seoul). For outreach we want the <strong>US importing entity / local decision-maker</strong>, so we target by the US consignee city/state, not the foreign parent address.</li>
+<li>The list is a point-in-time S&amp;P/Panjiva snapshot — great for targeting, not a live feed.</li>
+</ul>
+
+<h2>Suggested next step</h2>
+<p>Build the <strong>volume-ranked prospect queue</strong> from the importers tab (deduped, domain-resolved where possible, grouped by industry) and save it to this folder as the ingestion feed. Then run the Apollo test pull on the top 2–3 companies of one industry, confirm the leads land in the app + sheet, and scale by industry from there.</p>
+
+<p class="note">Saved to do_or_wait/outreach/. Companion to the Apollo ingestion workflow (extends n8n workflow 8). Figures computed directly from the uploaded workbook.</p>
+
+</body>
+</html>

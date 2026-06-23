@@ -1,0 +1,274 @@
+rank,Consignee Name,City,State,Ultimate Parent,Domain,Apollo-ready,Shipments,TEU,VALUE(usd)
+1,Lg Electronics Usa. Inc. 1000 Sy,Englewood Cliffs,New Jersey,Lg Electronics Inc.,lg.com,Y,49169,142613.4,3462910881.64
+2,Curtis & Co.,Toronto,Ontario,Curtis International Ltd.,curtisint.com,Y,976,8733.0,149635986.34
+3,Flexsteel Industries Inc.,Dubuque,Iowa,"Flexsteel Industries, Inc.",flexsteel.com,Y,3264,7061.2,80245690.12
+4,Tramontina Usa Inc.,Sugar Land,Texas,Tramontina S.A. Cutelaria,tramontina.com.br,Y,969,6832.5,161819800.04
+5,Tempur Pedic North America Llc,Lexington,Kentucky,Somnigroup International Inc.,somnigroup.com,Y,1130,5105.0,100892779.94
+6,Harman International,Moreno Valley,California,"Samsung Electronics Co., Ltd.",samsung.com,Y,1504,5069.3,409375159.0
+7,Leggett & Platt Inc.,El Paso,Texas,"Leggett & Platt, Incorporated",leggett.com,Y,1857,4077.4,92898825.75
+8,Liberty Furniture Atlanta,Atlanta,Georgia,"Liberty Furniture Industries, Inc.",mylibertyfurniture.com,Y,1076,3627.5,46015981.57
+9,Stihl Inc.,Virginia Beach,Virginia,Stihl Holding Ag & Co. Kg,stihl.com,Y,5998,3556.7,248878398.77
+10,Engineered Floors Llc,Dalton,Georgia,"Engineered Floors, Llc",engineeredfloorsllc.com,Y,1017,3417.9,509596461.62
+11,Resident Home Llc,,,"Ashley Home, Inc.",,N,1704,3407.2,78767479.08
+12,Groupe Seb Usa,Millville,New Jersey,Groupe Seb Usa,,N,1258,3361.6,66049014.23
+13,Electrolux Home Care Products,El Paso,Texas,"Midea Group Co., Ltd.",midea.com,Y,938,3346.4,54510806.6
+14,Loloi Rugs,Dallas,Texas,"Loloi, Inc.",loloirugs.com,Y,1639,3002.9,85862158.59
+15,Evenflo Co. Inc.,Ontario,California,Goodbaby International Holdings Limited,gbinternational.com.hk,Y,596,2918.6,53271263.25
+16,Home Dynamix Llc,Elk Grove Village,Illinois,Town & Country Linen Corp.,tncliving.com,Y,1334,2874.8,72570988.14
+17,Bernhardt Furniture Co.,Lenoir,North Carolina,"Bernhardt Furniture Company, Inc.",bernhardt.com,Y,790,2539.3,26974668.46
+18,Bosch Thermotechnology Corp.,North Aurora,Illinois,Robert Bosch Gmb H,bosch.com,Y,279,2512.9,89883354.02
+19,Nostalgia Products Group Llc,De Pere,Wisconsin,Nostalgia Products Group Llc,nostalgiaelectrics.com,Y,848,2502.7,53034059.64
+20,Miele Inc.,Princeton,New Jersey,Miele & Cie. Kg,miele.com,Y,434,2443.1,121994152.4
+21,Fiskars Brands Inc. Gol Whse,,,Fiskars Oyj Abp,fiskarsgroup.com,Y,684,2062.9,65511643.89
+22,Nourison Industries,Saddle Brook,New Jersey,"Nourison Industries, Inc.",nourison.com,Y,911,2006.5,67418282.45
+23,La Z Boy Casegoods,Hudson,North Carolina,La Z Boy Incorporated,la-z-boy.com,Y,417,1896.0,19494566.43
+24,University Furnishings,Dallas,Texas,"University Furnishings, Inc.",universityfurnishings.com,Y,370,1798.5,16908582.8
+25,Princess House Inc.,Taunton,Massachusetts,"Princess House, Inc.",princesshouse.com,Y,354,1784.6,27030077.34
+26,Sceptre,City of Industry,California,"Sceptre, Inc.",sceptre.com,Y,294,1784.0,151600024.81
+27,Jackson Furniture Industries,Cleveland,Tennessee,"Jackson Furniture Industries, Inc.",jacksonfurniture.com,Y,574,1751.6,55577801.19
+28,Orbit Irrigation Products Inc.,North Salt Lake,Utah,Husqvarna Ab (Publ),husqvarnagroup.com,Y,920,1674.5,74568068.75
+29,Sonos Inc.,,California,"Sonos, Inc.",sonos.com,Y,828,1625.4,1059599840.27
+30,"Stylecraft Home Collection, Inc.",Southaven,Mississippi,"Stylecraft Home Collection, Inc.",stylecraftonline.com,Y,531,1594.4,19414493.54
+31,Breville Usa,,,Breville Group Limited,brevillegroup.com,Y,319,1589.2,99574324.69
+32,Modern Marketing Concepts Inc.,Louisville,Kentucky,"Modern Marketing Concepts, Inc.",modernmktg.com,Y,412,1588.1,41782611.88
+33,Imusa Usa Llc,Doral,Florida,Seb Sa,groupeseb.com,Y,797,1582.8,30524239.79
+34,The Cookware Co. (Usa) Llc,Irvington,New York,"The Cookware Company (Usa), Llc",cookware-co.com,Y,254,1526.2,26007348.18
+35,Marquis Industries Inc.,Chatsworth,Georgia,Live Ventures Incorporated,liveventures.com,Y,601,1522.3,143744718.15
+36,Friedrich Air Conditioning Co.,San Antonio,Texas,"Paloma Co., Ltd.",paloma.co.jp,Y,305,1501.3,51947487.68
+37,Broan Nutone Llc,Hartford,Wisconsin,Madison Industries Holdings Llc,,N,613,1489.0,52190518.15
+38,Danby Products Inc.,Findlay,Ohio,Danby Products Limited,danby.com,Y,474,1471.9,26152470.54
+39,Casper Sleep Inc.,New York,New York,Carpenter Co.,carpenter.com,Y,420,1470.2,12269084.61
+40,Revman International,Spartanburg,South Carolina,Makei Ii Llc,,N,974,1461.9,42814787.78
+41,Sony Interactive Entertainment,Foster City,California,Sony Group Corporation,sony.com,Y,246,1392.2,347456109.67
+42,"E&E Co., Ltd.",Fremont,California,"E&E Co., Ltd.",ee1994.com,Y,1474,1376.8,34530482.24
+43,Spectrum Brands Inc. Attn Teran,Middleton,Wisconsin,"Spectrum Brands Holdings, Inc.",spectrumbrands.com,Y,199,1368.0,31125536.79
+44,Hunter Fan Co.,Holiday City,Ohio,Griffon Corporation,griffon.com,Y,364,1349.4,38803213.47
+45,Riverside Furniture Corp.,Fort Smith,Arkansas,Riverside Furniture Corporation,riverside-furniture.com,Y,713,1343.5,15545882.5
+46,Sinomax East,La Vergne,Tennessee,Sinomax (Holding) Group Limited,,N,437,1321.9,20045757.87
+47,Ergomotion Inc.,Santa Barbara,California,Keeson Technology Corporation Limited,keeson.com,Y,324,1274.0,20485446.51
+48,Bissell Homecare Inc.,Grand Rapids,Michigan,"Bissell Homecare, Inc.",bissell.com,Y,337,1246.5,50339093.34
+49,Foremost Groups,,,Foremost Groups Ltd,,N,396,1246.2,281162610.25
+50,Apache Mills Inc.,,,"Apache Mills, Inc.",apachemills.com,Y,535,1243.5,30304866.3
+51,Zinus Inc.,Tracy,California,"Zinus, Inc",zinus.co.kr,Y,928,1232.9,21495197.98
+52,Bexco Enterprises Inc.,,,"Bexco Enterprises, Inc.",milliondollarbaby.com,Y,255,1213.0,16047453.5
+53,"S. Lichtenberg & Co., Inc.",New York,New York,"S. Lichtenberg & Co., Inc.",,N,502,1192.0,32211820.83
+54,Wolf Steel Ltd.,,,"Wolf Steel, Ltd.",napoleon.com,Y,211,1178.6,20454765.48
+55,Kuka Furniture Inc.,High Point,North Carolina,Kuka Furniture Inc.,,N,805,1171.5,19841235.99
+56,Creative Co Op Inc.,Memphis,Tennessee,"Regent Holding Company, Llc",regent-holding.com,Y,752,1163.5,18471754.11
+57,Whitewood Industries,Thomasville,North Carolina,"Whitewood Industries, Inc.",whitewoodfurniture.com,Y,582,1134.2,20346686.74
+58,Interdesign Inc.,Solon,Ohio,"Inter Design, Inc.",idesignlivesimply.com,Y,356,1131.9,17076302.81
+59,Karat Home Inc.,,,Hangzhou J And S Yard Home Fashion Co Ltd,,N,552,1109.1,8610932.38
+60,Meyer Corporation Us.,Vallejo,California,"Meyer International Holdings, Ltd.",,N,172,1102.2,34038759.26
+61,Le Creuset Of America,Early Branch,South Carolina,Cliden B.V.,,N,233,1087.5,28064077.32
+62,New View Gifts & Accessories Ltd.,Media,Pennsylvania,"New View Gifts & Accessories, Ltd.",newviewgifts.com,Y,645,1081.3,18458767.35
+63,Lovesac,,,The Lovesac Company,lovesac.com,Y,321,1073.2,27887928.95
+64,Italkraft Llc,Miami,Florida,Italkraft Llc,italkraft.com,Y,484,1070.5,47015236.64
+65,Ardmore Home Design Llc,Hacienda Heights,California,"Ardmore Home Design, Inc.",madegoods.com,Y,744,1017.9,11885395.44
+66,Husqvarna Forestry Products,Shreveport,Louisiana,"Husqvarna Forestry Products N.A., Inc.",,N,821,1002.4,81344764.87
+67,Zonkd Inc.,,,"Zonkd, Llc",,N,490,1000.5,13923628.63
+68,Golden Goose Logistics Llc,,,Golden Goose Llc,kickstarter.com,Y,397,994.0,20801001.22
+69,Topway Global Inc.,Brea,California,"Watts Water Technologies, Inc.",watts.com,Y,456,992.5,26527543.77
+70,The Dixie Group Inc.,Dalton,Georgia,"The Dixie Group, Inc.",thedixiegroup.com,Y,423,976.6,100102791.11
+71,Uniek Inc.,Waunakee,Wisconsin,"The Pyle Group, Llc",pylegroup.ca,Y,371,966.7,16894080.8
+72,Wahl Clipper Corporation,Sterling,Illinois,Wahl Clipper Corporation,wahl.com,Y,557,959.9,52693396.59
+73,Currey & Co. (Us),,,"Currey & Company, Inc.",curreycodealers.com,Y,435,950.9,9325599.11
+74,Britax Child Safety Inc.,,,Cc 2 (2011) Ltd.,,N,205,935.1,16205390.14
+75,Tradewinds Climate Systems,Jacksonville,Florida,Tradewinds Climate Systems,twclimate.com,Y,220,922.0,23149220.36
+76,Fit Fresh,Providence,Rhode Island,"Fit & Fresh, Inc.",fit-fresh.com,Y,330,890.7,13558557.67
+77,"Homestretch, Llc.",,,Homestretch Inc.,homestretchva.org,Y,356,878.0,31123832.88
+78,Caba Design Corp.,Rancho Cordova,California,Caba Design Inc.,cabadesign.co,Y,72,868.0,8769002.8
+79,Knape & Vogt Mfg. Co.,,,Knape & Vogt Manufacturing Company,knapeandvogt.com,Y,517,864.8,46049291.84
+80,Summer Classics,Pelham,Alabama,"Gabriella White, Llc",gabbyhome.com,Y,278,861.4,4476655.02
+81,Barcalounger,Morristown,Tennessee,Barca Lounger Corporation,barcalounger.com,Y,246,857.2,5608234.32
+82,Tacony Corporation,Fenton,Missouri,Tacony Corporation,tacony.com,Y,599,846.5,41672358.49
+83,Pioneer Automotive Technologies Inc.,Springboro,Ohio,Pioneer Corporation,global.pioneer,Y,166,844.0,247879691.84
+84,M Design Village Llc,Franklin Township,New Jersey,M Design Village Llc,mdesignvillage.com,Y,158,842.0,11970311.0
+85,Brumate Llc,Denver,Colorado,"Bru Mate, Inc.",brumate.com,Y,209,835.8,28961467.63
+86,Stillwater Designs,Stillwater,Oklahoma,"Stillwater Designs And Audio, Inc.",kicker.com,Y,469,833.3,74993547.33
+87,Rollease Acmeda,,,"Jm Family Enterprises, Inc.",jmfamily.com,Y,471,829.7,24548342.01
+88,Rev A Shelf Ras 2 Location,Louisville,Kentucky,"Jones Plastic And Engineering Company, Llc",jonesplastic.com,Y,186,829.0,6311772.55
+89,Pentair Residential Filtration Llc,Milwaukee,Wisconsin,Pentair Plc,pentair.com,Y,455,804.4,25410264.24
+90,Jonathan Louis Inernational Inc.,,,Jonathan Louis International Ltd.,jonathanlouis.net,Y,458,804.0,27006311.99
+91,Hollywood Bed & Spring Mfg. Co. Inc.,,,"Hollywood Bed & Spring Manufacturing Co., Inc.",hollywoodbed.com,Y,361,800.5,15886931.55
+92,National Christmas Products Inc.,Cranford,New Jersey,"National Christmas Products, Inc.",nationaltree.com,Y,223,771.9,17829205.32
+93,Lasko Products,Fort Worth,Texas,"Lasko Products, Llc",lasko.com,Y,153,759.8,21390272.03
+94,"Keeco, Llc.",Hayward,California,"Hollander Sleep Products, Llc",hollandersleepproducts.com,Y,189,752.5,13306614.04
+95,Sirio North America Inc.,,,"Sirio North America, Inc.",shopsirio.com,Y,351,751.5,5187159.22
+96,Ekornes Inc.,Franklin Township,New Jersey,"Qu Mei Home Furnishings Group Co.,Ltd",qumei.com,Y,92,750.0,25639580.83
+97,Agp E Glass Co.,,,Agp E Glass Co.,,N,404,744.3,26391412.54
+98,Thuma Inc.,,,Thuma Inc.,thuma.co,Y,172,741.8,13736389.38
+99,Hills Point Industries Llc,,,"Hills Point Industries, Llc",gorillagrip.com,Y,565,725.3,14844162.38
+100,Legacy Commercial Holdings Inc.,,,Legacy Commercial Holdings Inc.,,N,303,724.8,4408297.59
+101,Westfield Outdoor Inc.,Indianapolis,Indiana,"Westfield Outdoor, Inc.",westfieldoutdoor.com,Y,312,722.0,6434516.84
+102,Elsa,,,"Elsa L, Inc.",www2.elsal.com,Y,297,705.4,52049054.42
+103,Gale Pacific Usa Inc.,Rancho Cucamonga,California,Gale Pacific Limited,galepacific.com,Y,65,703.0,23864734.13
+104,Cozey Inc.,,,"Cozey, Inc.",cozey.ca,Y,349,689.1,6383123.01
+105,Ac Infinity Inc.,City of Industry,California,Ac Infinity Inc,acinfinity.com,Y,109,688.0,14380377.61
+106,Rinnai America Corp.,Peachtree City,Georgia,Rinnai Corporation,rinnai.co.jp,Y,171,685.3,24779122.72
+107,Grafiti Home Inc. (Dba 7 Th Avenue),Compton,California,"Grafiti Home, Inc",grafitihome.com,Y,341,684.0,13349253.46
+108,Supply Chain Sources Llc,,,Supply Chain Sources Llc,lifesmartproducts.com,Y,264,674.1,9011800.57
+109,Springs Window Fashions Llc,Middleton,Wisconsin,"Springs Window Fashions, Llc",springswindowfashions.com,Y,622,671.0,17937047.6
+110,Vanguard Furniture,Conover,North Carolina,"Vanguard Furniture Co., Inc.",vanguardfurniture.com,Y,193,669.7,6628323.14
+111,"Mackenzie Childs, Llc",,,Mac Kenzie Childs Llc,mackenziechilds.com,Y,362,655.8,10596320.22
+112,Home Design Inc.,Wabash,Indiana,"Home & Design, Inc.",,N,581,651.1,9389725.94
+113,Ardisam Inc.,Cumberland,Wisconsin,"Ardisam, Inc.",ardisam.com,Y,316,649.1,19571203.84
+114,Aristocrat Technologies,Las Vegas,Nevada,Aristocrat Leisure Limited,aristocrat.com,Y,420,634.8,56195751.37
+115,Lamplight Farms Inc.,,,"W.C. Bradley Co., Inc.",wcbradley.com,Y,185,633.5,15634830.39
+116,Innovative Technology Electronics,Los Angeles,California,Innovative Technology Electronics Corp.,,N,182,626.2,26783997.66
+117,Brewster Home Fashions,Randolph,Massachusetts,Brewster Home Fashions Llc,brewsterwallcovering.com,Y,540,619.8,31074009.19
+118,Thermos Llc,Schaumburg,Illinois,Thermos L.L.C.,thermos.com,Y,279,618.5,20259238.53
+119,Cardis Furniture,Swansea,Massachusetts,Cardis Furniture,,N,309,611.3,5553778.27
+120,Nexgrill Industries Inc.,Chino,California,"Global Leisure Investment Holdings, Inc.",globalleisuregroup.com,Y,248,611.0,15813512.07
+121,Behold Washington Llc,Pontotoc,Mississippi,Behold Washington Llc,,N,279,611.0,14354965.04
+122,Levtex Llc.,Santa Monica,California,"Levtex, Llc",wholesale.levtexhome.com,Y,121,609.8,7372543.6
+123,Renin Us Llc,Tupelo,Mississippi,"Bbx Capital, Inc.",bbxcapital.com,Y,249,608.3,17721216.51
+124,Q.E.P. Co. Inc.,Boca Raton,Florida,"Q.E.P. Co., Inc.",qep.com,Y,725,607.3,23765871.6
+125,The Shekia Group Llc,Edison,New Jersey,The Shekia Group Llc,forevermarkcabinetry.com,Y,86,602.0,13928690.86
+126,Foliot Furniture Pacific,Las Vegas,Nevada,Foliot Furniture Inc.,foliot.com,Y,264,596.9,7041611.83
+127,Hillpointe Construction,Athens,Georgia,"Hillpointe Construction, Llc",hillpointe.com,Y,196,594.0,31148892.3
+128,Lennox Industries Inc.,Marshalltown,Iowa,Lennox International Inc.,lennox.com,Y,448,587.4,45377500.31
+129,Walker Edison Furniture Co.,,,"Walker Edison Furniture Company, Llc",walkeredison.com,Y,330,583.1,13872174.45
+130,Aico Amini Innovation Corp.,Pico Rivera,California,Amini Innovation Corporation,amini.com,Y,172,582.0,5202620.08
+131,Askey International Corp.,Milpitas,California,Askey International Corporation,,N,167,578.7,257286418.11
+132,Universal Granite & Marble,Naperville,Illinois,"Universal Granite & Marble, Inc.",universalgranite.com,Y,571,575.1,12032574.5
+133,Over And Back Inc.,Hauppauge,New York,"Over & Back, Llc",overback.com,Y,188,575.0,11763557.13
+134,Intralin Corp.,,Maryland,Intralin Corp.,intralin.com,Y,288,566.1,23009819.14
+135,Highland Cabinetry Inc.,Phoenix,Arizona,Highland Cabinetry Inc,highlandcabinetry.com,Y,61,560.0,13430582.7
+136,Sound United,Vista,California,Masimo Corporation,masimo.com,Y,203,558.4,50921232.33
+137,Flemish Master Weavers,Sanford,Maine,Natco Products Corporation,natcohome.com,Y,329,552.2,17261986.37
+138,Peag Llc,Carlsbad,California,"Peag, Llc",jlab.com,Y,280,546.0,60328921.49
+139,The Uttermost Co.,Rocky Mount,Virginia,The Uttermost Co.,uttermost.com,Y,280,539.8,10159503.51
+140,Jaipur Living Inc.,Acworth,Georgia,Jaipur Living Inc.,jaipurliving.com,Y,483,533.4,19996292.08
+141,Phifer Inc.,Tuscaloosa,Alabama,Phifer Incorporated,phifer.com,Y,168,526.5,12371350.07
+142,Diono Llc,Puyallup,Washington,"Diono, Llc",us.diono.com,Y,197,523.0,10279469.78
+143,Boston Warehouse Trading Corp.,Seekonk,Massachusetts,Boston Warehouse Trading Corporation,bwtc.com,Y,172,510.5,7042837.0
+144,Atlantic Promotions Inc.,,,Promotions Atlantiques Inc.,starfrit.com,Y,272,510.0,9881793.21
+145,Stokke Llc,Kennesaw,Georgia,Stokke As,stokke.com,Y,251,506.1,14958323.65
+146,Mgr Design International,Oxnard,California,Mgr Design International Inc.,mgrdesign.com,Y,174,504.4,8510205.05
+147,Zagg,Salt Lake City,Utah,"Evercel, Inc.",evercel.com,Y,1004,496.3,13750197.28
+148,Empire Candle Co Llc,,,Langley Empire Candle Llc,langleyempirecandle.com,Y,114,494.3,8400165.01
+149,C&T International,East Rutherford,New Jersey,"C & T International, Inc.",sorellefurniture.com,Y,109,492.2,10195672.5
+150,Mytek International Inc.,Bonita,California,"Mytek International, Inc.",,N,281,489.0,106659503.26
+151,Scs Direct Inc.,Milford,Connecticut,Scs Direct Inc.,scsdirectinc.com,Y,385,489.0,10259506.38
+152,Noritz America,Fountain Valley,California,Noritz Corporation,noritzglobal.com,Y,102,488.0,34387157.77
+153,Jeffrey Court Inc.,Norco,California,"Jeffrey Court, Inc.",jeffreycourt.com,Y,592,487.8,9701521.85
+154,Universal Electronics Inc.,Cypress,California,Universal Electronics Inc.,uei.com,Y,304,485.8,31513272.84
+155,Bradshaw International Inc.,Rancho Cucamonga,California,"Bradshaw International, Inc.",bradshawhome.com,Y,205,483.3,8315485.18
+156,Surya Carpet Inc.,White,Georgia,Surya Carpet Inc.,surya.com,Y,553,479.1,13651364.0
+157,Joneca Corp.,Anaheim,California,Joneca Corporation,joneca.com,Y,276,478.7,21350812.75
+158,Primo International,Mississauga,Ontario,"Primo Bedding Company, Inc.",primointernational.com,Y,251,474.4,5745931.89
+159,Mercana Furniture & Decor Ltd.,Surrey,British Columbia,Mercana Furniture & Decor Ltd.,mercana.com,Y,266,459.9,3933951.14
+160,Goodman Mfg. Co. L.P.,Houston,Texas,"Daikin Industries,Ltd.",daikin.com,Y,12,450.7,17127539.58
+161,Leoben Co.,,,Leoben Company,leobenco.com,Y,129,446.5,10955258.09
+162,Liberty Hardware,Winston-Salem,North Carolina,Masco Corporation,masco.com,Y,120,446.2,11738811.57
+163,Home Trends & Design,Austin,Texas,"Home Trends And Design, Ltd",htddirect.com,Y,259,442.8,6092051.09
+164,Carlisle Foodservice Products,Oklahoma City,Oklahoma,"Cfs Brands, Llc",cfsbrands.com,Y,91,439.0,4028453.04
+165,Theodore Alexander Usa Inc.,High Point,North Carolina,"Creative Home Furniture Co., Ltd.",oxfordcreations.com,Y,217,433.0,3334161.42
+166,Loud Audio Llc,Fife,Washington,Rode Microphones Aust. Pty,rode.com,Y,242,432.5,21528060.85
+167,One Diamond Electronics Inc.,Los Angeles,California,"One Diamond Electronics, Inc.",diamond-electronics.com,Y,48,431.0,14723752.06
+168,Infinite Creative Enterprises Inc.,Seabrook,New Hampshire,"Infinite Creative Enterprises, Inc.",icesigns.com,Y,118,429.1,12317288.41
+169,Enesco Llc,Itasca,Illinois,"Ad Populum, Llc",,N,162,413.3,6323596.5
+170,Traeger Pellet Grills Llc,Salt Lake City,Utah,"Traeger, Inc.",traegergrills.com,Y,80,402.2,7854927.75
+171,Town & Country Holdings Inc. D B A,,,"Town & Country Holdings, Inc.",,N,211,397.0,10800584.44
+172,Ispring Water Systems Llc,Alpharetta,Georgia,"I Spring Water Systems, Llc",123filter.com,Y,195,396.0,17702708.14
+173,Multy Home Lp,Vaughan,Ontario,Multy Home Lp,multyhome.com,Y,119,389.8,11230238.58
+174,Home Legend,Fontana,California,"Home Legend, Llc",homelegend.com,Y,104,385.0,89579151.24
+175,Wilton Industries,Woodridge,Illinois,Dr. August Oetker Kg,oetker-gruppe.com,Y,144,382.0,7270237.21
+176,Brentwood Home Llc,Fullerton,California,"Brentwood Home, Llc",,N,197,380.0,7764575.12
+177,Paddywax,Nashville,Tennessee,"Paddywax, Inc.",paddywax.com,Y,72,379.5,9358906.0
+178,Snap On Equipment,Conway,Arkansas,Snap On Incorporated,snapon.com,Y,196,379.0,27956057.64
+179,Esi Cases Accessories,Newark,New Jersey,"Esi Cases & Accessories, Inc.",esicellular.net,Y,209,377.0,27009008.34
+180,Blu Dot Design,Minneapolis,Minnesota,"Blu Dot Design And Manufacturing, Inc.",bludot.com,Y,191,376.1,5587771.82
+181,Southern Motion,,,Southern Motion Inc.,southernmotion.com,Y,346,375.9,14936070.05
+182,Stellar Innovations Group Inc.,,,"Stellar Innovations, Inc.",stellarhomes.us,Y,188,375.0,27527106.83
+183,Tablecraft Products Co.,Gurnee,Illinois,"Tablecraft Products Company, Inc.",tablecraft.com,Y,280,368.5,8061917.02
+184,Beaulieu Canada,Acton Vale,Québec,Beaulieu International Group N.V.,bintg.com,Y,163,365.0,39237515.28
+185,Zak Designs,,,"Zak Designs, Inc.",zak.com,Y,183,363.1,5819154.69
+186,Visuar Sa,Buenos Aires,Ciudad Autónoma de Buenos Aires,Visuar S.A.,visuar.com.ar,Y,52,358.0,7931373.34
+187,Stiebel Eltron,Hatfield,Massachusetts,Stiebel Eltron Gmb H & Co. Kg,stiebel-eltron.de,Y,68,358.0,24065616.8
+188,Seminole Consulting And Marketing,Bentonville,Arkansas,"Seminole Consulting And Marketing, Inc.",scmdesigns.com,Y,66,357.2,7212098.16
+189,Tyco Fire Protection Products,Marinette,Wisconsin,Johnson Controls International Plc,johnsoncontrols.com,Y,261,356.4,23122144.99
+190,Gourmet Home Products Llc,New York,New York,Gourmet Home Products Llc,gourmethomeproducts.com,Y,98,350.5,6297080.34
+191,Courtesy Products Llc,St. Louis,Missouri,"H.I.G. Capital Partners, Lp",,N,65,350.0,3841490.18
+192,Cleva North America,Greenville,South Carolina,"Cleva North America, Inc",cleva-na.com,Y,176,349.8,9579157.84
+193,Butler Specialty Co.,Chicago,Illinois,Butler Specialty Company,butlerspecialty.net,Y,239,347.2,3187904.31
+194,Avanti Products,Miami,Florida,The Legacy Companies,thelegacycompanies.com,Y,128,347.0,4508383.22
+195,Tropitone Furniture Co. Inc.,Irvine,California,Brown Jordan Inc.,brownjordaninc.com,Y,161,333.3,3107904.57
+196,Melnor Inc.,,,"Melnor, Inc.",melnor.com,Y,72,332.4,13332421.67
+197,L & J.G. Stickley,Manlius,New York,"L. & J. G. Stickley, Inc.",stickley.com,Y,114,331.6,3758825.73
+198,Jonathan Adler,New York,New York,Jonathan Adler Enterprises Llc,jonathanadler.com,Y,211,331.2,2876704.53
+199,Parachute Home Inc.,Culver City,California,Parachute Home Inc.,parachutehome.com,Y,139,331.1,13902685.99
+200,Eastern Site Contractors Inc.,,,"Eastern Site Contractors, Inc.",,N,35,330.5,20634123.71
+201,G&T Industries,Byron Center,Michigan,"G&T Industries, Inc.",gtindustries.com,Y,176,329.2,9460399.32
+202,Ginsey Industries. Inc.Ginsey Industries,Logan Township,New Jersey,"Ginsey Industries, Inc.",ginsey.com,Y,98,329.0,5249027.64
+203,Woodard Cm Llc,Owosso,Michigan,"Litex Industries, Limited",litexindustries.com,Y,150,323.5,2455876.4
+204,Blue Ridge Home Fashions Inc.,Baldwin Park,California,"Blue Ridge Home Fashions, Inc.",blueridgehome.com,Y,96,323.2,6888950.93
+205,Mygift Enterprise Llc,Woodinville,Washington,My Gift Enterprise Llc,mygift.com,Y,180,323.2,4615987.16
+206,Pacific Motion Nw,Canby,Oregon,"Pacific Motion, L.L.C.",,N,61,322.0,5252136.57
+207,Crown Awards,,,"Crown Awards, Inc.",crownawards.com,Y,182,319.9,8565377.5
+208,Flextronics Technologies San L,San Agustín,Jalisco,Flex Ltd.,flex.com,Y,636,317.5,23187637.61
+209,Purple Innovation,Alpine,Utah,"Purple Innovation, Inc.",purple.com,Y,166,316.2,4667816.98
+210,Healthcare Arizona Llc,,,"Healthcare Co.,Ltd.",hkfoam.com,Y,172,315.3,8766903.12
+211,Meyer Sound Laboratories Inc.,Berkeley,California,"Meyer Sound Laboratories, Incorporated",meyersound.com,Y,223,311.3,8037290.2
+212,Pacific Blue Corp.,Capitol Heights,Maryland,"Pacific Blue Construction, Llc",pacificblueconstruction.com,Y,47,307.8,3848586.78
+213,Leoni Cable Inc.,Rochester,Michigan,L2 Beteiligungs Gmb H,,N,181,306.9,19766544.74
+214,Bassett Mirror Co. Inc.,Henry,Virginia,"Bassett Mirror Company, Inc.",bassettmirror.com,Y,146,306.5,3926016.21
+215,"Primitives By Kathy, Inc.",Lancaster,Pennsylvania,"Primitives By Kathy, Inc.",primitivesbykathy.com,Y,342,305.2,8874503.4
+216,Business & Pleasure Co. Llc,Compton,California,"Business & Pleasure Co., Llc",businessandpleasureco.com,Y,108,304.6,3356977.78
+217,Makita Corporation Of America,Buford,Georgia,Makita Corporation,makita.co.jp,Y,240,304.1,18421866.6
+218,Ikano Industries Mexico S.A. De C.V.,Saltillo,Coahuila de Zaragoza,Ikano S.A.,group.ikano,Y,84,302.0,23441189.7
+219,Mr. Bar B Q Products,Rural Hall,North Carolina,Mr. Bar B Q Products Llc,mrbarbq.com,Y,150,302.0,8103582.82
+220,Couristan Inc.,Fort Lee,New Jersey,"Couristan, Inc.",couristan.com,Y,243,295.2,11458467.47
+221,Conair Consumer Products Ulc,,,Conair Llc,conair.com,Y,220,292.5,7332292.06
+222,Precision Trading Corp.,Pella,Iowa,Precision Trading Corp.,precisiontrading.com,Y,59,290.0,6644813.9
+223,Le Chandelle Inc.,Diamond Bar,California,"Le Chandelle, Inc.",lechandellecandles.com,Y,48,290.0,7850934.0
+224,Dyson Inc.,Chicago,Illinois,Weybourne Holdings Pte. Ltd.,,N,167,289.3,12529694.38
+225,Gare Inc.,Haverhill,Massachusetts,Gare Incorporated,gareceramics.com,Y,139,286.0,5109903.77
+226,Electrolux Home Products,Fletcher,North Carolina,Ab Electrolux (Publ),electroluxgroup.com,Y,171,281.3,5400055.0
+227,Enriquez Materials & Quilting Inc.,Commerce,California,"Enriquez Materials & Quilting, Inc.",enriquezquilting.com,Y,132,274.9,5974361.13
+228,Forever Gifts Inc.,,,"Forever Gifts, Inc.",forevergiftsinc.com,Y,133,273.3,4436842.03
+229,Great States Corp.,Indianapolis,Indiana,Great States Corporation,,N,105,272.9,8702961.94
+230,Ocv Mexico S De Rl De Cv,Tetla,Tlaxcala,Owens Corning,owenscorning.com,Y,24,270.3,3861416.08
+231,Bernina Of America,Aurora,Illinois,Bernina International Ag,bernina.com,Y,120,268.6,25139108.42
+232,Viscosoft Inc.,,,Visco Soft Inc,viscosoft.com,Y,123,268.0,4145478.74
+233,Q And V Power Inc.,Houston,Texas,"Q Power, Inc.",qpowerinc.com,Y,105,266.1,15348223.03
+234,Revival Rugs Inc.,Oakland,California,Revival Rugs Inc,revivalrugs.com,Y,139,265.6,10616976.81
+235,Punch Studio,Culver City,California,Punch Studio Llc,punchstudio.com,Y,76,265.2,14293795.19
+236,Zylux America Inc.,Washington,Pennsylvania,"Zylux America, Inc.",zyluxacoustic.com,Y,122,261.7,15994967.86
+237,Phase Ii Products Inc.,San Diego,California,"Phase Ii Products, Inc.",phaseii.com,Y,130,259.6,4923836.44
+238,Jl Audio Inc.,Miramar,Florida,Garmin Ltd.,garmin.com,Y,194,255.6,12147031.33
+239,American Metalcraft Inc.,Melrose Park,Illinois,"American Metalcraft, Inc.",amnow.com,Y,249,249.3,4999919.09
+240,Sweet Home Kitchen & Bath Inc.,,,Sweet Home Kitchen & Bath Inc.,procraftcabinetry.com,Y,62,248.0,9691532.42
+241,Teka Mexicana Sa De Cv,Mexico City,Federal District,"Teka Mexicana, S.A. De C.V.",teka.com.mx,Y,69,247.5,8685861.2
+242,Agp Eglass Co.,,,Agp E Glass Co.,,N,127,246.7,4191743.36
+243,Door Kraft Products Inc.,,,Door Kraft Products Inc,doorkraft.com,Y,90,246.0,6368400.48
+244,Fairfield Chair Co.,Lenoir,North Carolina,Fairfield Chair Company,fairfieldchair.com,Y,112,245.9,2933366.39
+245,Global Furniture,Edison,New Jersey,Global Furniture Inc,,N,38,243.5,1493569.0
+246,O2 Cool Llc,Chicago,Illinois,"Maurice Sporting Goods, Inc.",maurice.net,Y,136,240.9,5545466.13
+247,Stark Carpet Corp.,Calhoun,Georgia,Stark Carpet Corporation,starkcarpet.com,Y,351,232.8,11686618.44
+248,Gemmy Industries Corp.,Coppell,Texas,Gemmy Industries Corporation,gemmy.com,Y,42,232.5,3190106.85
+249,Bear Down Brands Llc,Huntington Beach,California,"Bear Down Brands, Llc",pureenrichment.com,Y,75,227.2,5437329.18
+250,Creative Brands,,New York,"Cbc Group, Inc.",autom.com,Y,86,220.0,3588562.31
+251,Sauder Woodworking,Archbold,Ohio,Sauder Woodworking Co.,sauder.com,Y,101,217.0,11709458.97
+252,The Singing Machine Co. Inc.,,,"Algorhythm Holdings, Inc.",singingmachine.com,Y,61,211.2,9956227.16
+253,T3 Micro Inc.,Venice,California,T3 Micro Inc.,t3micro.com,Y,84,209.2,4499654.96
+254,Bia Cordon Bleu Inc.,Galt,California,"B.I.A. Cordon Bleu, Inc.",biacordonblu.com,Y,92,207.8,4807030.75
+255,Momeni Inc.,Carlstadt,New Jersey,"Momeni, Inc.",momeni.com,Y,258,207.6,7847310.05
+256,Restoration Hardware,Corte Madera,California,Rh,rh.com,Y,32,202.1,1950979.81
+257,Adven Group Inc.,,,"Adven Group, Llc",adven.com,Y,51,200.9,9220411.66
+258,Forestal Alfa Sa De Cv,Durango,Durango,"Forestal Alfa, S.A. De C.V.",forestalalfa.com.mx,Y,11,200.0,9045014.58
+259,Metglas Inc.,Conway,South Carolina,"Bcj 52 Co., Ltd.",,N,48,200.0,32641267.34
+260,Shure Inc.,El Paso,Texas,Shure Incorporated,shure.com,Y,216,198.0,8861924.14
+261,Tabletops Unlimited Inc.,Carson,California,"Tabletops Unlimited, Inc.",tabletopsunltd.com,Y,79,197.1,3573074.12
+262,Vesture Corp,Burbank,California,Vesture Corporation,microcoretechnology.com,Y,142,196.4,6819784.31
+263,Nurturen Inc.,,,Nurture N Inc,nurtureand.com,Y,64,196.0,2172357.86
+264,Carrier Interamerica Corporation,Miami,Florida,"Watsco, Inc.",watsco.com,Y,72,195.1,5882454.39
+265,Aver Information Inc.,Fremont,California,A Ver Information Inc.,aver.com,Y,62,195.0,25875290.76
+266,Mvp Group Corp.,,Connecticut,"Mvp Group International, Inc.",mvpgroupint.com,Y,96,194.6,5818518.77
+267,Marshall Pottery Inc.,Marshall,Texas,Marshall Pottery Inc.,deromausa.myshopify.com,Y,100,193.6,8998499.95
+268,Dundas Jafine Inc.,,,Dundas Jafine Inc,dundasjafine.com,Y,95,193.0,2725381.51
+269,Express Homes,Phoenix,Arizona,Express Homes Inc.,impresamodular.com,Y,97,193.0,3591285.58
+270,The Metal Ware Corp.,Two Rivers,Wisconsin,The Metal Ware Corporation,nesco.com,Y,77,189.3,4680927.92
+271,Canarm Ltd.,Laval,Québec,Canarm Ltd.,canarm.com,Y,102,188.8,6642453.94
+272,Ce North America Llc Puerto Rico,,,"Cem Global, Llc",,N,109,188.1,3712954.41
+273,The Howard Elliott Collection,Addison,Illinois,"The Howard Elliott Collection, Inc.",howardelliott.com,Y,208,187.5,1910923.11

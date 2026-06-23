@@ -1,0 +1,50 @@
+{
+  "manifest_version": "0.3",
+  "name": "do-or-wait-firestore",
+  "display_name": "Do or Wait — Firestore",
+  "version": "1.0.0",
+  "description": "Read and write the do-or-wait Firestore database (tasks, leads, notes, availability, pricing, renewals) so the web app updates live.",
+  "author": {
+    "name": "Justin Cho",
+    "email": "Justin.Cho@cubework.com"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "server.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server.js"],
+      "env": {}
+    }
+  },
+  "tools": [
+    { "name": "list_tasks", "description": "List task threads (Tasks tab)." },
+    { "name": "get_task", "description": "Get one task thread in full." },
+    { "name": "create_task", "description": "Create a new task thread." },
+    { "name": "add_task_update", "description": "Append an update to a task thread." },
+    { "name": "update_task", "description": "Rename or archive a task thread." },
+    { "name": "list_leads", "description": "List sales-pipeline leads." },
+    { "name": "get_lead", "description": "Get one lead in full." },
+    { "name": "create_lead", "description": "Create a new lead." },
+    { "name": "update_lead", "description": "Update top-level fields on a lead." },
+    { "name": "add_lead_update", "description": "Append a classified update to a lead." },
+    { "name": "list_notes", "description": "List ideas/issues notes." },
+    { "name": "create_note", "description": "Create a note." },
+    { "name": "update_note", "description": "Update a note." },
+    { "name": "get_availability", "description": "Read warehouse availability." },
+    { "name": "get_pricing", "description": "Read the national rate card." },
+    { "name": "get_renewals", "description": "Read the lease-renewal tracker." },
+    { "name": "list_locations", "description": "Read configured properties." },
+    { "name": "trigger_availability_sync", "description": "Run the availability sync for one location." },
+    { "name": "sync_all_locations", "description": "Run the availability sync for every location." },
+    { "name": "get_document", "description": "Read any Firestore document by collection + id." },
+    { "name": "query_collection", "description": "List documents in any collection." }
+  ],
+  "tools_generated": false,
+  "compatibility": {
+    "platforms": ["win32", "darwin", "linux"],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
+}

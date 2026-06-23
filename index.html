@@ -632,6 +632,7 @@
   <div class="tab-bar">
     <button class="tab-btn active" data-tab="tasks" onclick="switchTab('tasks')">📋 Tasks</button>
     <button class="tab-btn" data-tab="leads" onclick="switchTab('leads')">🎯 Leads</button>
+    <button class="tab-btn" data-tab="outreach" onclick="switchTab('outreach')">📧 Outreach</button>
     <button class="tab-btn" data-tab="playbook" onclick="switchTab('playbook')">📞 Playbook</button>
     <button class="tab-btn" data-tab="avail" onclick="switchTab('avail')">🏭 Avail</button>
     <button class="tab-btn" data-tab="pricing" onclick="switchTab('pricing')">💲 Pricing</button>
@@ -884,6 +885,23 @@
         <span id="pricing-meta" style="font-size:12px;color:var(--text2);"></span>
       </div>
       <div id="pricing-content"></div>
+    </div>
+  </div>
+
+  <div id="outreach-view" style="display:none">
+    <div style="max-width:1300px;margin:0 auto;padding:16px;width:100%;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+        <input id="outreach-search" oninput="onOutreachSearch(this.value)" placeholder="Search company, domain, contact, or email…"
+               style="flex:1;min-width:200px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:14px;" />
+        <select id="outreach-filter" onchange="setOutreachFilter(this.value)"
+               style="padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:13px;">
+          <option value="all">All</option>
+          <option value="enriched">Has email</option>
+          <option value="pending">Not pulled yet</option>
+        </select>
+        <span id="outreach-meta" style="font-size:12px;color:var(--text2);"></span>
+      </div>
+      <div id="outreach-content"></div>
     </div>
   </div>
 
@@ -1171,6 +1189,7 @@
 </div>
 
 <script src="pricing-seed.js"></script>
+<script src="outreach-seed.js"></script>
 <script type="module">
 // ═══════════════════════════════════════════════════════════════
 //  FIREBASE (no auth — open access)
@@ -2945,6 +2964,139 @@ async function logTouch(leadId, kind, e) {
   if (kind === 'text') window.location.href = `sms:${phone}`;
 }
 
+// ── Claude tooling: log a categorized lead update from a chat assistant ──
+// These run on the live page (browser-side Firestore), driven by Claude in Chrome.
+// `kind` follows the app's update categories; `note` is internal (NOT counted as
+// contact by contactInfo), the rest are contact briefs that reset the follow-up clock.
+const CLAUDE_LEAD_KINDS = ['note','email','call','text','met','inbound'];
+
+// Find leads matching a free-text query (id / company / name / contact / email).
+// Returns a lightweight list so Claude can pick or disambiguate before writing.
+function claudeFindLeads(query) {
+  const q = (query == null ? '' : String(query)).trim().toLowerCase();
+  const slim = l => ({
+    id: l.id, company: l.company || '', first_name: l.first_name || '',
+    contact: l.contact || '', email: l.email || '', stage: l.stage || '',
+    status: l.entries && l.entries.length ? currentStatus(l) : 'new',
+    updates: (l.entries || []).length
+  });
+  const pool = leads.filter(l => !l.archived && !l._deleted);
+  if (!q) return { ok: true, count: pool.length, matches: pool.map(slim) };
+  const exact = pool.find(l => (l.id || '').toLowerCase() === q);
+  if (exact) return { ok: true, count: 1, matches: [slim(exact)] };
+  const hits = pool.filter(l => {
+    const hay = [l.company, l.first_name, l.contact, l.email,
+      `${l.first_name || ''} ${l.company || ''}`].join(' ').toLowerCase();
+    return hay.includes(q);
+  });
+  return { ok: true, count: hits.length, matches: hits.map(slim) };
+}
+
+// Append a categorized Do/Wait thread entry to a lead and persist it.
+// opts: { lead|query|id, type:'do'|'wait', kind:<category>, text:<note> }
+// On an ambiguous lead match it writes nothing and returns the candidates.
+async function claudeLogLeadUpdate(opts) {
+  opts = opts || {};
+  const q    = (opts.lead ?? opts.query ?? opts.id ?? '').toString().trim();
+  const text = (opts.text ?? opts.note ?? '').toString().trim();
+  let type   = (opts.type ?? '').toString().toLowerCase().trim();
+  let kind   = (opts.kind ?? opts.category ?? 'note').toString().toLowerCase().trim();
+
+  if (!q)    return { ok: false, error: 'Provide a lead (id, company, name, contact, or email).' };
+  if (!text) return { ok: false, error: 'Provide the update text.' };
+  if (!CLAUDE_LEAD_KINDS.includes(kind))
+    return { ok: false, error: `Invalid kind "${kind}". Use one of: ${CLAUDE_LEAD_KINDS.join(', ')}.` };
+
+  const found = claudeFindLeads(q);
+  if (found.count === 0) return { ok: false, error: `No lead matched "${q}".` };
+  if (found.count > 1)
+    return { ok: false, ambiguous: true, error: `"${q}" matched ${found.count} leads — pick one by id.`, candidates: found.matches };
+
+  const lead = leads.find(l => l.id === found.matches[0].id);
+  if (!lead) return { ok: false, error: 'Lead disappeared before write.' };
+
+  // Default type if the caller didn't specify: inbound → Do (ball's in your court), else Wait.
+  let typeDefaulted = false;
+  if (type !== 'do' && type !== 'wait') { type = kind === 'inbound' ? 'do' : 'wait'; typeDefaulted = true; }
+  const dir = kind === 'inbound' ? 'in' : 'out';   // direction drives the outbound-cold follow-up flow
+
+  const entry = { id: 'e' + Date.now(), type, kind, dir, text, done: false, notes: [], createdAt: new Date().toISOString() };
+  lead.entries = [...(lead.entries || []), entry];
+  lead.updatedAt = new Date().toISOString();
+  expandedLeadIds.clear(); expandedLeadIds.add(lead.id);   // surface the card + its new entry
+  renderLeadsSection();
+  await persistItem(lead, 'leads');
+
+  return {
+    ok: true, leadId: lead.id, company: lead.company || '', first_name: lead.first_name || '',
+    entry, typeDefaulted, status: currentStatus(lead)
+  };
+}
+
+// ── Claude tooling: create / update task threads (topics) from chat ──
+// Topic entries are simpler than lead entries — no kind/dir, just type (do/wait).
+
+// Find task threads matching a query (id or title).
+function claudeFindTasks(query) {
+  const q = (query == null ? '' : String(query)).trim().toLowerCase();
+  const slim = t => ({
+    id: t.id, title: t.title || '',
+    status: t.entries && t.entries.length ? currentStatus(t) : 'new',
+    updates: (t.entries || []).length
+  });
+  const pool = topics.filter(t => !t.archived);
+  if (!q) return { ok: true, count: pool.length, matches: pool.map(slim) };
+  const exact = pool.find(t => (t.id || '').toLowerCase() === q);
+  if (exact) return { ok: true, count: 1, matches: [slim(exact)] };
+  const hits = pool.filter(t => (t.title || '').toLowerCase().includes(q));
+  return { ok: true, count: hits.length, matches: hits.map(slim) };
+}
+
+// Create a new task thread, optionally seeded with a first Do/Wait update.
+// opts: { title, type:'do'|'wait', text }
+async function claudeAddTask(opts) {
+  opts = opts || {};
+  const title = (opts.title ?? '').toString().trim();
+  const text  = (opts.text ?? opts.first_update ?? opts.note ?? '').toString().trim();
+  let type    = (opts.type ?? 'do').toString().toLowerCase().trim();
+  if (!title) return { ok: false, error: 'Provide a task title.' };
+  if (type !== 'do' && type !== 'wait') type = 'do';
+
+  const topic = { id: 't' + Date.now(), title, archived: false, createdAt: new Date().toISOString(), entries: [] };
+  if (text) topic.entries.push({ id: 'e' + Date.now(), type, text, done: false, notes: [], createdAt: new Date().toISOString() });
+  topics = [...topics, topic];
+  expandedIds.clear(); expandedIds.add(topic.id);
+  render();
+  await persistItem(topic, 'topics');
+  return { ok: true, taskId: topic.id, title, status: topic.entries.length ? currentStatus(topic) : 'new', updates: topic.entries.length };
+}
+
+// Append a Do/Wait update to an existing task thread.
+// opts: { task|query|id|title, type:'do'|'wait', text }
+async function claudeAddTaskUpdate(opts) {
+  opts = opts || {};
+  const q    = (opts.task ?? opts.query ?? opts.id ?? opts.title ?? '').toString().trim();
+  const text = (opts.text ?? opts.note ?? '').toString().trim();
+  let type   = (opts.type ?? 'do').toString().toLowerCase().trim();
+  if (!q)    return { ok: false, error: 'Provide a task (id or title).' };
+  if (!text) return { ok: false, error: 'Provide the update text.' };
+  if (type !== 'do' && type !== 'wait') type = 'do';
+
+  const found = claudeFindTasks(q);
+  if (found.count === 0) return { ok: false, error: `No task matched "${q}".` };
+  if (found.count > 1)
+    return { ok: false, ambiguous: true, error: `"${q}" matched ${found.count} tasks — pick one by id.`, candidates: found.matches };
+
+  const topic = topics.find(t => t.id === found.matches[0].id);
+  if (!topic) return { ok: false, error: 'Task disappeared before write.' };
+  const entry = { id: 'e' + Date.now(), type, text, done: false, notes: [], createdAt: new Date().toISOString() };
+  topic.entries = [...(topic.entries || []), entry];
+  expandedIds.clear(); expandedIds.add(topic.id);
+  render();
+  await persistItem(topic, 'topics');
+  return { ok: true, taskId: topic.id, title: topic.title || '', entry, status: currentStatus(topic) };
+}
+
 function toggleLeadCard(id) {
   // Accordion: clicking a card closes any other open one (clicking the open card collapses it).
   if (expandedLeadIds.has(id)) expandedLeadIds.delete(id); else { expandedLeadIds.clear(); expandedLeadIds.add(id); }
@@ -3091,11 +3243,13 @@ function switchTab(tab) {
   document.getElementById('avail-view').style.display    = tab === 'avail'    ? '' : 'none';
   document.getElementById('pricing-view').style.display  = tab === 'pricing'  ? '' : 'none';
   document.getElementById('notes-view').style.display    = tab === 'notes'    ? '' : 'none';
+  document.getElementById('outreach-view').style.display = tab === 'outreach' ? '' : 'none';
   document.querySelectorAll('.tab-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.tab === tab);
   });
   if (tab === 'notes') renderNotes();
   if (tab === 'pricing') renderPricing();
+  if (tab === 'outreach') renderOutreach();
   if (tab === 'playbook') renderPlaybookCards();
 }
 
@@ -4131,6 +4285,113 @@ try {
 } catch(e){ console.warn('pricing listener init', e); }
 renderPricing();
 
+// ═══════════════════════════════════════════════════════════════
+//  OUTREACH — Apollo-sourced prospect working list (📧 Outreach tab).
+//  Seeded from outreach-seed.js (all target companies show immediately);
+//  live contact/email data overlays from Firestore `outreach` collection
+//  (written by the n8n Apollo Ingestion workflow, matched by domain).
+//  Read-only working list — nothing is sent from here.
+// ═══════════════════════════════════════════════════════════════
+let outreachMap = {};            // firestore doc id → prospect doc
+let unsubOutreach = null;
+let outreachSearch = '';
+let outreachFilter = 'all';      // all | enriched | pending
+const expandedOutreach = new Set();
+
+function onOutreachSearch(v){ outreachSearch = (v||'').trim().toLowerCase(); renderOutreach(); }
+function setOutreachFilter(v){ outreachFilter = v; renderOutreach(); }
+function toggleOutreachRow(id, e){ if(e) e.stopPropagation(); if(expandedOutreach.has(id)) expandedOutreach.delete(id); else expandedOutreach.add(id); renderOutreach(); }
+
+// Merge bundled seed with any live Firestore prospect docs (matched by domain).
+function outreachRows(){
+  const seed = (window.OUTREACH_SEED || []);
+  const byDomain = {};
+  Object.values(outreachMap).forEach(d => { const k=(d.domain||'').toLowerCase(); if(k) byDomain[k]=d; });
+  return seed.map(s => {
+    const d = byDomain[(s.domain||'').toLowerCase()] || {};
+    const email = d.email || '';
+    return {
+      id: d.id || ('seed-' + String(s.domain||s.company||'').toLowerCase().replace(/[^a-z0-9]+/g,'-')),
+      company: d.company || s.company || '', domain: s.domain || d.domain || '',
+      city: s.city || '', state: s.state || '', teu: s.teu || 0,
+      contact: d.first_name || '', title: d.contact || d.title || '',
+      email, phone: d.phone || '',
+      tier: d.prospect_tier || d.tier || '',
+      score: (d.prospect_score!=null ? d.prospect_score : (d.score!=null ? d.score : '')),
+      why: d.why_now || '', subject: d.email_subject || '', body: d.email_body || '',
+      status: d.status || '', enriched: !!email
+    };
+  });
+}
+
+const OUTREACH_TIER = { Hot:'background:#fee2e2;color:#991b1b;', Warm:'background:#fef3c7;color:#92400e;', Watch:'background:#e5e7eb;color:#374151;' };
+
+function renderOutreach(){
+  const host = document.getElementById('outreach-content'); if(!host) return;
+  const all = outreachRows();
+  let rows = all;
+  if(outreachFilter==='enriched') rows = rows.filter(r=>r.enriched);
+  else if(outreachFilter==='pending') rows = rows.filter(r=>!r.enriched);
+  if(outreachSearch) rows = rows.filter(r => [r.company,r.domain,r.contact,r.email,r.title].some(x=>String(x||'').toLowerCase().includes(outreachSearch)));
+  rows.sort((a,b)=> (b.enriched-a.enriched) || (b.teu-a.teu) || String(a.company).localeCompare(String(b.company)));
+  const total = (window.OUTREACH_SEED||[]).length;
+  const got = all.filter(r=>r.enriched).length;
+  const meta = document.getElementById('outreach-meta');
+  if(meta) meta.textContent = `${rows.length} shown · ${got}/${total} pulled from Apollo`;
+  if(!rows.length){ host.innerHTML = '<div class="empty">No prospects match.</div>'; return; }
+  const LINK='color:#2563eb;text-decoration:none;';
+  const body = rows.map(r=>{
+    const open = expandedOutreach.has(r.id);
+    const tier = r.tier ? `<span style="font-size:10px;border-radius:10px;padding:1px 7px;${OUTREACH_TIER[r.tier]||''}">${esc(r.tier)}</span>` : '';
+    const emailCell = r.email
+      ? `<a href="mailto:${esc(r.email)}" onclick="event.stopPropagation()" style="${LINK}">${esc(r.email)}</a>`
+      : '<span style="color:var(--text2)">—</span>';
+    const det = open ? `<tr><td colspan="9" style="background:var(--bg);padding:10px 14px;">
+        ${r.why?`<div style="font-size:12px;color:var(--text2);margin-bottom:6px;"><b>Why now:</b> ${esc(r.why)}</div>`:''}
+        ${(r.subject||r.body)?`<div style="font-size:12px;"><b>Draft</b> — Subject: ${esc(r.subject||'')}
+          <div style="white-space:pre-wrap;line-height:1.5;margin-top:4px;border-left:3px solid #38D430;padding-left:10px;">${esc(r.body||'')}</div>
+          <div style="margin-top:8px;display:flex;gap:8px;">
+            ${r.email?`<a href="mailto:${esc(r.email)}?subject=${encodeURIComponent(r.subject||'')}&body=${encodeURIComponent(r.body||'')}" onclick="event.stopPropagation()" style="font-size:12px;padding:4px 10px;border:1px solid var(--border);border-radius:8px;${LINK}">✉️ Open in email</a>`:''}
+            <button onclick="copyOutreachDraft('${r.id}',event)" style="font-size:12px;padding:4px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);cursor:pointer;">📋 Copy</button>
+          </div></div>`:'<span style="color:var(--text2);font-size:12px;">Not pulled from Apollo yet — runs when the workflow reaches this company.</span>'}
+      </td></tr>` : '';
+    return `<tr onclick="toggleOutreachRow('${r.id}',event)" style="cursor:pointer;border-top:1px solid var(--border);">
+        <td style="font-weight:600;padding:6px 8px;">${esc(r.company)} <span style="color:var(--text2);font-weight:400;">${open?'▾':'▸'}</span><div style="font-size:11px;color:var(--text2);font-weight:400;">${esc(r.domain)}</div></td>
+        <td style="padding:6px 8px;">${esc(r.contact||'')||'<span style="color:var(--text2)">—</span>'}<div style="font-size:11px;color:var(--text2);">${esc(r.title||'')}</div></td>
+        <td style="padding:6px 8px;font-size:12px;">${emailCell}</td>
+        <td style="padding:6px 8px;font-size:12px;">${esc(r.phone||'')||'<span style="color:var(--text2)">—</span>'}</td>
+        <td style="padding:6px 8px;font-size:12px;color:var(--text2);">${esc([r.city,r.state].filter(Boolean).join(', '))}</td>
+        <td style="padding:6px 8px;text-align:right;font-size:12px;">${r.teu? Number(r.teu).toLocaleString():''}</td>
+        <td style="padding:6px 8px;text-align:center;">${tier}</td>
+        <td style="padding:6px 8px;text-align:right;font-size:12px;">${r.score!==''?esc(String(r.score)):''}</td>
+        <td style="padding:6px 8px;font-size:12px;">${esc(r.status||'')}</td>
+      </tr>${det}`;
+  }).join('');
+  host.innerHTML = `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;">
+      <thead><tr style="color:var(--text2);font-size:11px;text-transform:uppercase;letter-spacing:.04em;text-align:left;">
+        <th style="padding:5px 8px;">Company</th><th style="padding:5px 8px;">Contact</th><th style="padding:5px 8px;">Email</th>
+        <th style="padding:5px 8px;">Phone</th><th style="padding:5px 8px;">Location</th><th style="padding:5px 8px;text-align:right;">TEU</th>
+        <th style="padding:5px 8px;text-align:center;">Tier</th><th style="padding:5px 8px;text-align:right;">Score</th><th style="padding:5px 8px;">Status</th>
+      </tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+function copyOutreachDraft(id, e){
+  if(e) e.stopPropagation();
+  const r = outreachRows().find(x=>x.id===id); if(!r) return;
+  const txt = (r.subject?('Subject: '+r.subject+'\n\n'):'') + (r.body||'');
+  if(navigator.clipboard) navigator.clipboard.writeText(txt);
+}
+
+// Live overlay from Firestore (written by the n8n Apollo Ingestion workflow).
+try {
+  unsubOutreach = onSnapshot(collection(db,'outreach'), snap => {
+    outreachMap = {};
+    snap.forEach(d => { outreachMap[d.id] = { id:d.id, ...d.data() }; });
+    const v = document.getElementById('outreach-view');
+    if (v && v.style.display !== 'none') renderOutreach();
+  }, err => console.warn('outreach listener', err));
+} catch(e){ console.warn('outreach listener init', e); }
+
 // Renewals — per-tenant lease expiration / renewal status (written by the n8n Renewals
 // Sync, workflow 10). Surfaced on occupied unit rows in the Avail tab. No snapshot fallback.
 try {
@@ -4286,6 +4547,11 @@ window.saveLeadDetails     = saveLeadDetails;
 window.deleteLead          = deleteLead;
 window.toggleLeadCard      = toggleLeadCard;
 window.logTouch            = logTouch;
+window.claudeFindLeads     = claudeFindLeads;
+window.claudeLogLeadUpdate = claudeLogLeadUpdate;
+window.claudeFindTasks     = claudeFindTasks;
+window.claudeAddTask       = claudeAddTask;
+window.claudeAddTaskUpdate = claudeAddTaskUpdate;
 window.openAddEmailLink    = openAddEmailLink;
 window.cancelAddEmailLink  = cancelAddEmailLink;
 window.submitAddEmailLink  = submitAddEmailLink;
@@ -4313,6 +4579,10 @@ window.openSequencerEmail  = openSequencerEmail;
 window.markTouchSent       = markTouchSent;
 window.pickKind            = pickKind;
 window.onPricingSearch     = onPricingSearch;
+window.onOutreachSearch    = onOutreachSearch;
+window.setOutreachFilter   = setOutreachFilter;
+window.toggleOutreachRow   = toggleOutreachRow;
+window.copyOutreachDraft   = copyOutreachDraft;
 window.setPricingState     = setPricingState;
 window.togglePriceRow      = togglePriceRow;
 window.onPlaybookSearch    = onPlaybookSearch;
