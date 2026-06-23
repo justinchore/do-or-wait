@@ -1,5 +1,5 @@
 {
-  "name": "CW — 5. Add Location",
+  "name": "CW \u2014 5. Add Location",
   "nodes": [
     {
       "parameters": {
@@ -22,7 +22,9 @@
     {
       "parameters": {
         "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/config/properties",
-        "options": {}
+        "options": {},
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi"
       },
       "id": "d66fc715-f2a9-4661-a912-2a4a15e38126",
       "name": "Get property config",
@@ -31,7 +33,13 @@
       "position": [
         608,
         224
-      ]
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Google Service Account \u2014 do-or-wait"
+        }
+      }
     },
     {
       "parameters": {
@@ -61,7 +69,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const prop   = $('Merge metadata').first().json;\nconst sheets = $input.first().json.value || [];\n\n// Match the licensee tab by PATTERN — names vary across locations\n// (\"BOT - NEW ACTIVE LICENSEE\", \"BOT - Active Licensee Lists\", etc.)\nconst norm = s => String(s.name || '').trim().toUpperCase();\nconst target =\n     sheets.find(s => norm(s).includes('LICENSEE'))\n  || sheets.find(s => norm(s) === 'ALL UNITS')\n  || sheets.find(s => norm(s).startsWith('BOT'))\n  || sheets[0];\n\nconst targetSheet = target ? target.name : 'Sheet1';\nreturn [{ json: { ...prop, sheetName: targetSheet, sheetEncoded: encodeURIComponent(targetSheet) } }];"
+        "jsCode": "const prop   = $('Merge metadata').first().json;\nconst sheets = $input.first().json.value || [];\n\n// Match the licensee tab by PATTERN \u2014 names vary across locations\n// (\"BOT - NEW ACTIVE LICENSEE\", \"BOT - Active Licensee Lists\", etc.)\nconst norm = s => String(s.name || '').trim().toUpperCase();\nconst target =\n     sheets.find(s => norm(s).includes('LICENSEE'))\n  || sheets.find(s => norm(s) === 'ALL UNITS')\n  || sheets.find(s => norm(s).startsWith('BOT'))\n  || sheets[0];\n\nconst targetSheet = target ? target.name : 'Sheet1';\nreturn [{ json: { ...prop, sheetName: targetSheet, sheetEncoded: encodeURIComponent(targetSheet) } }];"
       },
       "id": "4bb7d789-8b38-4954-b7a0-0ae7f183e311",
       "name": "Pick data sheet",
@@ -170,7 +178,9 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.patchBody) }}",
-        "options": {}
+        "options": {},
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi"
       },
       "id": "6b42a7f3-dd20-4e5a-b74d-4715e8e82281",
       "name": "Write to Firestore1",
@@ -179,7 +189,13 @@
       "position": [
         2368,
         224
-      ]
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Google Service Account \u2014 do-or-wait"
+        }
+      }
     },
     {
       "parameters": {
@@ -236,7 +252,9 @@
     {
       "parameters": {
         "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/config/properties",
-        "options": {}
+        "options": {},
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi"
       },
       "id": "3368a4cf-43ec-45ef-8cf4-8f0aa0ef3ffb",
       "name": "Read current config",
@@ -245,7 +263,13 @@
       "position": [
         -512,
         1088
-      ]
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Google Service Account \u2014 do-or-wait"
+        }
+      }
     },
     {
       "parameters": {
@@ -267,7 +291,9 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.patchBody) }}",
-        "options": {}
+        "options": {},
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi"
       },
       "id": "425d5d4a-2642-44ae-a5a0-5fc29159c193",
       "name": "Save config",
@@ -276,7 +302,13 @@
       "position": [
         -80,
         1088
-      ]
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Google Service Account \u2014 do-or-wait"
+        }
+      }
     },
     {
       "parameters": {
@@ -285,7 +317,9 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ fields: { pa: { mapValue: { fields: { name: { stringValue: String((($('Build updated config').first().json.pa)||{}).name||'') }, phone: { stringValue: String((($('Build updated config').first().json.pa)||{}).phone||'') }, email: { stringValue: String((($('Build updated config').first().json.pa)||{}).email||'') } } } } } }) }}",
-        "options": {}
+        "options": {},
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi"
       },
       "id": "da91fa77-9e90-4e9e-9cd8-d60d33ddd7a7",
       "name": "Save PA to availability",
@@ -294,7 +328,13 @@
       "position": [
         592,
         976
-      ]
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Google Service Account \u2014 do-or-wait"
+        }
+      }
     },
     {
       "parameters": {

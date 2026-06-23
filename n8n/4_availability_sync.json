@@ -1,5 +1,5 @@
 {
-  "name": "CW — 4. Availability Sync (On Demand)",
+  "name": "CW \u2014 4. Availability Sync (On Demand)",
   "nodes": [
     {
       "parameters": {
@@ -11,20 +11,34 @@
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [200, 300],
+      "position": [
+        200,
+        300
+      ],
       "webhookId": "availability-sync"
     },
     {
       "parameters": {
         "method": "GET",
         "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/config/properties",
-        "options": {}
+        "options": {},
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi"
       },
       "id": "av-002",
       "name": "Get property config",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [420, 300]
+      "position": [
+        420,
+        300
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Google Service Account \u2014 do-or-wait"
+        }
+      }
     },
     {
       "parameters": {
@@ -34,7 +48,10 @@
       "name": "Find property",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [640, 300]
+      "position": [
+        640,
+        300
+      ]
     },
     {
       "parameters": {
@@ -48,11 +65,14 @@
       "name": "Get file metadata",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [860, 300],
+      "position": [
+        860,
+        300
+      ],
       "credentials": {
         "microsoftOAuth2Api": {
           "id": "REPLACE_WITH_CREDENTIAL_ID",
-          "name": "Microsoft OAuth2 — Cubework Outlook"
+          "name": "Microsoft OAuth2 \u2014 Cubework Outlook"
         }
       }
     },
@@ -64,7 +84,10 @@
       "name": "Merge metadata",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1080, 300]
+      "position": [
+        1080,
+        300
+      ]
     },
     {
       "parameters": {
@@ -78,11 +101,14 @@
       "name": "List worksheets",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1300, 300],
+      "position": [
+        1300,
+        300
+      ],
       "credentials": {
         "microsoftOAuth2Api": {
           "id": "REPLACE_WITH_CREDENTIAL_ID",
-          "name": "Microsoft OAuth2 — Cubework Outlook"
+          "name": "Microsoft OAuth2 \u2014 Cubework Outlook"
         }
       }
     },
@@ -94,7 +120,10 @@
       "name": "Pick data sheet",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1520, 300]
+      "position": [
+        1520,
+        300
+      ]
     },
     {
       "parameters": {
@@ -108,11 +137,14 @@
       "name": "Read sheet data",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1740, 300],
+      "position": [
+        1740,
+        300
+      ],
       "credentials": {
         "microsoftOAuth2Api": {
           "id": "REPLACE_WITH_CREDENTIAL_ID",
-          "name": "Microsoft OAuth2 — Cubework Outlook"
+          "name": "Microsoft OAuth2 \u2014 Cubework Outlook"
         }
       }
     },
@@ -124,7 +156,10 @@
       "name": "Parse + build patch",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1960, 300]
+      "position": [
+        1960,
+        300
+      ]
     },
     {
       "parameters": {
@@ -133,13 +168,24 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.patchBody) }}",
-        "options": {}
+        "options": {},
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi"
       },
       "id": "av-010",
       "name": "Write to Firestore",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2180, 300]
+      "position": [
+        2180,
+        300
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Google Service Account \u2014 do-or-wait"
+        }
+      }
     },
     {
       "parameters": {
@@ -151,22 +197,127 @@
       "name": "Respond OK",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [2400, 300]
+      "position": [
+        2400,
+        300
+      ]
     }
   ],
   "connections": {
-    "Webhook":            { "main": [[{ "node": "Get property config", "type": "main", "index": 0 }]] },
-    "Get property config":{ "main": [[{ "node": "Find property",        "type": "main", "index": 0 }]] },
-    "Find property":      { "main": [[{ "node": "Get file metadata",    "type": "main", "index": 0 }]] },
-    "Get file metadata":  { "main": [[{ "node": "Merge metadata",       "type": "main", "index": 0 }]] },
-    "Merge metadata":     { "main": [[{ "node": "List worksheets",      "type": "main", "index": 0 }]] },
-    "List worksheets":    { "main": [[{ "node": "Pick data sheet",      "type": "main", "index": 0 }]] },
-    "Pick data sheet":    { "main": [[{ "node": "Read sheet data",      "type": "main", "index": 0 }]] },
-    "Read sheet data":    { "main": [[{ "node": "Parse + build patch",  "type": "main", "index": 0 }]] },
-    "Parse + build patch":{ "main": [[{ "node": "Write to Firestore",   "type": "main", "index": 0 }]] },
-    "Write to Firestore": { "main": [[{ "node": "Respond OK",           "type": "main", "index": 0 }]] }
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Get property config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get property config": {
+      "main": [
+        [
+          {
+            "node": "Find property",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find property": {
+      "main": [
+        [
+          {
+            "node": "Get file metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get file metadata": {
+      "main": [
+        [
+          {
+            "node": "Merge metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge metadata": {
+      "main": [
+        [
+          {
+            "node": "List worksheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List worksheets": {
+      "main": [
+        [
+          {
+            "node": "Pick data sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick data sheet": {
+      "main": [
+        [
+          {
+            "node": "Read sheet data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read sheet data": {
+      "main": [
+        [
+          {
+            "node": "Parse + build patch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse + build patch": {
+      "main": [
+        [
+          {
+            "node": "Write to Firestore",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write to Firestore": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
   "active": false,
-  "settings": { "executionOrder": "v1" },
+  "settings": {
+    "executionOrder": "v1"
+  },
   "versionId": "cw-workflow-004-v3"
 }

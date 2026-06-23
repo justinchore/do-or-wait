@@ -918,6 +918,13 @@
     </div>
   </div>
 
+  <!-- Outreach prospect detail modal -->
+  <div id="outreach-modal-overlay" onclick="outreachModalBgClick(event)" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;align-items:flex-start;justify-content:center;overflow:auto;padding:32px 16px;">
+    <div onclick="event.stopPropagation()" style="background:var(--surface);border-radius:16px;max-width:720px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3);">
+      <div id="outreach-modal-body" style="padding:22px 24px 28px;"></div>
+    </div>
+  </div>
+
 </div><!-- /#app (closed here instead of below) -->
 
 <!-- Hidden file input -->
@@ -4418,22 +4425,12 @@ function renderOutreach(){
   if(!rows.length){ host.innerHTML = '<div class="empty">No prospects match.</div>'; return; }
   const LINK='color:#2563eb;text-decoration:none;';
   const body = rows.map(r=>{
-    const open = expandedOutreach.has(r.id);
     const tier = r.tier ? `<span style="font-size:10px;border-radius:10px;padding:1px 7px;${OUTREACH_TIER[r.tier]||''}">${esc(r.tier)}</span>` : '';
     const emailCell = r.email
       ? `<a href="mailto:${esc(r.email)}" onclick="event.stopPropagation()" style="${LINK}">${esc(r.email)}</a>`
       : '<span style="color:var(--text2)">—</span>';
-    const det = open ? `<tr><td colspan="9" style="background:var(--bg);padding:10px 14px;">
-        ${r.why?`<div style="font-size:12px;color:var(--text2);margin-bottom:6px;"><b>Why now:</b> ${esc(r.why)}</div>`:''}
-        ${(r.subject||r.body)?`<div style="font-size:12px;"><b>Draft</b> — Subject: ${esc(r.subject||'')}
-          <div style="white-space:pre-wrap;line-height:1.5;margin-top:4px;border-left:3px solid #38D430;padding-left:10px;">${esc(r.body||'')}</div>
-          <div style="margin-top:8px;display:flex;gap:8px;">
-            ${r.email?`<a href="mailto:${esc(r.email)}?subject=${encodeURIComponent(r.subject||'')}&body=${encodeURIComponent(r.body||'')}" onclick="event.stopPropagation()" style="font-size:12px;padding:4px 10px;border:1px solid var(--border);border-radius:8px;${LINK}">✉️ Open in email</a>`:''}
-            <button onclick="copyOutreachDraft('${r.id}',event)" style="font-size:12px;padding:4px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);cursor:pointer;">📋 Copy</button>
-          </div></div>`:'<span style="color:var(--text2);font-size:12px;">Not pulled from Apollo yet — runs when the workflow reaches this company.</span>'}
-      </td></tr>` : '';
-    return `<tr onclick="toggleOutreachRow('${r.id}',event)" style="cursor:pointer;border-top:1px solid var(--border);">
-        <td style="font-weight:600;padding:6px 8px;">${esc(r.company)} <span style="color:var(--text2);font-weight:400;">${open?'▾':'▸'}</span><div style="font-size:11px;color:var(--text2);font-weight:400;">${esc(r.domain)}</div></td>
+    return `<tr onclick="openOutreachModal('${esc(r.domain)}')" style="cursor:pointer;border-top:1px solid var(--border);">
+        <td style="font-weight:600;padding:6px 8px;">${esc(r.company)} <span style="color:var(--text2);font-weight:400;">›</span><div style="font-size:11px;color:var(--text2);font-weight:400;">${esc(r.domain)}</div></td>
         <td style="padding:6px 8px;">${esc(r.contact||'')||'<span style="color:var(--text2)">—</span>'}<div style="font-size:11px;color:var(--text2);">${esc(r.title||'')}</div></td>
         <td style="padding:6px 8px;font-size:12px;">${emailCell}</td>
         <td style="padding:6px 8px;font-size:12px;">${esc(r.phone||'')||'<span style="color:var(--text2)">—</span>'}</td>
@@ -4442,7 +4439,7 @@ function renderOutreach(){
         <td style="padding:6px 8px;text-align:center;">${tier}</td>
         <td style="padding:6px 8px;text-align:right;font-size:12px;">${r.score!==''?esc(String(r.score)):''}</td>
         <td style="padding:6px 8px;font-size:12px;">${esc(r.status||'')}</td>
-      </tr>${det}`;
+      </tr>`;
   }).join('');
   host.innerHTML = `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;">
       <thead><tr style="color:var(--text2);font-size:11px;text-transform:uppercase;letter-spacing:.04em;text-align:left;">
@@ -4452,11 +4449,94 @@ function renderOutreach(){
       </tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
-function copyOutreachDraft(id, e){
+function _outreachDoc(domain){
+  domain=(domain||'').toLowerCase();
+  return Object.values(outreachMap).find(x=>(x.domain||'').toLowerCase()===domain) || {};
+}
+function copyOutreachDraft(domain, e){
   if(e) e.stopPropagation();
-  const r = outreachRows().find(x=>x.id===id); if(!r) return;
-  const txt = (r.subject?('Subject: '+r.subject+'\n\n'):'') + (r.body||'');
+  const d=_outreachDoc(domain);
+  const txt=(d.email_subject?('Subject: '+d.email_subject+'\n\n'):'')+(d.email_body||'');
   if(navigator.clipboard) navigator.clipboard.writeText(txt);
+}
+function emailStatusBadge(s){
+  s=(s||'').toLowerCase();
+  const M={verified:['#dcfce7','#166534','✓ verified'],likely_to_engage:['#dbeafe','#1e40af','likely to engage'],extrapolated:['#fef3c7','#92400e','extrapolated'],guessed:['#fef3c7','#92400e','guessed'],unavailable:['#fee2e2','#991b1b','unavailable']};
+  const m=M[s]; return m?`<span style="font-size:10px;border-radius:8px;padding:1px 6px;background:${m[0]};color:${m[1]};margin-left:6px;">${m[2]}</span>`:'';
+}
+// Full Apollo profile for one prospect (click a row).
+function openOutreachModal(domain){
+  domain=(domain||'').toLowerCase();
+  const seed=(window.OUTREACH_SEED||[]).find(s=>(s.domain||'').toLowerCase()===domain)||{};
+  const d=_outreachDoc(domain);
+  const enriched=!!(d.email||d.first_name);
+  const company=esc(d.company||seed.company||domain);
+  const LINK='color:#2563eb;text-decoration:none;';
+  const tier=d.prospect_tier?`<span style="font-size:11px;border-radius:10px;padding:2px 9px;${OUTREACH_TIER[d.prospect_tier]||''}">${esc(d.prospect_tier)}${(d.prospect_score!=null&&d.prospect_score!=='')?' · '+esc(String(d.prospect_score)):''}</span>`:'';
+  const fr=(lab,val)=> (val!=null&&val!=='') ? `<div style="display:flex;gap:10px;padding:5px 0;border-top:1px solid var(--border);font-size:13px;"><div style="color:var(--text2);min-width:140px;">${lab}</div><div style="flex:1;">${val}</div></div>` : '';
+  const sec=(title,inner)=> inner ? `<div style="margin-top:16px;"><div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);margin-bottom:2px;">${title}</div>${inner}</div>` : '';
+  const growth=[['6mo',d.growth_6mo],['12mo',d.growth_12mo],['24mo',d.growth_24mo]].filter(g=>g[1]).map(g=>`${g[0]}: <b>${esc(g[1])}</b>`).join(' &nbsp; ');
+  let near='';
+  try{ const st=String(d.org_state||seed.state||'').toUpperCase(); if(st){ const sites=Object.values(availMap||{}).filter(x=>String(stateOf(x)||'').toUpperCase()===st).map(x=>esc(x.property||x._id)); near=sites.length?sites.join(', '):('No Cubework site in '+st+' yet'); } }catch(e){}
+  const contact = enriched ? [
+    fr('Name', esc(d.first_name||'')),
+    fr('Title', esc(d.contact||'')),
+    fr('Seniority / dept', [d.seniority,d.department].filter(Boolean).map(esc).join(' · ')),
+    fr('Email', d.email?`<a href="mailto:${esc(d.email)}" style="${LINK}">${esc(d.email)}</a>${emailStatusBadge(d.email_status)}`:''),
+    fr('LinkedIn', d.linkedin?`<a href="${esc(d.linkedin)}" target="_blank" rel="noopener" style="${LINK}">View profile ↗</a>`:''),
+    fr('Direct phone', d.phone||'<span style="color:var(--text2)">revealed on reply</span>'),
+    fr('Location', esc(d.person_loc||''))
+  ].join('') : '';
+  const companyBlock=[
+    fr('Industry', esc(d.industry||seed.industry||'')),
+    fr('Employees', d.employees?esc(String(d.employees)):''),
+    fr('Headcount growth', growth),
+    fr('Revenue', esc(d.annual_revenue||'')),
+    fr('Funding', [d.total_funding,d.latest_funding].filter(Boolean).map(esc).join(' · ')),
+    fr('Founded', esc(d.founded||'')),
+    fr('Open job postings', d.num_jobs?esc(String(d.num_jobs)):''),
+    fr('Import volume (TEU)', (d.teu||seed.teu)?Number(d.teu||seed.teu).toLocaleString():''),
+    fr('About', d.description?`<span style="color:var(--text2)">${esc(d.description)}</span>`:'')
+  ].join('');
+  const logistics=[
+    fr('HQ', esc(d.org_address||[seed.city,seed.state].filter(Boolean).join(', '))),
+    fr('Company phone', esc(d.org_phone||'')),
+    fr('Website', `<a href="${esc(d.org_website||('https://'+domain))}" target="_blank" rel="noopener" style="${LINK}">${esc(domain)} ↗</a>`),
+    fr('Company LinkedIn', d.org_linkedin?`<a href="${esc(d.org_linkedin)}" target="_blank" rel="noopener" style="${LINK}">Company page ↗</a>`:''),
+    fr('Nearest Cubework', near?esc(near):'')
+  ].join('');
+  const draft=(d.email_subject||d.email_body)?`
+      <div style="margin-top:4px;font-size:13px;"><div style="color:var(--text2);">Subject</div>
+      <div style="font-weight:600;margin-bottom:6px;">${esc(d.email_subject||'')}</div>
+      <div style="white-space:pre-wrap;line-height:1.55;border-left:3px solid #38D430;padding-left:12px;">${esc(d.email_body||'')}</div>
+      <div style="margin-top:10px;display:flex;gap:8px;">
+        ${d.email?`<a href="mailto:${esc(d.email)}?subject=${encodeURIComponent(d.email_subject||'')}&body=${encodeURIComponent(d.email_body||'')}" style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;${LINK}">✉️ Open in email</a>`:''}
+        <button onclick="copyOutreachDraft('${domain}',event)" style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);cursor:pointer;">📋 Copy</button>
+      </div></div>`:'<div style="color:var(--text2);font-size:13px;margin-top:4px;">Not pulled from Apollo yet — it’ll fill in when the workflow reaches this company.</div>';
+  const statusBlock = enriched ? `<div style="margin-top:16px;display:flex;align-items:center;gap:10px;">
+      <span style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);">Status</span>
+      <input value="${esc(d.status||'')}" placeholder="emailed / replied / called…" onchange="saveOutreachStatus('${esc(d.id)}',this.value)"
+        style="flex:1;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px;" /></div>` : '';
+  document.getElementById('outreach-modal-body').innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+      <div><div style="font-size:18px;font-weight:800;">${company}</div>
+        <div style="font-size:12px;color:var(--text2);">${esc(d.contact||'')}${d.contact?' · ':''}${esc(domain)}</div></div>
+      <div style="display:flex;align-items:center;gap:8px;">${tier}
+        <button onclick="closeOutreachModal()" style="border:none;background:var(--bg);border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:16px;">✕</button></div>
+    </div>
+    ${d.why_now?`<div style="margin-top:10px;font-size:13px;background:var(--bg);border-radius:10px;padding:10px 12px;"><b>Why now:</b> ${esc(d.why_now)}</div>`:''}
+    ${sec('Draft email', draft)}
+    ${statusBlock}
+    ${sec('Contact', contact)}
+    ${sec('Company &amp; signals', companyBlock)}
+    ${sec('Logistics', logistics)}`;
+  document.getElementById('outreach-modal-overlay').style.display='flex';
+}
+function closeOutreachModal(){ const o=document.getElementById('outreach-modal-overlay'); if(o) o.style.display='none'; }
+function outreachModalBgClick(e){ if(e.target && e.target.id==='outreach-modal-overlay') closeOutreachModal(); }
+async function saveOutreachStatus(id, val){
+  if(!id) return;
+  try { await setDoc(doc(db,'outreach',id), { status: val }, { merge:true }); } catch(e){ console.warn('save status', e); }
 }
 
 // Live overlay from Firestore (written by the n8n Apollo Ingestion workflow).
@@ -4660,6 +4740,10 @@ window.onOutreachSearch    = onOutreachSearch;
 window.setOutreachFilter   = setOutreachFilter;
 window.toggleOutreachRow   = toggleOutreachRow;
 window.copyOutreachDraft   = copyOutreachDraft;
+window.openOutreachModal   = openOutreachModal;
+window.closeOutreachModal  = closeOutreachModal;
+window.outreachModalBgClick= outreachModalBgClick;
+window.saveOutreachStatus  = saveOutreachStatus;
 window.doSignIn            = doSignIn;
 window.doSignOut           = doSignOut;
 window.setPricingState     = setPricingState;

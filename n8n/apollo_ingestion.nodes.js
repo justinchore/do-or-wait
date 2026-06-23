@@ -1,4 +1,4 @@
-// Apollo Ingestion (OpenAI scoring → Firestore `outreach` → app Outreach tab) — paste-ready Code node bodies.
+// Apollo Ingestion (OpenAI scoring -> rich Firestore `outreach` -> app Outreach tab) — paste-ready Code node bodies.
 
 // ===== "Household Durables input" =====
 // Household Durables prospect companies (importers tab, domain-ready, ranked by TEU).
@@ -298,26 +298,50 @@ const enrichBody = { reveal_personal_emails:true, reveal_phone_number:false,
 return [{ json: { ...ctx, parsed, tier, enrichBody } }];
 
 // ===== "Build prospect doc" =====
-// Build a Firestore `outreach` doc — the app's 📧 Outreach tab reads this collection (matched by domain).
-// Watch-tier & no-contact already dropped upstream. Deterministic id ap-<domain> => re-runs return
-// ALREADY_EXISTS (409) and skip, so your Status edits are never clobbered. Phone empty until reveal-on-reply.
+// Build a rich Firestore `outreach` doc from the Apollo enrichment record + org firmographics.
+// Context from 'Gate + build email reveal'; enrichment response (Apollo `matches`) on $json.
+// Capturing the extra fields is FREE (same response we already paid for). Deterministic id
+// ap-<domain> => re-runs skip existing (never clobber your Status edits). Direct phone empty until reveal-on-reply.
 const ctx = $('Gate + build email reveal').item.json;
-const m0 = ($json.matches || [])[0] || {};
-const p0 = (ctx.picked && ctx.picked[0]) || {};
-const email = m0.email || (m0.personal_emails && m0.personal_emails[0]) || '';
-const first = ((m0.first_name||p0.first_name||'') + ' ' + (m0.last_name||p0.last_name||'')).trim();
-const title = m0.title || p0.title || '';
+const m   = ($json.matches || [])[0] || {};
+const org = m.organization || {};
+const p0  = (ctx.picked && ctx.picked[0]) || {};
+const email = m.email || (m.personal_emails && m.personal_emails[0]) || '';
+const fullName = m.name || ((m.first_name||p0.first_name||'') + ' ' + (m.last_name||p0.last_name||'')).trim();
+const title = m.title || p0.title || '';
 const now = new Date().toISOString();
 const slug = 'ap-' + ctx.domain.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'');
-const S = v => ({ stringValue: String(v==null?'':v) });
+const S = v => ({ stringValue: (v==null?'':String(v)) });
+const I = v => ({ integerValue: String(Math.round(Number(v)||0)) });
+const pct = v => (v==null||v==='' ? '' : (Math.round(Number(v)*1000)/10) + '%');
 const fields = {
-  company:S(ctx.company), domain:S(ctx.domain), first_name:S(first), contact:S(title),
-  email:S(email), phone:S(''), city:S(ctx.city), state:S(ctx.state),
-  teu:{ integerValue:String(ctx.teu||0) }, prospect_tier:S(ctx.tier),
-  prospect_score:{ integerValue:String(ctx.parsed.total!=null?ctx.parsed.total:0) },
-  why_now:S(ctx.parsed.why_now||''), email_subject:S(ctx.parsed.email_subject||''),
-  email_body:S(ctx.parsed.email_body||''), linkedin:S(p0.linkedin_url||''),
-  status:S(''), prospect_source:S('Apollo'), createdAt:{ timestampValue:now }
+  company:S(ctx.company), domain:S(ctx.domain),
+  // contact
+  first_name:S(fullName), contact:S(title), seniority:S(m.seniority||p0.seniority||''),
+  department:S((m.departments&&m.departments[0])||''), headline:S(m.headline||''), photo:S(m.photo_url||''),
+  email:S(email), email_status:S(m.email_status||''), linkedin:S(m.linkedin_url||p0.linkedin_url||''),
+  person_loc:S([m.city,m.state].filter(Boolean).join(', ')), phone:S(''),
+  // company + timing signals
+  industry:S(org.industry||ctx.industry||''), employees:I(org.estimated_num_employees),
+  founded:S(org.founded_year||''),
+  annual_revenue:S(org.annual_revenue_printed || org.annual_revenue || ''),
+  total_funding:S(org.total_funding_printed || org.total_funding || ''),
+  latest_funding:S([org.latest_funding_stage, org.latest_funding_round_date].filter(Boolean).join(' \u00b7 ')),
+  growth_6mo:S(pct(org.organization_headcount_six_month_growth)),
+  growth_12mo:S(pct(org.organization_headcount_twelve_month_growth)),
+  growth_24mo:S(pct(org.organization_headcount_twenty_four_month_growth)),
+  num_jobs:I(org.organization_num_jobs || org.num_jobs || 0),
+  description:S(String(org.short_description||'').slice(0,600)),
+  // logistics
+  org_phone:S(org.phone || org.primary_phone || org.sanitized_phone || ''),
+  org_address:S(org.raw_address || [org.street_address,org.city,org.state].filter(Boolean).join(', ')),
+  org_state:S(org.state||ctx.state||''), org_website:S(org.website_url || ('https://'+ctx.domain)),
+  org_linkedin:S(org.linkedin_url||''),
+  teu:I(ctx.teu),
+  // pitch
+  prospect_tier:S(ctx.tier), prospect_score:I(ctx.parsed.total!=null?ctx.parsed.total:0),
+  why_now:S(ctx.parsed.why_now||''), email_subject:S(ctx.parsed.email_subject||''), email_body:S(ctx.parsed.email_body||''),
+  status:S(''), prospect_source:S('Apollo'), createdAt:{ timestampValue: now }
 };
 return [{ json: { slug, hasEmail: !!email, fsBody: { fields } } }];
 
