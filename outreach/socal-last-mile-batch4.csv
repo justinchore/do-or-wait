@@ -1,0 +1,20 @@
+company,domain,domain_status,region,segment,fit_note
+OnTrac,ontrac.com,confirmed,SoCal (multi-hub),Regional parcel,Warehouse sortation + parking; SoCal last-mile footprint
+Veho,shipveho.com,verify,LA,Last-mile parcel (tech),Indoor staging + parking for local fleets/DSPs
+Gofo Express,gofoexpress.com,verify,LA,Last-mile parcel,LA-HQ independent; warehouse + yard for e-comm last-mile
+GoBolt,gobolt.com,confirmed,LA/SoCal,Big-and-bulky last-mile,Warehouse staging + yard; furniture/appliance white-glove
+Best Yet Express,bestyetexpresstrucking.com,confirmed,LA hub,Regional LTL/final-mile,Centralized hub: warehouse + parking; underserved-area routing
+GoShare,goshare.co,verify,South Bay/SoCal,Gig oversized/last-mile,Warehouse + yard for oversized + moving logistics
+SpeedX,speedxpress.com,verify,SoCal,Last-mile parcel,Sortation warehouse + parking for independent last-mile
+Dependable Highway Express,godependable.com,verify,Los Angeles,LTL/final-mile/3PL,LA-based; warehousing + final-mile + parking
+AxleHire,axlehire.com,confirmed,SoCal ops,Last-mile (tech),Warehouse staging + parking for same-day driver fleets
+Dropoff,dropoff.com,confirmed,SoCal market,Same-day courier,Indoor staging + parking; same-day B2B / medical / retail
+MedSpeed,medspeed.com,confirmed,CA ops,Medical courier,Healthcare logistics; warehouse + parking for recurring routes
+Jet Delivery,jetdelivery.com,verify,West Coast,Courier/last-mile,Regional courier; warehouse + parking, CA ops
+Senpex,senpex.com,verify,SoCal,Same-day/last-mile,On-demand delivery; staging space + gig-fleet parking
+Curri,curri.com,confirmed,National w/ SoCal,Construction last-mile,Building-materials last-mile; warehouse + yard for flatbed/van fleets
+Today Delivery,todaydeliveryinc.com,verify,LA,Courier/last-mile,LA courier; warehouse + parking for last-mile
+Speedster Courier,speedsternow.com,verify,LA,Same-day courier,LA same-day courier; staging + parking
+Quik Pick Express,quikpickexpress.com,verify,Santa Fe Springs (LA/IE),Last-mile/drayage,SoCal last-mile + transload; strong warehouse + yard fit
+United Delivery Service,uniteddeliveryservice.com,verify,SoCal,Last-mile parcel,Regional distribution; warehouse + parking
+ProMed Delivery,promeddelivery.net,verify,SoCal,Medical courier,Medical/pharma routes; warehouse + parking for recurring fleet

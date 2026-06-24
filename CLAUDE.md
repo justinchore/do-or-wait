@@ -8,6 +8,7 @@ A web app for Justin Cho (Justin.Cho@cubework.com) at Cubework. Tabs:
 4. **🏭 Avail** — Real-time availability dashboard for Cubework warehouse locations. Has an **⬇ Export JSON** button (toolbar) that opens a location-picker modal (`openAvailExport` / `doAvailExport`, overlay `#availexp-overlay`): choose which sites to include, then it **always syncs-first for client-fresh data** — it POSTs `AVAIL_WEBHOOK` (n8n workflow 4) per chosen location, waits for the Firestore write-back by polling each doc's `synced_at` against a pre-trigger baseline (deadline scales with location count, capped 5 min), then pulls a `getDocsFromServer` snapshot and downloads the selected docs as `do-or-wait-availability-YYYY-MM-DD.json` (array of `{_id, ...doc}`, same shape the listener consumes). Locations whose sync doesn't confirm in time are still exported (last-known) with a ⚠ note in the modal status.
 5. **💲 Pricing** — National rate card (read-only). Searchable table grouped by state; click a row to expand full pricing detail. Reads `pricing/current` (n8n-synced), falls back to `pricing-seed.js` snapshot.
 6. **💡 Notes** — Ideas/issues notebook (two editable fields per note, filter by date created)
+7. **📧 Outreach** — Apollo-sourced cold-outreach prospect list (separate from Leads). Spreadsheet-style table seeded from `outreach-seed.js`, overlaid live by the Firestore **`outreach`** collection (written by n8n workflow 12). Columns: Company, Contact, Email, Phone, Location, Industry, TEU, Tier, Score, Status. Industry + status + sort dropdowns (`setOutreachIndustry`/`setOutreachSort`/`setOutreachFilter`), defaults to "Has email". Click a row → detail modal (`openOutreachModal`) with company intel, a research brief, the draft email (Open-in-email / Copy), an editable **Status** (`saveOutreachStatus`), a **🔎 Research & draft** button (`researchProspect` → n8n workflow 13), and a **✕ Invalid** flag (`markOutreachInvalid`) that hides bad-fit prospects from normal views (review/restore via the "Invalid" filter). See the 2026-06-24 section below for the full pipeline.
 
 Deployed at: https://justinchore.github.io/do-or-wait/
 Source: `C:\Users\jcho\Documents\Claude\Projects\do_or_wait\index.html` (single HTML file, push to GitHub to deploy)
@@ -16,7 +17,8 @@ Source: `C:\Users\jcho\Documents\Claude\Projects\do_or_wait\index.html` (single 
 
 ## Tech stack
 - **Frontend**: Single `index.html` — vanilla JS, no framework, no build step
-- **Database**: Firebase Firestore (project: `do-or-wait`, open rules — no auth required)
+- **Database**: Firebase Firestore (project: `do-or-wait`). **Rules locked down 2026-06-24** — read/write only for a signed-in user on the 3-email allowlist (see Auth section). Was previously open/no-auth.
+- **App auth**: Firebase **email/password** sign-in, restricted to `ALLOWED_EMAILS` (jchoustin91@gmail.com, justin.cho@cubework.com, cubeworkautomation@gmail.com). Switched from Google sign-in (the cross-domain redirect fails on mobile). See Auth section.
 - **Storage**: Firebase Storage (voice notes, file attachments)
 - **Automation**: n8n at `https://ailinker.item.com` (self-hosted, behind nginx)
 - **CORS proxy**: Cloudflare Worker at `https://plain-credit-5962.jchoustin91.workers.dev` (proxies app → n8n with correct CORS headers)
@@ -292,4 +294,43 @@ The Graph sync (workflow 8) only sees cell *text*, so its layout is a rough scaf
 - Add location: `https://plain-credit-5962.jchoustin91.workers.dev/webhook/add-location`
 - Resolve thread link: `https://plain-credit-5962.jchoustin91.workers.dev/webhook/resolve-thread` (POST `{subject,contact}` → `{found,webLink,conversationId,…}`; n8n workflow 11)
 - Floorplan sync: `https://plain-credit-5962.jchoustin91.workers.dev/webhook/floorplan-sync`
+- Research prospect: `https://plain-credit-5962.jchoustin91.workers.dev/webhook/research-prospect` (POST `{id,company,domain,industry,location}` → web research + personalized draft PATCHed to `outreach/{id}`; n8n workflow 13)
 - n8n base: `https://ailinker.item.com`
+
+---
+
+## 2026-06-24 session — Outreach pipeline, research agent, auth lockdown
+
+### App auth — email/password gate (was open → Google → email/password)
+- Firebase **email/password** sign-in. `ALLOWED_EMAILS` (jchoustin91@gmail.com, justin.cho@cubework.com, cubeworkautomation@gmail.com) gates the app; `onAuthStateChanged` shows `#auth-screen` until a valid user signs in, else hides `#app`. Handlers: `doEmailSignIn` / `doSignOut`. `firebaseConfig` gained `authDomain: do-or-wait.firebaseapp.com`.
+- **Why not Google:** the OAuth redirect crosses github.io ↔ firebaseapp.com, which mobile (esp. iOS) blocks via storage partitioning → bounce back to login. Email/password has no cross-domain step, works everywhere. Passwords are set in Firebase console → Authentication → Users.
+- **Listeners DEFERRED until auth:** `liveSnapshot()` wraps every `onSnapshot` and queues it; `startLiveData()` flushes the queue on first valid sign-in. So nothing reads Firestore before auth (would 403 under the locked rules). All 7 listeners use `liveSnapshot`.
+- **App REST writes carry the ID token:** `savePA` / `saveOwnership` send `Authorization: Bearer <idToken>` via `authToken()` so they pass the rules.
+
+### Firestore rules — LOCKED DOWN (`firestore.rules`, published in console)
+- read/write only if `request.auth.token.email.lower()` is in the 3-email allowlist. **No `email_verified` check** — console-created email/password accounts are not verified, so requiring it locks everyone out. The allowlist is the gate. Companion: `FIRESTORE_SECURITY.md`. The `AIzaSy…` apiKey is a public Firebase web key (not a secret); the open rules were the real exposure, now closed.
+
+### CONSEQUENCE for n8n — Firestore nodes MUST authenticate
+- The lockdown 403s any n8n HTTP node that hit Firestore REST with `authentication: none`. **Fix:** every Firestore HTTP node uses `predefinedCredentialType` → `googleApi` → a Google **service-account** credential with the **datastore scope** and the "Set up for use in HTTP Request node" toggle ON. Service accounts use IAM and **bypass security rules** (so n8n is unaffected by the email allowlist).
+- Workflows **4 and 5** (availability / add-location) were unauthenticated and were fixed to use the SA credential. The user created a fresh Firebase Admin SDK key credential named **`Firebase_SDK_do_or_wait`** (datastore scope). Other workflows already used a SA credential. The app's end-user auth (email/password) and the service-account auth are separate systems — changing one doesn't affect the other.
+
+### `outreach/{id}` collection (NEW) — written by workflow 12, patched by 13
+Doc id `ap-<domain-slug>`. The 📧 Outreach tab reads it live and overlays `outreach-seed.js` (matched by domain). Fields: `company, domain, first_name, contact`(title)`, seniority, department, headline, photo, email, email_status, linkedin, person_loc, phone`(empty until reveal-on-reply)`, industry, employees, founded, annual_revenue, total_funding, latest_funding, growth_6mo/12mo/24mo, num_jobs, description, org_phone, org_address, org_state, org_website, org_linkedin, teu, prospect_tier, prospect_score, why_now, email_subject, email_body, status`(user-edited)`, invalid`(user flag — hidden from normal views, restore via the "Invalid" filter)`, research_brief + researched_at`(from wf 13)`, prospect_source, createdAt`.
+
+### Claude in-app chat tools (index.html, `window.*`-exposed)
+For driving updates from a chat assistant against the LIVE page (the sandbox can't reach Firestore; the browser can): `claudeFindLeads`, `claudeLogLeadUpdate` (append a categorized do/wait thread entry to a lead), `claudeFindTasks`, `claudeAddTask`, `claudeAddTaskUpdate`. They match by id/name/title, return candidates on ambiguity, and write via the app's own persist path.
+
+### n8n workflow 12 — Apollo Ingestion (CA core-fit → Outreach) — `n8n/12_apollo_ingestion.json`
+Manual trigger. Per company: **Apollo People Search** by domain (`mixed_people/api_search`, free, no email) → **Pick best contacts** (1–2 warehousing titles, ALWAYS returns an item) → **IF "Has contact?"** (no-contact companies route straight back to the loop so the batch never dies) → **Apollo reveal email** (`people/bulk_match`, `reveal_personal_emails:true`, phone OFF — phone is reveal-on-reply, 8 credits) → **OpenAI score + draft** (gpt-4o, industry-aware) → **Build prospect doc** (rich fields, dash-stripped, **NO score gate** — every qualified company is written; tier is just a label) → **Create prospect in Firestore**. `splitInBatches` batchSize 1; `retryOnFail` on the network nodes; **no Wait/sleep node** (it stalls manual runs and hogs the task runner — that caused "stops early"/300s runner timeouts). Creds: Apollo (`X-Api-Key` master key), OpenAI (`openAiApi`), Google SA (`Firebase_SDK_do_or_wait`).
+- Prospect list embedded in the **"CA core-fit input"** Code node, built from the **importers tab** of Christine's workbook (`Copy of Industries_ Services_ CUBEWORK.xlsx`, source = S&P/Panjiva). Strategy: **California-first** (best fit for the LA/LB pitch + conserves Apollo credits), multiple industries. Batches run: CA core-fit (Household Durables/Specialty Retail/Apparel/Leisure, TEU 150–10k, ~139) and CA Distributors+Trading (~125). To add a batch, regenerate the embedded array. Apollo coverage thins for small importers (no contact → skipped). Note: some importer rows carry the *ultimate-parent* domain (a holding co/PE firm) → Apollo may return parent-co contacts; use the ✕ Invalid flag to prune.
+
+### n8n workflow 13 — Research & Personalize (`n8n/13_research_prospect.json`) — the email agent
+Webhook `research-prospect`, request-driven by the 🔎 button; **must be Active**. OpenAI **`gpt-4o-search-preview`** (`web_search_options:{}`) does live web research INSIDE one call, returns `research_brief` (array) + personalized email, PATCHed onto `outreach/{id}`; the app modal auto-refreshes (`outreachModalDomain` + the listener re-opens it).
+- **The system prompt is the IP.** To tune it, paste the **"Build OpenAI request"** node (from `research_prospect.nodes.js`); only re-import on structural change. Current rules: write like a **logistics operator, not a marketer**; do NOT quote their website/products; open with the **strongest POSITIVE/neutral trigger event** (new DC, funding, hiring, expansion — rank strength) tied to a **specific** operational pain (e.g. East Coast hub → volatile West Coast balancing → overflow headache); **anti-fake-personalization** (if no real specific angle, open with one honest direct line, don't force it); **never reference negative/sensitive news**; pitch flexible month-to-month overflow space + **all-in pricing / total cost of occupancy / no NNN surprises**; **never the word "lease"** → say "no long-term commitments" (sets up the license-agreement convo on a call); no em/en dashes (also hard-stripped in code by `dedash` in "Build Firestore patch", and in wf 12's Build prospect doc); no bulleted lists; ~90–120 words; sign "Best, Justin"; two few-shot gold emails included.
+- Cost ~3–5¢/draft. **Open: switching this node to Claude Sonnet** (Anthropic web-search tool) for sharper writing/judgment — same cost; rebuild the call + parse nodes for the Messages API, prompt carries over verbatim. The model `gpt-4o-search-preview` is a search model and is the weak link on nuanced rule-following (fake personalization, dashes) — Sonnet expected to fix that. Anthropic API key not yet provisioned.
+
+### New files
+- `outreach-seed.js` — cumulative CA prospect seed (loaded before the module, like `pricing-seed.js`).
+- `firestore.rules`, `FIRESTORE_SECURITY.md`.
+- `outreach/` — `christine-data-analysis.html` (workbook analysis), `ca-core-fit-batch1.csv`, `ca-distributors-trading-batch2.csv`.
+- `n8n/12_apollo_ingestion.json` (+ `.README.md`, `apollo_ingestion.nodes.js`), `n8n/13_research_prospect.json` (+ `.README.md`, `research_prospect.nodes.js`).

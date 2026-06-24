@@ -4416,8 +4416,7 @@ function outreachRows(){
   const seed = (window.OUTREACH_SEED || []);
   const byDomain = {};
   Object.values(outreachMap).forEach(d => { const k=(d.domain||'').toLowerCase(); if(k) byDomain[k]=d; });
-  return seed.map(s => {
-    const d = byDomain[(s.domain||'').toLowerCase()] || {};
+  const rowFrom = (s, d) => {
     const email = d.email || '';
     return {
       id: d.id || ('seed-' + String(s.domain||s.company||'').toLowerCase().replace(/[^a-z0-9]+/g,'-')),
@@ -4430,7 +4429,16 @@ function outreachRows(){
       why: d.why_now || '', subject: d.email_subject || '', body: d.email_body || '',
       status: d.status || '', invalid: !!d.invalid, enriched: !!email
     };
+  };
+  const seedDomains = new Set(seed.map(s=>(s.domain||'').toLowerCase()).filter(Boolean));
+  const rows = seed.map(s => rowFrom(s, byDomain[(s.domain||'').toLowerCase()] || {}));
+  // Also show live Firestore prospects NOT in the bundled seed (new n8n batches
+  // like last-mile / fashion-district) so anything the pipeline writes appears.
+  Object.values(outreachMap).forEach(d => {
+    const k=(d.domain||'').toLowerCase();
+    if(k && !seedDomains.has(k)) rows.push(rowFrom({ domain:d.domain, company:d.company, city:d.person_loc||d.org_state||'', industry:d.industry }, d));
   });
+  return rows;
 }
 
 const OUTREACH_TIER = { Hot:'background:#fee2e2;color:#991b1b;', Warm:'background:#fef3c7;color:#92400e;', Watch:'background:#e5e7eb;color:#374151;' };
@@ -4463,7 +4471,7 @@ function renderOutreach(){
   if(outreachSort==='teu') rows.sort((a,b)=> (b.enriched-a.enriched) || (b.teu-a.teu));
   else if(outreachSort==='company') rows.sort((a,b)=> String(a.company).localeCompare(String(b.company)));
   else rows.sort((a,b)=> (b.enriched-a.enriched) || (tr(a)-tr(b)) || ((Number(b.score)||0)-(Number(a.score)||0)) || (b.teu-a.teu));
-  const total = (window.OUTREACH_SEED||[]).length;
+  const total = all.length;
   const got = all.filter(r=>r.enriched).length;
   const meta = document.getElementById('outreach-meta');
   if(meta) meta.textContent = `${rows.length} shown · ${got}/${total} pulled from Apollo`;
