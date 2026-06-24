@@ -913,6 +913,7 @@
           <option value="all">All</option>
           <option value="enriched">Has email</option>
           <option value="pending">Not pulled yet</option>
+          <option value="invalid">Invalid</option>
         </select>
         <select id="outreach-industry" onchange="setOutreachIndustry(this.value)"
                style="padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:13px;"><option value="all">All industries</option></select>
@@ -4427,7 +4428,7 @@ function outreachRows(){
       tier: d.prospect_tier || d.tier || '',
       score: (d.prospect_score!=null ? d.prospect_score : (d.score!=null ? d.score : '')),
       why: d.why_now || '', subject: d.email_subject || '', body: d.email_body || '',
-      status: d.status || '', enriched: !!email
+      status: d.status || '', invalid: !!d.invalid, enriched: !!email
     };
   });
 }
@@ -4449,8 +4450,12 @@ function renderOutreach(){
     indSel.value = outreachIndustry;
   }
   let rows = all;
-  if(outreachFilter==='enriched') rows = rows.filter(r=>r.enriched);
-  else if(outreachFilter==='pending') rows = rows.filter(r=>!r.enriched);
+  if(outreachFilter==='invalid') rows = rows.filter(r=>r.invalid);
+  else {
+    rows = rows.filter(r=>!r.invalid);   // hide flagged prospects from every normal view
+    if(outreachFilter==='enriched') rows = rows.filter(r=>r.enriched);
+    else if(outreachFilter==='pending') rows = rows.filter(r=>!r.enriched);
+  }
   if(outreachIndustry!=='all') rows = rows.filter(r=>r.industry===outreachIndustry);
   if(outreachSearch) rows = rows.filter(r => [r.company,r.domain,r.contact,r.email,r.title,r.industry,indLabel(r.industry)].some(x=>String(x||'').toLowerCase().includes(outreachSearch)));
   const TR = { Hot:0, Warm:1, Watch:2 };
@@ -4566,7 +4571,9 @@ function openOutreachModal(domain){
         <button onclick="researchProspect('${domain}',event)" style="font-size:12px;padding:5px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface);cursor:pointer;">${researched?'🔎 Re-research':'🔎 Research & draft'}</button>
       </div>
       ${researched
-        ? `<div style="white-space:pre-wrap;line-height:1.55;font-size:13px;margin-top:6px;">${esc(d.research_brief)}</div><div style="font-size:11px;color:var(--text2);margin-top:4px;">Researched ${d.researched_at?fmtDate(d.researched_at):''}</div>`
+        ? `<ul style="margin:8px 0 0;padding-left:18px;font-size:13px;line-height:1.5;">${
+            String(d.research_brief).split(/\n+|(?:^|\s)[•\-•]\s+/).map(s=>s.replace(/^[\s•\-•*]+/,'').trim()).filter(Boolean).map(s=>`<li style="margin:4px 0;">${esc(s)}</li>`).join('')
+          }</ul><div style="font-size:11px;color:var(--text2);margin-top:6px;">Researched ${d.researched_at?fmtDate(d.researched_at):''}</div>`
         : `<div style="color:var(--text2);font-size:13px;margin-top:4px;">Pull live web research (recent news, products, fit) and rewrite the draft to reference it. Takes ~15s.</div>`}
     </div>`;
   document.getElementById('outreach-modal-body').innerHTML=`
@@ -4574,6 +4581,7 @@ function openOutreachModal(domain){
       <div><div style="font-size:18px;font-weight:800;">${company}</div>
         <div style="font-size:12px;color:var(--text2);">${esc(d.contact||'')}${d.contact?' · ':''}${esc(domain)}</div></div>
       <div style="display:flex;align-items:center;gap:8px;">${tier}
+        <button onclick="markOutreachInvalid('${domain}', ${d.invalid?'false':'true'}, event)" style="font-size:12px;padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);cursor:pointer;color:${d.invalid?'#16a34a':'#b91c1c'};">${d.invalid?'↩ Restore':'✕ Invalid'}</button>
         <button onclick="closeOutreachModal()" style="border:none;background:var(--bg);border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:16px;">✕</button></div>
     </div>
     ${d.why_now?`<div style="margin-top:10px;font-size:13px;background:var(--bg);border-radius:10px;padding:10px 12px;"><b>Why now:</b> ${esc(d.why_now)}</div>`:''}
@@ -4609,6 +4617,18 @@ function outreachModalBgClick(e){ if(e.target && e.target.id==='outreach-modal-o
 async function saveOutreachStatus(id, val){
   if(!id) return;
   try { await setDoc(doc(db,'outreach',id), { status: val }, { merge:true }); } catch(e){ console.warn('save status', e); }
+}
+// Flag a prospect invalid (bad fit / wrong contact) so it drops out of the working list.
+async function markOutreachInvalid(domain, val, e){
+  if(e) e.stopPropagation();
+  domain=(domain||'').toLowerCase();
+  const d=_outreachDoc(domain);
+  const seed=(window.OUTREACH_SEED||[]).find(s=>(s.domain||'').toLowerCase()===domain)||{};
+  const id = d.id || ('ap-' + domain.replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,''));
+  try {
+    await setDoc(doc(db,'outreach',id), { invalid: !!val, company:(d.company||seed.company||domain), domain, invalid_at:new Date().toISOString() }, { merge:true });
+  } catch(err){ console.warn('mark invalid', err); }
+  if(val) closeOutreachModal();   // marking invalid: close it (it'll vanish from the default view)
 }
 
 // Live overlay from Firestore (written by the n8n Apollo Ingestion workflow).
@@ -4821,6 +4841,7 @@ window.closeOutreachModal  = closeOutreachModal;
 window.outreachModalBgClick= outreachModalBgClick;
 window.saveOutreachStatus  = saveOutreachStatus;
 window.researchProspect    = researchProspect;
+window.markOutreachInvalid = markOutreachInvalid;
 window.doEmailSignIn       = doEmailSignIn;
 window.doSignOut           = doSignOut;
 window.setPricingState     = setPricingState;

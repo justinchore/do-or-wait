@@ -1,4 +1,4 @@
-// Apollo Ingestion (BATCH 2: CA Distributors+Trading, PRODUCTION) — paste-ready Code nodes.
+// paste-ready Code node bodies for 12_apollo_ingestion.json
 
 // ===== "CA core-fit input" =====
 // BATCH 2 — CA Distributors + Trading Companies (TEU 150-10,000). Batch 1 already ran;
@@ -190,6 +190,7 @@ const p0  = (ctx.picked && ctx.picked[0]) || {};
 let parsed = {};
 try { const t=($json.choices&&$json.choices[0]&&$json.choices[0].message&&$json.choices[0].message.content)||$json.text||'{}';
   parsed = JSON.parse(t.trim().replace(/^```json/i,'').replace(/```$/,'').trim()); } catch(e){ parsed = {}; }
+const dedash = s => String(s==null?'':s).replace(/\s*[\u2014\u2013]\s*/g, ', ').replace(/\s--\s/g, ', ');
 const email = m.email || (m.personal_emails && m.personal_emails[0]) || '';
 const fullName = m.name || ((m.first_name||p0.first_name||'') + ' ' + (m.last_name||p0.last_name||'')).trim();
 const title = m.title || p0.title || '';
@@ -218,7 +219,7 @@ const fields = {
   org_state:S(org.state||ctx.state||''), org_website:S(org.website_url||('https://'+ctx.domain)), org_linkedin:S(org.linkedin_url||''),
   teu:I(ctx.teu),
   prospect_tier:S(parsed.tier||''), prospect_score:I(parsed.total!=null?parsed.total:0),
-  why_now:S(parsed.why_now||''), email_subject:S(parsed.email_subject||''), email_body:S(parsed.email_body||''),
+  why_now:S(parsed.why_now||''), email_subject:S(dedash(parsed.email_subject||'')), email_body:S(dedash(parsed.email_body||'')),
   status:S(''), prospect_source:S('Apollo'), createdAt:{ timestampValue:now }
 };
 return [{ json: { slug, hasEmail:!!email, fsBody:{ fields } } }];
