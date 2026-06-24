@@ -912,6 +912,14 @@
           <option value="enriched">Has email</option>
           <option value="pending">Not pulled yet</option>
         </select>
+        <select id="outreach-industry" onchange="setOutreachIndustry(this.value)"
+               style="padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:13px;"><option value="all">All industries</option></select>
+        <select id="outreach-sort" onchange="setOutreachSort(this.value)"
+               style="padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:13px;">
+          <option value="best">Best first (tier · score)</option>
+          <option value="teu">Volume (TEU)</option>
+          <option value="company">Company A–Z</option>
+        </select>
         <span id="outreach-meta" style="font-size:12px;color:var(--text2);"></span>
       </div>
       <div id="outreach-content"></div>
@@ -4389,11 +4397,15 @@ renderPricing();
 let outreachMap = {};            // firestore doc id → prospect doc
 let unsubOutreach = null;
 let outreachSearch = '';
-let outreachFilter = 'all';      // all | enriched | pending
+let outreachFilter = 'enriched';   // all | enriched | pending  (default to workable rows)
+let outreachIndustry = 'all';
+let outreachSort = 'best';         // best | teu | company
 const expandedOutreach = new Set();
 
 function onOutreachSearch(v){ outreachSearch = (v||'').trim().toLowerCase(); renderOutreach(); }
 function setOutreachFilter(v){ outreachFilter = v; renderOutreach(); }
+function setOutreachIndustry(v){ outreachIndustry = v; renderOutreach(); }
+function setOutreachSort(v){ outreachSort = v; renderOutreach(); }
 function toggleOutreachRow(id, e){ if(e) e.stopPropagation(); if(expandedOutreach.has(id)) expandedOutreach.delete(id); else expandedOutreach.add(id); renderOutreach(); }
 
 // Merge bundled seed with any live Firestore prospect docs (matched by domain).
@@ -4407,7 +4419,7 @@ function outreachRows(){
     return {
       id: d.id || ('seed-' + String(s.domain||s.company||'').toLowerCase().replace(/[^a-z0-9]+/g,'-')),
       company: d.company || s.company || '', domain: s.domain || d.domain || '',
-      city: s.city || '', state: s.state || '', teu: s.teu || 0,
+      city: s.city || '', state: s.state || '', teu: s.teu || 0, industry: d.industry || s.industry || '',
       contact: d.first_name || '', title: d.contact || d.title || '',
       email, phone: d.phone || '',
       tier: d.prospect_tier || d.tier || '',
@@ -4419,15 +4431,31 @@ function outreachRows(){
 }
 
 const OUTREACH_TIER = { Hot:'background:#fee2e2;color:#991b1b;', Warm:'background:#fef3c7;color:#92400e;', Watch:'background:#e5e7eb;color:#374151;' };
+const OUTREACH_IND = { 'Household Durables':'Household', 'Specialty Retail':'Specialty Retail', 'Textiles, Apparel and Luxury Goods':'Apparel', 'Leisure Products':'Leisure', 'Distributors':'Distributor', 'Trading Companies and Distributors':'Trading Co.' };
+const indLabel = v => OUTREACH_IND[v] || (v || '');
 
 function renderOutreach(){
   const host = document.getElementById('outreach-content'); if(!host) return;
   const all = outreachRows();
+  // populate the industry dropdown (with counts) from the full set
+  const indSel = document.getElementById('outreach-industry');
+  if(indSel){
+    const counts = {};
+    all.forEach(r=>{ if(r.industry) counts[r.industry]=(counts[r.industry]||0)+1; });
+    indSel.innerHTML = '<option value="all">All industries ('+all.length+')</option>' +
+      Object.keys(counts).sort().map(i=>`<option value="${esc(i)}">${esc(indLabel(i))} (${counts[i]})</option>`).join('');
+    indSel.value = outreachIndustry;
+  }
   let rows = all;
   if(outreachFilter==='enriched') rows = rows.filter(r=>r.enriched);
   else if(outreachFilter==='pending') rows = rows.filter(r=>!r.enriched);
-  if(outreachSearch) rows = rows.filter(r => [r.company,r.domain,r.contact,r.email,r.title].some(x=>String(x||'').toLowerCase().includes(outreachSearch)));
-  rows.sort((a,b)=> (b.enriched-a.enriched) || (b.teu-a.teu) || String(a.company).localeCompare(String(b.company)));
+  if(outreachIndustry!=='all') rows = rows.filter(r=>r.industry===outreachIndustry);
+  if(outreachSearch) rows = rows.filter(r => [r.company,r.domain,r.contact,r.email,r.title,r.industry,indLabel(r.industry)].some(x=>String(x||'').toLowerCase().includes(outreachSearch)));
+  const TR = { Hot:0, Warm:1, Watch:2 };
+  const tr = r => (r.tier in TR) ? TR[r.tier] : 3;
+  if(outreachSort==='teu') rows.sort((a,b)=> (b.enriched-a.enriched) || (b.teu-a.teu));
+  else if(outreachSort==='company') rows.sort((a,b)=> String(a.company).localeCompare(String(b.company)));
+  else rows.sort((a,b)=> (b.enriched-a.enriched) || (tr(a)-tr(b)) || ((Number(b.score)||0)-(Number(a.score)||0)) || (b.teu-a.teu));
   const total = (window.OUTREACH_SEED||[]).length;
   const got = all.filter(r=>r.enriched).length;
   const meta = document.getElementById('outreach-meta');
@@ -4445,6 +4473,7 @@ function renderOutreach(){
         <td style="padding:6px 8px;font-size:12px;">${emailCell}</td>
         <td style="padding:6px 8px;font-size:12px;">${esc(r.phone||'')||'<span style="color:var(--text2)">—</span>'}</td>
         <td style="padding:6px 8px;font-size:12px;color:var(--text2);">${esc([r.city,r.state].filter(Boolean).join(', '))}</td>
+        <td style="padding:6px 8px;font-size:12px;">${esc(indLabel(r.industry))}</td>
         <td style="padding:6px 8px;text-align:right;font-size:12px;">${r.teu? Number(r.teu).toLocaleString():''}</td>
         <td style="padding:6px 8px;text-align:center;">${tier}</td>
         <td style="padding:6px 8px;text-align:right;font-size:12px;">${r.score!==''?esc(String(r.score)):''}</td>
@@ -4454,7 +4483,7 @@ function renderOutreach(){
   host.innerHTML = `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;">
       <thead><tr style="color:var(--text2);font-size:11px;text-transform:uppercase;letter-spacing:.04em;text-align:left;">
         <th style="padding:5px 8px;">Company</th><th style="padding:5px 8px;">Contact</th><th style="padding:5px 8px;">Email</th>
-        <th style="padding:5px 8px;">Phone</th><th style="padding:5px 8px;">Location</th><th style="padding:5px 8px;text-align:right;">TEU</th>
+        <th style="padding:5px 8px;">Phone</th><th style="padding:5px 8px;">Location</th><th style="padding:5px 8px;">Industry</th><th style="padding:5px 8px;text-align:right;">TEU</th>
         <th style="padding:5px 8px;text-align:center;">Tier</th><th style="padding:5px 8px;text-align:right;">Score</th><th style="padding:5px 8px;">Status</th>
       </tr></thead><tbody>${body}</tbody></table></div>`;
 }
@@ -4748,6 +4777,8 @@ window.pickKind            = pickKind;
 window.onPricingSearch     = onPricingSearch;
 window.onOutreachSearch    = onOutreachSearch;
 window.setOutreachFilter   = setOutreachFilter;
+window.setOutreachIndustry = setOutreachIndustry;
+window.setOutreachSort     = setOutreachSort;
 window.toggleOutreachRow   = toggleOutreachRow;
 window.copyOutreachDraft   = copyOutreachDraft;
 window.openOutreachModal   = openOutreachModal;
