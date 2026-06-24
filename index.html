@@ -3431,6 +3431,7 @@ const PROXY                = 'https://plain-credit-5962.jchoustin91.workers.dev'
 const AVAIL_WEBHOOK        = `${PROXY}/webhook/availability-sync`;
 const ADD_LOCATION_WEBHOOK = `${PROXY}/webhook/add-location`;
 const RESOLVE_THREAD_WEBHOOK = `${PROXY}/webhook/resolve-thread`; // subject+contact → real Outlook webLink (n8n workflow 11)
+const RESEARCH_WEBHOOK     = `${PROXY}/webhook/research-prospect`; // company → web research + personalized draft (n8n workflow 13)
 
 // Listen to ALL availability docs (scales to multiple locations)
 unsubAvail = liveSnapshot(collection(db, 'availability'), snap => {
@@ -4400,6 +4401,7 @@ let outreachSearch = '';
 let outreachFilter = 'enriched';   // all | enriched | pending  (default to workable rows)
 let outreachIndustry = 'all';
 let outreachSort = 'best';         // best | teu | company
+let outreachModalDomain = null;    // domain of the prospect whose modal is open (for live refresh)
 const expandedOutreach = new Set();
 
 function onOutreachSearch(v){ outreachSearch = (v||'').trim().toLowerCase(); renderOutreach(); }
@@ -4506,6 +4508,7 @@ function emailStatusBadge(s){
 // Full Apollo profile for one prospect (click a row).
 function openOutreachModal(domain){
   domain=(domain||'').toLowerCase();
+  outreachModalDomain = domain;
   const seed=(window.OUTREACH_SEED||[]).find(s=>(s.domain||'').toLowerCase()===domain)||{};
   const d=_outreachDoc(domain);
   const enriched=!!(d.email||d.first_name);
@@ -4556,6 +4559,16 @@ function openOutreachModal(domain){
       <span style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);">Status</span>
       <input value="${esc(d.status||'')}" placeholder="emailed / replied / called…" onchange="saveOutreachStatus('${esc(d.id)}',this.value)"
         style="flex:1;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px;" /></div>` : '';
+  const researched = !!d.research_brief;
+  const researchBlock = `<div style="margin-top:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);">Research</div>
+        <button onclick="researchProspect('${domain}',event)" style="font-size:12px;padding:5px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface);cursor:pointer;">${researched?'🔎 Re-research':'🔎 Research & draft'}</button>
+      </div>
+      ${researched
+        ? `<div style="white-space:pre-wrap;line-height:1.55;font-size:13px;margin-top:6px;">${esc(d.research_brief)}</div><div style="font-size:11px;color:var(--text2);margin-top:4px;">Researched ${d.researched_at?fmtDate(d.researched_at):''}</div>`
+        : `<div style="color:var(--text2);font-size:13px;margin-top:4px;">Pull live web research (recent news, products, fit) and rewrite the draft to reference it. Takes ~15s.</div>`}
+    </div>`;
   document.getElementById('outreach-modal-body').innerHTML=`
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
       <div><div style="font-size:18px;font-weight:800;">${company}</div>
@@ -4564,6 +4577,7 @@ function openOutreachModal(domain){
         <button onclick="closeOutreachModal()" style="border:none;background:var(--bg);border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:16px;">✕</button></div>
     </div>
     ${d.why_now?`<div style="margin-top:10px;font-size:13px;background:var(--bg);border-radius:10px;padding:10px 12px;"><b>Why now:</b> ${esc(d.why_now)}</div>`:''}
+    ${researchBlock}
     ${sec('Draft email', draft)}
     ${statusBlock}
     ${sec('Contact', contact)}
@@ -4571,7 +4585,26 @@ function openOutreachModal(domain){
     ${sec('Logistics', logistics)}`;
   document.getElementById('outreach-modal-overlay').style.display='flex';
 }
-function closeOutreachModal(){ const o=document.getElementById('outreach-modal-overlay'); if(o) o.style.display='none'; }
+function closeOutreachModal(){ const o=document.getElementById('outreach-modal-overlay'); if(o) o.style.display='none'; outreachModalDomain=null; }
+// Trigger the n8n research agent (workflow 13). It writes the brief + new draft back to Firestore;
+// the outreach listener then refreshes this modal automatically.
+async function researchProspect(domain, e){
+  if(e) e.stopPropagation();
+  domain=(domain||'').toLowerCase();
+  const d=_outreachDoc(domain);
+  const seed=(window.OUTREACH_SEED||[]).find(s=>(s.domain||'').toLowerCase()===domain)||{};
+  const id = d.id || ('ap-' + domain.replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,''));
+  const btn = event && event.target; if(btn){ btn.disabled=true; btn.textContent='🔎 Researching…'; }
+  try {
+    await fetch(RESEARCH_WEBHOOK, { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ id, company:d.company||seed.company||domain, domain,
+        industry:d.industry||seed.industry||'', location:d.person_loc||[seed.city,seed.state].filter(Boolean).join(', ') }) });
+    // success → n8n writes to Firestore → onSnapshot re-renders this modal with the brief + new draft
+  } catch(err){
+    if(btn){ btn.disabled=false; btn.textContent='🔎 Research & draft'; }
+    alert('Research request failed — check that n8n workflow 13 is active.');
+  }
+}
 function outreachModalBgClick(e){ if(e.target && e.target.id==='outreach-modal-overlay') closeOutreachModal(); }
 async function saveOutreachStatus(id, val){
   if(!id) return;
@@ -4585,6 +4618,8 @@ try {
     snap.forEach(d => { outreachMap[d.id] = { id:d.id, ...d.data() }; });
     const v = document.getElementById('outreach-view');
     if (v && v.style.display !== 'none') renderOutreach();
+    const ov = document.getElementById('outreach-modal-overlay');
+    if (outreachModalDomain && ov && ov.style.display !== 'none') openOutreachModal(outreachModalDomain);
   }, err => console.warn('outreach listener', err));
 } catch(e){ console.warn('outreach listener init', e); }
 
@@ -4785,6 +4820,7 @@ window.openOutreachModal   = openOutreachModal;
 window.closeOutreachModal  = closeOutreachModal;
 window.outreachModalBgClick= outreachModalBgClick;
 window.saveOutreachStatus  = saveOutreachStatus;
+window.researchProspect    = researchProspect;
 window.doEmailSignIn       = doEmailSignIn;
 window.doSignOut           = doSignOut;
 window.setPricingState     = setPricingState;

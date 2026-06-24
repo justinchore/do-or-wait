@@ -1,0 +1,181 @@
+{
+  "name": "CW \u2014 13. Research & Personalize (OpenAI web search)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "research-prospect",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "cw-r-001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ],
+      "webhookId": "research-prospect"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the OpenAI web-search request from the webhook payload.\nconst b = $json.body || $json;\nconst sys = \"You are a sales research assistant for Cubework, which offers flexible month-to-month warehouse space across the Los Angeles area and Southern California, well positioned for port-driven import traffic, with the ability to scale a customer across more than one site. It is built for overflow and seasonal inventory. Cubework does NOT use traditional long-term leases. Customers sign a simple, flexible license agreement instead. In a first cold email, contrast with having to sign a long lease agreement (this sets up an easy later move to a license agreement). Do not deep-dive or over-explain the license model in the first email. A KEY differentiator is ALL-INCLUSIVE pricing: one all-in rate that covers utilities, CAM, property taxes, security, and maintenance, so customers avoid the NNN add-ons and surprise pass-throughs of a traditional lease. Sell TOTAL COST OF OCCUPANCY, not just base rent. Research the given company on the web: what they sell and key products, their size and operations, and any notable news from roughly the last 12 months. Then produce TWO things. (1) research_brief: 5 to 8 short facts a salesperson can skim before calling or emailing, including any recent news and why it matters. Separate facts with \\\\n. (2) email_body: a personalized cold email FROM Justin that proves real research by naming specific products or facts about THIS company. It must work in TWO value points in natural prose (never as a list): first, flexible month-to-month overflow and seasonal space near the LA import market with no long lease agreement to sign; second, the all-inclusive rate that covers utilities, CAM, taxes, security, and maintenance with no NNN surprises, framed as one predictable number for total cost of occupancy. WRITE THE EMAIL IN JUSTIN'S VOICE: plain, direct, and human. Short sentences. Get to the point. Sound like a real person who did the homework, not a marketer. HARD RULES for the email subject and body: Do NOT name a specific Cubework city or facility, and do NOT claim a specific drive time or distance to the ports (never say 'minutes from the ports' or similar). Keep location general: LA area, Southern California, near the port flow. Exact sites get discussed on a call. Never use em dashes or en dashes (the characters E2 80 94 or E2 80 93). Use a period or comma, or rewrite the sentence. No bulleted or numbered lists. No filler phrases: do not write 'I hope this finds you well', 'I wanted to reach out', 'just checking in', 'circle back', 'follow up', 'leverage', 'synergy', 'elevate', 'streamline', or 'fast-paced'. No hype and no exclamation points. Keep it roughly 90 to 120 words. Sign it exactly: Best, Justin. Return ONLY minified JSON, no prose and no code fences: {\\\"research_brief\\\":\\\"...\\\",\\\"email_subject\\\":\\\"...\\\",\\\"email_body\\\":\\\"...\\\"}\";\nconst candidate = JSON.stringify({ company:b.company, domain:b.domain, industry:b.industry, location:b.location });\nconst requestBody = {\n  model: 'gpt-4o-search-preview',\n  web_search_options: {},\n  max_tokens: 1200,\n  messages: [ { role:'system', content:sys }, { role:'user', content:'Company to research:\\n'+candidate } ]\n};\nreturn [{ json: { id:b.id, company:b.company, domain:b.domain, requestBody } }];"
+      },
+      "id": "cw-r-002",
+      "name": "Build OpenAI request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": {}
+      },
+      "id": "cw-r-003",
+      "name": "OpenAI research + draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        640,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "OpenAI API \u2014 do-or-wait"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the model JSON and build a Firestore PATCH for outreach/{id}.\n// PATCH only the research + draft fields (updateMask), so the rest of the doc is untouched.\nconst ctx = $('Build OpenAI request').item.json;\nlet parsed = {};\ntry { const t=($json.choices&&$json.choices[0]&&$json.choices[0].message&&$json.choices[0].message.content)||'{}';\n  parsed = JSON.parse(t.trim().replace(/^```json/i,'').replace(/```$/,'').trim()); } catch(e){ parsed = {}; }\nconst now = new Date().toISOString();\nconst S = v => ({ stringValue:(v==null?'':String(v)) });\nconst fields = {\n  company:S(ctx.company), domain:S(ctx.domain),\n  research_brief:S(parsed.research_brief||''),\n  email_subject:S(parsed.email_subject||''),\n  email_body:S(parsed.email_body||''),\n  researched_at:{ timestampValue: now }\n};\nconst mask = ['company','domain','research_brief','email_subject','email_body','researched_at']\n  .map(f=>'updateMask.fieldPaths='+f).join('&');\nreturn [{ json: { id:ctx.id, mask, fsBody:{ fields } } }];"
+      },
+      "id": "cw-r-004",
+      "name": "Build Firestore patch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/outreach/{{ $json.id }}?{{ $json.mask }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.fsBody) }}",
+        "options": {}
+      },
+      "id": "cw-r-005",
+      "name": "Write research to Firestore",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1080,
+        300
+      ],
+      "continueOnFail": true,
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Firebase_SDK_do_or_wait"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok:true, id:$('Build Firestore patch').item.json.id }) }}",
+        "options": {}
+      },
+      "id": "cw-r-006",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1300,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build OpenAI request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build OpenAI request": {
+      "main": [
+        [
+          {
+            "node": "OpenAI research + draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI research + draft": {
+      "main": [
+        [
+          {
+            "node": "Build Firestore patch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Firestore patch": {
+      "main": [
+        [
+          {
+            "node": "Write research to Firestore",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write research to Firestore": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "cw-workflow-013"
+}
