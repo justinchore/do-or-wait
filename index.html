@@ -1220,7 +1220,7 @@ import { getFirestore, collection, doc, getDoc, getDocs, getDocsFromServer, setD
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 
 const firebaseConfig = {
@@ -1267,13 +1267,23 @@ function startLiveData(){
 // Current user's Firebase ID token (for direct Firestore REST writes under locked rules).
 async function authToken(){ try { return auth.currentUser ? await auth.currentUser.getIdToken() : ''; } catch(e){ return ''; } }
 
+function isMobile(){ return /Android|iPhone|iPad|iPod|Mobile|Silk/i.test(navigator.userAgent || ''); }
+function authFail(e){ const m = document.getElementById('auth-msg'); if (m) m.textContent = 'Sign-in failed: ' + (e && (e.code || e.message) || e); }
 function doSignIn(){
+  // Phones: popups are blocked/unreliable (esp. iOS) — use the redirect flow.
+  if (isMobile()) { signInWithRedirect(auth, authProvider).catch(authFail); return; }
+  // Desktop: try popup, fall back to redirect if it's blocked.
   signInWithPopup(auth, authProvider).catch(e => {
-    const m = document.getElementById('auth-msg');
-    if (m) m.textContent = 'Sign-in failed: ' + (e.code || e.message || e);
+    const c = (e && e.code) || '';
+    if (['auth/popup-blocked','auth/popup-closed-by-user','auth/cancelled-popup-request','auth/operation-not-supported-in-this-environment'].includes(c)) {
+      signInWithRedirect(auth, authProvider).catch(authFail); return;
+    }
+    authFail(e);
   });
 }
 function doSignOut(){ signOut(auth); }
+// Complete a redirect sign-in (surfaces any error; onAuthStateChanged handles the success).
+getRedirectResult(auth).catch(authFail);
 
 onAuthStateChanged(auth, user => {
   const appEl  = document.getElementById('app');

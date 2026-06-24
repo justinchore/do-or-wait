@@ -1,11 +1,11 @@
-// Apollo Ingestion (CA core-fit) — paste-ready Code nodes.
+// Apollo Ingestion (CA core-fit, PRODUCTION, loop-safe) — paste-ready Code nodes.
 
 // ===== "CA core-fit input" =====
 // CA core-fit prospects: Household Durables, Specialty Retail, Apparel & Footwear, Leisure Products.
 // California consignees only, TEU 250-10,000 (giants & micro-importers already filtered out).
 // SCALE: regenerate this array for another state/batch and paste here.
 // TEST vs FULL: while TEST_DOMAINS is non-empty only those run; set TEST_DOMAINS = [] to run all 139.
-const TEST_DOMAINS = ["livingspaces.com", "sceptre.com", "fashionnova.com"];
+const TEST_DOMAINS = [];   // PRODUCTION: runs all companies
 const companies = [
   {c:"Intl Pet Supplies And",d:"petco.com",city:"San Diego",st:'CA',t:4036,ind:"Specialty Retail"},
   {c:"Living Spaces Furniture",d:"livingspaces.com",city:"La Mirada",st:'CA',t:3832,ind:"Specialty Retail"},
@@ -163,86 +163,85 @@ const searchBody = {
 return [{ json: { ...c, searchBody } }];
 
 // ===== "Pick best contacts" =====
-// Search response on $json (Apollo `people`); company context from prior code node (HTTP replaced the item).
+// Keep the 1-2 best warehousing decision-makers. ALWAYS returns one item (picked:[] if none)
+// so the batch loop never breaks; an IF node downstream skips no-contact companies.
 const ctx = $('Build people search').item.json;
 const people = ($json.people || $json.contacts || []);
 const PRI = ['owner','president','ceo','coo','chief operating','operations','supply chain','logistics','distribution','warehouse','fulfillment'];
 const rank = p => { const t=(p.title||'').toLowerCase(); const i=PRI.findIndex(k=>t.includes(k)); return i<0?99:i; };
 const picked = people.filter(p=>p&&(p.id||p.first_name)).sort((a,b)=>rank(a)-rank(b)).slice(0,2)
   .map(p=>({ id:p.id, first_name:p.first_name, last_name:p.last_name, title:p.title, linkedin_url:p.linkedin_url, seniority:p.seniority }));
-if (!picked.length) return [];
-const org = (people[0] && people[0].organization) || {};
-return [{ json: { company:ctx.company, domain:ctx.domain, city:ctx.city, state:ctx.state, teu:ctx.teu, industry:ctx.industry, emp:org.estimated_num_employees||null, org_industry:org.industry||'', picked } }];
+const enrichBody = picked.length ? { reveal_personal_emails:true, reveal_phone_number:false,
+  details: picked.map(p => p.id ? { id:p.id } : { first_name:p.first_name, last_name:p.last_name, domain:ctx.domain }) } : null;
+return [{ json: { company:ctx.company, domain:ctx.domain, city:ctx.city, state:ctx.state, teu:ctx.teu, industry:ctx.industry, picked, enrichBody } }];
 
 // ===== "Build scoring prompt" =====
-// Score this importer vs the Cubework fit rubric and draft an opener. Industry-aware: uses c.industry.
-const c = $json;
-const ind = c.industry || 'consumer goods';
-const rubric = `You are scoring a US importer in the "${ind}" category as a prospect for Cubework's flexible, month-to-month warehouse space near the Ports of LA/Long Beach (Inland Empire) and other Cubework metros. The ideal prospect moves real container volume but is NOT so large it already owns its distribution.\nScore 7 factors: volume_trend(0-20 higher TEU=outgrowing space); right_size(0-20 mid-size; PENALIZE giants that own DCs and tiny importers); seasonality(0-15 category spikes); dtc(0-15 holds own inventory); bulk(0-10 bulky goods like furniture/home/sporting score high); recurring(0-10); timing(0-10 expansion/new DC/hiring).\nTiers: Hot>=70, Warm 45-69, Watch<45. Score conservatively when data is thin.\nReturn ONLY minified JSON: {\"total\":n,\"tier\":\"Hot|Warm|Watch\",\"why_now\":\"one sentence\",\"email_subject\":\"...\",\"email_body\":\"~80 words, value-led, lead with port-proximity + flexible space for this company's bulky/seasonal inventory, reference the company and its category specifically, offer to share how similar importers structure overflow space, never use the phrase follow up, sign as Justin\"}`;
-const candidate = JSON.stringify({ company:c.company, industry:ind, domain:c.domain, state:c.state, teu:c.teu, employees:c.emp, org_industry:c.org_industry });
-const requestBody = { model:'gpt-4o', max_tokens:700, response_format:{ type:'json_object' },
-  messages:[ { role:'system', content:rubric }, { role:'user', content:'Company:\n'+candidate } ] };
-return [{ json: { ...c, requestBody } }];
-
-// ===== "Gate + build email reveal" =====
-// OpenAI response on $json.choices[0].message.content; context from 'Pick best contacts'.
-// Keep Hot/Warm only (giants tier Watch -> dropped BEFORE spending any email credit).
-// Email reveal: reveal_personal_emails=true (1 credit each); phones=false (revealed later on reply).
+// Score AFTER enrichment, so timing/growth are DATA-DRIVEN (real Apollo firmographics), not guessed.
+// Enrichment response (matches) on $json; company context from 'Pick best contacts'.
 const ctx = $('Pick best contacts').item.json;
-let parsed = {};
-try { const t=($json.choices&&$json.choices[0]&&$json.choices[0].message&&$json.choices[0].message.content)||$json.text||'{}';
-  parsed = JSON.parse(t.trim().replace(/^```json/i,'').replace(/```$/,'').trim()); } catch(e){ return []; }
-const tier = parsed.tier || 'Watch';
-if (tier === 'Watch') return [];
-const enrichBody = { reveal_personal_emails:true, reveal_phone_number:false,
-  details: ctx.picked.map(p => p.id ? { id:p.id } : { first_name:p.first_name, last_name:p.last_name, domain:ctx.domain }) };
-return [{ json: { ...ctx, parsed, tier, enrichBody } }];
-
-// ===== "Build prospect doc" =====
-// Build a rich Firestore `outreach` doc from the Apollo enrichment record + org firmographics.
-// Context from 'Gate + build email reveal'; enrichment response (Apollo `matches`) on $json.
-// Capturing the extra fields is FREE (same response we already paid for). Deterministic id
-// ap-<domain> => re-runs skip existing (never clobber your Status edits). Direct phone empty until reveal-on-reply.
-const ctx = $('Gate + build email reveal').item.json;
 const m   = ($json.matches || [])[0] || {};
 const org = m.organization || {};
+const ind = ctx.industry || 'consumer goods';
+const rubric = `You are scoring a US importer in the "${ind}" category as a prospect for Cubework's flexible, month-to-month warehouse space near the Ports of LA/Long Beach (Inland Empire) and other Cubework metros. The ideal prospect moves real container volume but is NOT so large it already owns its distribution.\nScore 7 factors using the data provided: volume_trend(0-20 higher TEU / growth = outgrowing space); right_size(0-20 mid-size; PENALIZE giants that own DCs and tiny importers); seasonality(0-15 category spikes); dtc(0-15 holds own inventory); bulk(0-10 bulky goods like furniture/home/sporting); recurring(0-10); timing(0-10 use headcount_growth / funding / open_jobs — rising = expanding = needs space now).\nTiers: Hot>=70, Warm 45-69, Watch<45. Score conservatively when data is thin.\nReturn ONLY minified JSON: {\"total\":n,\"tier\":\"Hot|Warm|Watch\",\"why_now\":\"one sentence (cite a real signal if present)\",\"email_subject\":\"...\",\"email_body\":\"~80 words, value-led, lead with port-proximity + flexible space for this company's bulky/seasonal inventory, reference the company and its category specifically, offer to share how similar importers structure overflow space, never use the phrase follow up, sign as Justin\"}`;
+const candidate = JSON.stringify({ company:ctx.company, industry:ind, state:ctx.state, teu:ctx.teu,
+  employees:org.estimated_num_employees, founded:org.founded_year,
+  annual_revenue:org.annual_revenue_printed||org.annual_revenue||null,
+  total_funding:org.total_funding_printed||org.total_funding||null,
+  latest_funding:org.latest_funding_stage||null,
+  headcount_growth_6mo:org.organization_headcount_six_month_growth,
+  headcount_growth_12mo:org.organization_headcount_twelve_month_growth,
+  open_jobs:org.organization_num_jobs||org.num_jobs||null });
+const requestBody = { model:'gpt-4o', max_tokens:700, response_format:{ type:'json_object' },
+  messages:[ { role:'system', content:rubric }, { role:'user', content:'Company data:\n'+candidate } ] };
+return [{ json: { ...ctx, requestBody } }];
+
+// ===== "Build prospect doc" =====
+// Build the rich Firestore `outreach` doc. NO GATE — write every qualified company
+// (tier is just a label). Context from 'Pick best contacts'; enrichment from 'Apollo reveal email';
+// OpenAI score on $json. Deterministic id ap-<domain> => re-runs skip (no clobber). Phone empty until reveal-on-reply.
+const ctx = $('Pick best contacts').item.json;
+const m   = ($('Apollo reveal email (1 credit)').item.json.matches || [])[0] || {};
+const org = m.organization || {};
 const p0  = (ctx.picked && ctx.picked[0]) || {};
+let parsed = {};
+try { const t=($json.choices&&$json.choices[0]&&$json.choices[0].message&&$json.choices[0].message.content)||$json.text||'{}';
+  parsed = JSON.parse(t.trim().replace(/^```json/i,'').replace(/```$/,'').trim()); } catch(e){ parsed = {}; }
 const email = m.email || (m.personal_emails && m.personal_emails[0]) || '';
 const fullName = m.name || ((m.first_name||p0.first_name||'') + ' ' + (m.last_name||p0.last_name||'')).trim();
 const title = m.title || p0.title || '';
 const now = new Date().toISOString();
 const slug = 'ap-' + ctx.domain.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'');
-const S = v => ({ stringValue: (v==null?'':String(v)) });
-const I = v => ({ integerValue: String(Math.round(Number(v)||0)) });
-const pct = v => (v==null||v==='' ? '' : (Math.round(Number(v)*1000)/10) + '%');
+const S = v => ({ stringValue:(v==null?'':String(v)) });
+const I = v => ({ integerValue:String(Math.round(Number(v)||0)) });
+const pct = v => (v==null||v===''?'':(Math.round(Number(v)*1000)/10)+'%');
 const fields = {
   company:S(ctx.company), domain:S(ctx.domain),
-  // contact
   first_name:S(fullName), contact:S(title), seniority:S(m.seniority||p0.seniority||''),
   department:S((m.departments&&m.departments[0])||''), headline:S(m.headline||''), photo:S(m.photo_url||''),
   email:S(email), email_status:S(m.email_status||''), linkedin:S(m.linkedin_url||p0.linkedin_url||''),
   person_loc:S([m.city,m.state].filter(Boolean).join(', ')), phone:S(''),
-  // company + timing signals
-  industry:S(org.industry||ctx.industry||''), employees:I(org.estimated_num_employees),
-  founded:S(org.founded_year||''),
-  annual_revenue:S(org.annual_revenue_printed || org.annual_revenue || ''),
-  total_funding:S(org.total_funding_printed || org.total_funding || ''),
-  latest_funding:S([org.latest_funding_stage, org.latest_funding_round_date].filter(Boolean).join(' \u00b7 ')),
+  industry:S(org.industry||ctx.industry||''), employees:I(org.estimated_num_employees), founded:S(org.founded_year||''),
+  annual_revenue:S(org.annual_revenue_printed||org.annual_revenue||''),
+  total_funding:S(org.total_funding_printed||org.total_funding||''),
+  latest_funding:S([org.latest_funding_stage,org.latest_funding_round_date].filter(Boolean).join(' \u00b7 ')),
   growth_6mo:S(pct(org.organization_headcount_six_month_growth)),
   growth_12mo:S(pct(org.organization_headcount_twelve_month_growth)),
   growth_24mo:S(pct(org.organization_headcount_twenty_four_month_growth)),
-  num_jobs:I(org.organization_num_jobs || org.num_jobs || 0),
+  num_jobs:I(org.organization_num_jobs||org.num_jobs||0),
   description:S(String(org.short_description||'').slice(0,600)),
-  // logistics
-  org_phone:S(org.phone || org.primary_phone || org.sanitized_phone || ''),
-  org_address:S(org.raw_address || [org.street_address,org.city,org.state].filter(Boolean).join(', ')),
-  org_state:S(org.state||ctx.state||''), org_website:S(org.website_url || ('https://'+ctx.domain)),
-  org_linkedin:S(org.linkedin_url||''),
+  org_phone:S(org.phone||org.primary_phone||org.sanitized_phone||''),
+  org_address:S(org.raw_address||[org.street_address,org.city,org.state].filter(Boolean).join(', ')),
+  org_state:S(org.state||ctx.state||''), org_website:S(org.website_url||('https://'+ctx.domain)), org_linkedin:S(org.linkedin_url||''),
   teu:I(ctx.teu),
-  // pitch
-  prospect_tier:S(ctx.tier), prospect_score:I(ctx.parsed.total!=null?ctx.parsed.total:0),
-  why_now:S(ctx.parsed.why_now||''), email_subject:S(ctx.parsed.email_subject||''), email_body:S(ctx.parsed.email_body||''),
-  status:S(''), prospect_source:S('Apollo'), createdAt:{ timestampValue: now }
+  prospect_tier:S(parsed.tier||''), prospect_score:I(parsed.total!=null?parsed.total:0),
+  why_now:S(parsed.why_now||''), email_subject:S(parsed.email_subject||''), email_body:S(parsed.email_body||''),
+  status:S(''), prospect_source:S('Apollo'), createdAt:{ timestampValue:now }
 };
-return [{ json: { slug, hasEmail: !!email, fsBody: { fields } } }];
+return [{ json: { slug, hasEmail:!!email, fsBody:{ fields } } }];
+
+// ===== "Pace (rate limit)" =====
+// Gentle pacing for Apollo's per-minute rate limit — async delay, NOT a Wait node
+// (a Wait node pauses/queues the execution and makes manual runs look 'stopped').
+await new Promise(r => setTimeout(r, 2000));
+return $input.all();
 
