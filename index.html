@@ -611,11 +611,13 @@
   <div class="auth-card">
     <div class="auth-logo">📋</div>
     <h1>Do or Wait</h1>
-    <p id="auth-msg">Sign in with your authorized Google account.</p>
-    <button class="google-btn" onclick="doSignIn()">
-      <svg class="google-icon" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
-      Sign in with Google
-    </button>
+    <p id="auth-msg">Sign in to continue.</p>
+    <input id="auth-email" type="email" inputmode="email" autocomplete="username" placeholder="Email"
+       style="width:100%;padding:12px 14px;border:1.5px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:15px;margin-bottom:10px;box-sizing:border-box;" />
+    <input id="auth-pass" type="password" autocomplete="current-password" placeholder="Password"
+       onkeydown="if(event.key==='Enter')doEmailSignIn()"
+       style="width:100%;padding:12px 14px;border:1.5px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:15px;margin-bottom:14px;box-sizing:border-box;" />
+    <button class="google-btn" onclick="doEmailSignIn()">Sign in</button>
   </div>
 </div>
 
@@ -1228,7 +1230,7 @@ import { getFirestore, collection, doc, getDoc, getDocs, getDocsFromServer, setD
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged }
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 
 const firebaseConfig = {
@@ -1255,7 +1257,7 @@ const ALLOWED_EMAILS = [
   'justin.cho@cubework.com',
   'cubeworkautomation@gmail.com'
 ];
-const authProvider = new GoogleAuthProvider();
+// (email/password auth — no OAuth provider / cross-domain redirect, so it works on mobile)
 
 // Defer every Firestore listener until auth is ready, then flush.
 let _authReady = false;
@@ -1275,23 +1277,21 @@ function startLiveData(){
 // Current user's Firebase ID token (for direct Firestore REST writes under locked rules).
 async function authToken(){ try { return auth.currentUser ? await auth.currentUser.getIdToken() : ''; } catch(e){ return ''; } }
 
-function isMobile(){ return /Android|iPhone|iPad|iPod|Mobile|Silk/i.test(navigator.userAgent || ''); }
-function authFail(e){ const m = document.getElementById('auth-msg'); if (m) m.textContent = 'Sign-in failed: ' + (e && (e.code || e.message) || e); }
-function doSignIn(){
-  // Phones: popups are blocked/unreliable (esp. iOS) — use the redirect flow.
-  if (isMobile()) { signInWithRedirect(auth, authProvider).catch(authFail); return; }
-  // Desktop: try popup, fall back to redirect if it's blocked.
-  signInWithPopup(auth, authProvider).catch(e => {
-    const c = (e && e.code) || '';
-    if (['auth/popup-blocked','auth/popup-closed-by-user','auth/cancelled-popup-request','auth/operation-not-supported-in-this-environment'].includes(c)) {
-      signInWithRedirect(auth, authProvider).catch(authFail); return;
-    }
-    authFail(e);
-  });
+function authFail(e){
+  const m = document.getElementById('auth-msg'); const c = String((e && (e.code || e.message)) || e);
+  if (!m) return;
+  if (c.includes('wrong-password') || c.includes('invalid-credential')) m.textContent = 'Wrong email or password.';
+  else if (c.includes('user-not-found')) m.textContent = 'No account for that email.';
+  else if (c.includes('too-many-requests')) m.textContent = 'Too many attempts — wait a moment and try again.';
+  else m.textContent = 'Sign-in failed: ' + c;
+}
+function doEmailSignIn(){
+  const email = (document.getElementById('auth-email') || {}).value || '';
+  const pass  = (document.getElementById('auth-pass')  || {}).value || '';
+  if (!email || !pass) { const m = document.getElementById('auth-msg'); if (m) m.textContent = 'Enter your email and password.'; return; }
+  signInWithEmailAndPassword(auth, email.trim().toLowerCase(), pass).catch(authFail);
 }
 function doSignOut(){ signOut(auth); }
-// Complete a redirect sign-in (surfaces any error; onAuthStateChanged handles the success).
-getRedirectResult(auth).catch(authFail);
 
 onAuthStateChanged(auth, user => {
   const appEl  = document.getElementById('app');
@@ -4785,7 +4785,7 @@ window.openOutreachModal   = openOutreachModal;
 window.closeOutreachModal  = closeOutreachModal;
 window.outreachModalBgClick= outreachModalBgClick;
 window.saveOutreachStatus  = saveOutreachStatus;
-window.doSignIn            = doSignIn;
+window.doEmailSignIn       = doEmailSignIn;
 window.doSignOut           = doSignOut;
 window.setPricingState     = setPricingState;
 window.togglePriceRow      = togglePriceRow;

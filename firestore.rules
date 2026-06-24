@@ -12,11 +12,12 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // A signed-in, verified user on the explicit allowlist. This MUST match
-    // the ALLOWED_EMAILS list in index.html. Emails are lowercased to compare.
+    // A signed-in user on the explicit allowlist. MUST match ALLOWED_EMAILS in
+    // index.html. Emails lowercased to compare. (No email_verified check — the
+    // email/password accounts are hand-created in the console and aren't
+    // "verified"; the 3-email allowlist is the real gate.)
     function isAllowed() {
       return request.auth != null
-        && request.auth.token.email_verified == true
         && request.auth.token.email.lower() in [
           'jchoustin91@gmail.com',
           'justin.cho@cubework.com',
