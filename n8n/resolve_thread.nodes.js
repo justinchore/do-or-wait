@@ -37,9 +37,15 @@ for (const m of msgs) {
 if (!best || !best.webLink) {
   return [{ json: { found: false } }];
 }
+// Graph now returns webLinks on the NEW Outlook host (outlook.cloud.microsoft),
+// whose deeplink reader fails with "This message might have been moved or deleted"
+// even for valid messages. The IDENTICAL deeplink on outlook.office365.com opens
+// fine, so rewrite the host before storing. (Confirmed 2026-06-25 — only the host
+// differs.) The app also rewrites at render time as a backstop for older saved links.
+const webLink = String(best.webLink).replace(/^(https?:\/\/)outlook\.cloud\.microsoft\//i, '$1outlook.office365.com/');
 return [{ json: {
   found: true,
-  webLink: best.webLink,
+  webLink,
   conversationId: best.conversationId || '',
   subject: best.subject || '',
   from: (best.from && best.from.emailAddress && best.from.emailAddress.address) || '',

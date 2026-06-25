@@ -2654,6 +2654,17 @@ function knownContacts() {
   return [...set].filter(Boolean).sort((a, b) => a.localeCompare(b));
 }
 
+// Microsoft's NEW Outlook (outlook.cloud.microsoft) deeplink reader fails to open
+// message webLinks — it shows "This message might have been moved or deleted" even
+// for a valid, current message. The IDENTICAL deeplink on the outlook.office365.com
+// host opens fine. Graph now hands back the cloud.microsoft host, so rewrite it here
+// at render time — this fixes every already-stored link with no re-resolve needed.
+// (Confirmed 2026-06-25: only the host differs between the broken and working URLs.)
+function fixThreadUrl(u) {
+  if (!u || typeof u !== 'string') return u;
+  return u.replace(/^(https?:\/\/)outlook\.cloud\.microsoft\//i, '$1outlook.office365.com/');
+}
+
 // Compact email-thread chips for the COLLAPSED card summary, so a thread is one
 // click away without expanding. Shows resolved (clickable) threads; if links
 // exist but none are resolved yet, a muted hint. Clicks stop propagation so the
@@ -2665,7 +2676,7 @@ function emailLinkChips(item) {
   if (!resolved.length) {
     return `<div style="margin-top:4px;font-size:11px;color:var(--text2);">🔗 ${links.length} email thread${links.length > 1 ? 's' : ''}</div>`;
   }
-  const chips = resolved.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()"
+  const chips = resolved.map(l => `<a href="${esc(fixThreadUrl(l.url))}" target="_blank" rel="noopener" onclick="event.stopPropagation()"
        title="Open the Outlook thread" style="display:inline-flex;align-items:center;gap:3px;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:#0969da;text-decoration:none;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1px 8px;margin:0 4px 0 0;">📧 ${esc(l.label || l.subject || 'thread')}</a>`).join('');
   const extra = links.length > resolved.length
     ? `<span style="font-size:11px;color:var(--text2);">+${links.length - resolved.length}</span>` : '';
@@ -2683,7 +2694,7 @@ function renderEmailLinks(item, coll) {
               style="border:none;background:none;cursor:pointer;font-size:13px;color:var(--text2);">✖</button>`;
     let main;
     if (l.url) {                                   // resolved (or legacy pasted) — real working link
-      main = `<a href="${esc(l.url)}" target="_blank" rel="noopener"
+      main = `<a href="${esc(fixThreadUrl(l.url))}" target="_blank" rel="noopener"
          style="${lblStyle}color:#0969da;text-decoration:none;" title="Open the Outlook thread">📧 ${esc(l.label || l.subject || 'Email thread')} ↗</a>`;
     } else if (l.resolving) {                       // looking the thread up via Graph
       main = `<span style="${lblStyle}color:var(--text2);">⏳ ${esc(l.label || l.subject || '')} — finding link…</span>`;
