@@ -4638,6 +4638,7 @@ function openOutreachModal(domain){
       <div><div style="font-size:18px;font-weight:800;">${company}</div>
         <div style="font-size:12px;color:var(--text2);">${esc(d.contact||'')}${d.contact?' · ':''}${esc(domain)}</div></div>
       <div style="display:flex;align-items:center;gap:8px;">${tier}
+        <button onclick="exportOutreachJson('${domain}',event)" title="Download this prospect's full record as JSON" style="font-size:12px;padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);cursor:pointer;">⬇ JSON</button>
         <button onclick="markOutreachInvalid('${domain}', ${d.invalid?'false':'true'}, event)" style="font-size:12px;padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);cursor:pointer;color:${d.invalid?'#16a34a':'#b91c1c'};">${d.invalid?'↩ Restore':'✕ Invalid'}</button>
         <button onclick="closeOutreachModal()" style="border:none;background:var(--bg);border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:16px;">✕</button></div>
     </div>
@@ -4651,6 +4652,16 @@ function openOutreachModal(domain){
   document.getElementById('outreach-modal-overlay').style.display='flex';
 }
 function closeOutreachModal(){ const o=document.getElementById('outreach-modal-overlay'); if(o) o.style.display='none'; outreachModalDomain=null; }
+// Download this prospect's full record (seed fields + live outreach/{id} doc on top) as JSON.
+function exportOutreachJson(domain, e){
+  if(e) e.stopPropagation();
+  domain=(domain||'').toLowerCase();
+  const seed=(window.OUTREACH_SEED||[]).find(s=>(s.domain||'').toLowerCase()===domain)||{};
+  const d=_outreachDoc(domain);
+  const rec=Object.assign({}, seed, d);   // live Firestore doc wins over the bundled seed
+  const slug=String(rec.id||domain||'prospect').replace(/[^a-z0-9]+/gi,'-').replace(/(^-|-$)/g,'');
+  downloadJSONFile(rec, 'outreach-'+slug+'-'+new Date().toISOString().slice(0,10)+'.json');
+}
 // Trigger the n8n research agent (workflow 13). It writes the brief + new draft back to Firestore;
 // the outreach listener then refreshes this modal automatically.
 async function researchProspect(domain, e){
@@ -4899,6 +4910,7 @@ window.outreachModalBgClick= outreachModalBgClick;
 window.saveOutreachStatus  = saveOutreachStatus;
 window.researchProspect    = researchProspect;
 window.markOutreachInvalid = markOutreachInvalid;
+window.exportOutreachJson  = exportOutreachJson;
 window.doEmailSignIn       = doEmailSignIn;
 window.doSignOut           = doSignOut;
 window.setPricingState     = setPricingState;
