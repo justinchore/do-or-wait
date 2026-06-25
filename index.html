@@ -4518,23 +4518,34 @@ function emailStatusBadge(s){
   const M={verified:['#dcfce7','#166534','✓ verified'],likely_to_engage:['#dbeafe','#1e40af','likely to engage'],extrapolated:['#fef3c7','#92400e','extrapolated'],guessed:['#fef3c7','#92400e','guessed'],unavailable:['#fee2e2','#991b1b','unavailable']};
   const m=M[s]; return m?`<span style="font-size:10px;border-radius:8px;padding:1px 6px;background:${m[0]};color:${m[1]};margin-left:6px;">${m[2]}</span>`:'';
 }
-// Tidy the workflow-13 research brief: pull inline [label](url) citations out
-// into a compact Sources line, drop the clutter, and split prose into bullets.
+// Tidy the workflow-13 research brief into one bullet per claim, each tagged
+// with its own inline source link (the model cites right after each sentence).
 function renderResearchBrief(raw){
-  let text = Array.isArray(raw) ? raw.join('\n') : String(raw||'');
-  const sources = [];
-  text = text.replace(/\(?\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)\)?/g, (m, label, url) => {
-    try { const host = new URL(url).hostname.replace(/^www\./,''); if(!sources.some(s=>s.url===url)) sources.push({host,url}); } catch(e){}
-    return '';
-  });
-  text = text.replace(/\(\s*\)/g,'').replace(/\s+([.,;])/g,'$1').replace(/\s{2,}/g,' ').trim();
-  let points = text.split(/\n+|(?:^|\s)[•\-*]\s+/).map(s=>s.replace(/^[\s•\-*]+/,'').trim()).filter(Boolean);
-  if(points.length <= 1) points = text.split(/(?<=\.)\s+(?=[A-Z(])/).map(s=>s.trim()).filter(s=>s.length>1);
-  const lis = points.map(s=>`<li style="margin:5px 0;">${esc(s)}</li>`).join('');
-  const src = sources.length
-    ? `<div style="font-size:11px;color:var(--text2);margin-top:8px;">Sources: ${sources.slice(0,8).map(s=>`<a href="${esc(s.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:#2563eb;text-decoration:none;">${esc(s.host)}</a>`).join(' · ')}</div>`
-    : '';
-  return `<ul style="margin:8px 0 0;padding-left:18px;font-size:13px;line-height:1.55;">${lis}</ul>${src}`;
+  let text = Array.isArray(raw) ? raw.join(' ') : String(raw||'');
+  text = text.replace(/\s{2,}/g,' ').trim();
+  const citeCluster = String.raw`(?:\(?\[[^\]]+\]\(https?:\/\/[^)\s]+\)\)?\s*)*`;
+  const unitRe = new RegExp(`([^.!?]+[.!?]+)\\s*(${citeCluster})`, 'g');
+  const linkRe = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
+  const items=[]; let m;
+  while((m=unitRe.exec(text))){
+    const sentence=(m[1]||'').trim();
+    const srcs=[]; let lm; linkRe.lastIndex=0;
+    while((lm=linkRe.exec(m[2]||''))){ try{ const host=new URL(lm[2]).hostname.replace(/^www\./,''); if(!srcs.some(s=>s.url===lm[2])) srcs.push({host,url:lm[2]}); }catch(e){} }
+    if(sentence) items.push({text:sentence, srcs});
+  }
+  if(!items.length){
+    const srcs=[]; let lm; linkRe.lastIndex=0;
+    while((lm=linkRe.exec(text))){ try{ const host=new URL(lm[2]).hostname.replace(/^www\./,''); if(!srcs.some(s=>s.url===lm[2])) srcs.push({host,url:lm[2]}); }catch(e){} }
+    const clean=text.replace(/\(?\[[^\]]+\]\(https?:\/\/[^)\s]+\)\)?/g,'').replace(/\(\s*\)/g,'').replace(/\s{2,}/g,' ').trim();
+    items.push({text:clean, srcs});
+  }
+  const lis = items.map(it=>{
+    const cite = it.srcs.length
+      ? ' '+it.srcs.map(s=>`<a href="${esc(s.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:#2563eb;text-decoration:none;font-size:11px;white-space:nowrap;">[${esc(s.host)}]</a>`).join(' ')
+      : '';
+    return `<li style="margin:5px 0;">${esc(it.text)}${cite}</li>`;
+  }).join('');
+  return `<ul style="margin:8px 0 0;padding-left:18px;font-size:13px;line-height:1.55;">${lis}</ul>`;
 }
 function fmtResearchDate(v){ if(!v) return ''; const dt=new Date(v); return isNaN(dt.getTime()) ? '' : dt.toLocaleDateString(); }
 
