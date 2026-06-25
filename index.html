@@ -4518,6 +4518,26 @@ function emailStatusBadge(s){
   const M={verified:['#dcfce7','#166534','✓ verified'],likely_to_engage:['#dbeafe','#1e40af','likely to engage'],extrapolated:['#fef3c7','#92400e','extrapolated'],guessed:['#fef3c7','#92400e','guessed'],unavailable:['#fee2e2','#991b1b','unavailable']};
   const m=M[s]; return m?`<span style="font-size:10px;border-radius:8px;padding:1px 6px;background:${m[0]};color:${m[1]};margin-left:6px;">${m[2]}</span>`:'';
 }
+// Tidy the workflow-13 research brief: pull inline [label](url) citations out
+// into a compact Sources line, drop the clutter, and split prose into bullets.
+function renderResearchBrief(raw){
+  let text = Array.isArray(raw) ? raw.join('\n') : String(raw||'');
+  const sources = [];
+  text = text.replace(/\(?\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)\)?/g, (m, label, url) => {
+    try { const host = new URL(url).hostname.replace(/^www\./,''); if(!sources.some(s=>s.url===url)) sources.push({host,url}); } catch(e){}
+    return '';
+  });
+  text = text.replace(/\(\s*\)/g,'').replace(/\s+([.,;])/g,'$1').replace(/\s{2,}/g,' ').trim();
+  let points = text.split(/\n+|(?:^|\s)[•\-*]\s+/).map(s=>s.replace(/^[\s•\-*]+/,'').trim()).filter(Boolean);
+  if(points.length <= 1) points = text.split(/(?<=\.)\s+(?=[A-Z(])/).map(s=>s.trim()).filter(s=>s.length>1);
+  const lis = points.map(s=>`<li style="margin:5px 0;">${esc(s)}</li>`).join('');
+  const src = sources.length
+    ? `<div style="font-size:11px;color:var(--text2);margin-top:8px;">Sources: ${sources.slice(0,8).map(s=>`<a href="${esc(s.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:#2563eb;text-decoration:none;">${esc(s.host)}</a>`).join(' · ')}</div>`
+    : '';
+  return `<ul style="margin:8px 0 0;padding-left:18px;font-size:13px;line-height:1.55;">${lis}</ul>${src}`;
+}
+function fmtResearchDate(v){ if(!v) return ''; const dt=new Date(v); return isNaN(dt.getTime()) ? '' : dt.toLocaleDateString(); }
+
 // Full Apollo profile for one prospect (click a row).
 function openOutreachModal(domain){
   domain=(domain||'').toLowerCase();
@@ -4579,9 +4599,7 @@ function openOutreachModal(domain){
         <button onclick="researchProspect('${domain}',event)" style="font-size:12px;padding:5px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface);cursor:pointer;">${researched?'🔎 Re-research':'🔎 Research & draft'}</button>
       </div>
       ${researched
-        ? `<ul style="margin:8px 0 0;padding-left:18px;font-size:13px;line-height:1.5;">${
-            String(d.research_brief).split(/\n+|(?:^|\s)[•\-•]\s+/).map(s=>s.replace(/^[\s•\-•*]+/,'').trim()).filter(Boolean).map(s=>`<li style="margin:4px 0;">${esc(s)}</li>`).join('')
-          }</ul><div style="font-size:11px;color:var(--text2);margin-top:6px;">Researched ${d.researched_at?fmtDate(d.researched_at):''}</div>`
+        ? `${renderResearchBrief(d.research_brief)}${(()=>{const rd=fmtResearchDate(d.researched_at);return rd?`<div style="font-size:11px;color:var(--text2);margin-top:6px;">Researched ${rd}</div>`:'';})()}`
         : `<div style="color:var(--text2);font-size:13px;margin-top:4px;">Pull live web research (recent news, products, fit) and rewrite the draft to reference it. Takes ~15s.</div>`}
     </div>`;
   document.getElementById('outreach-modal-body').innerHTML=`

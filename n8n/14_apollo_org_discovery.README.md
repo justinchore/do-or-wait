@@ -1,6 +1,8 @@
 # Workflow 14 — Apollo Org Discovery (LA Fashion District apparel/textile)
 
-**Status:** paste-ready Code nodes (`14_apollo_org_discovery.nodes.js`); no JSON yet — build it as a short head in n8n, or bolt onto workflow 12. **Reads orgs from Apollo; writes nothing on its own** (it feeds wf12, which does the people-search → reveal → score → draft → Firestore).
+**Status:** importable workflow ready — **`14_apollo_org_discovery.json`** (4 nodes, wired to the real `Apollo_Professional` credential, defaults to a 1-page sanity run, `VERTICAL = "lastmile"`). Reusable logic also kept as paste-ready Code nodes in `apollo_org_discovery.reusable.nodes.js`. **Reads orgs from Apollo; writes nothing on its own** — it outputs a paste-ready company array you review and drop into workflow 12, which does the people-search → reveal → score → draft → Firestore.
+
+**Run it:** import the JSON → open the **Apollo Org Search** node and confirm the `Apollo_Professional` credential is attached (re-pick if blank) → Execute. Check **Filter + score** output for the count, and **Build wf12 input** for the paste-ready array. Bump `pages` in the config node up from 1 once the filter looks right. Flip `VERTICAL` to `"fashion_district"` to run that vertical instead.
 
 ## Why this exists
 The Korean-owned Fashion District niche can't be sourced the way batches 1–2 were (those came from Christine's Panjiva/S&P importer workbook with TEU). These are ~1,000+ small private jobbers in a 100-block district. So instead of a hand-built company list, we **discover** them: Apollo organization search by LA apparel/textile + small headcount, then **post-filter to the Fashion District ZIPs in code**.

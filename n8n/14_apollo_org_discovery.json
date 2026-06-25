@@ -1,0 +1,136 @@
+{
+  "name": "CW — 14. Apollo Org Discovery (reusable: last-mile / fashion-district)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "cw-d-000",
+      "name": "Run / Test",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Apollo Org Discovery — config. One request PER keyword tag (Apollo AND-s\n// multiple tags, which over-narrows). Geo is done SERVER-SIDE via\n// organization_locations (Apollo omits city from most records, so we must NOT\n// filter location on the response). VERTICAL picks the vertical.\nconst VERTICAL = \"lastmile\";   // \"lastmile\" | \"fashion_district\"\nconst PRESETS = {\n  lastmile: {\n    locations: [\"Los Angeles, California\",\"Orange County, California\",\"San Diego, California\",\"Riverside, California\",\"San Bernardino, California\",\"Ventura, California\",\"Long Beach, California\",\"Ontario, California\"],\n    keyword_tags: [\"courier\",\"last mile delivery\",\"final mile\",\"parcel delivery\",\"package delivery\",\"same day delivery\",\"delivery service\",\"logistics\",\"transportation\",\"freight\"],\n    employee_ranges: [\"1,10\",\"11,20\",\"21,50\",\"51,100\",\"101,200\",\"201,500\",\"501,1000\"],\n    pages: 2\n  },\n  fashion_district: {\n    locations: [\"Los Angeles, California\"],\n    keyword_tags: [\"apparel\",\"wholesale apparel\",\"women's clothing\",\"fashion\",\"textiles\",\"clothing manufacturer\",\"importer\"],\n    employee_ranges: [\"1,10\",\"11,20\",\"21,50\",\"51,100\",\"101,200\"],\n    pages: 2\n  }\n};\nconst P = PRESETS[VERTICAL];\nconst out = [];\nfor (const tag of P.keyword_tags) {\n  for (let p = 1; p <= P.pages; p++) {\n    out.push({ json: { _vertical: VERTICAL, _tag: tag, body: {\n      organization_locations: P.locations,\n      q_organization_keyword_tags: [tag],\n      organization_num_employees_ranges: P.employee_ranges,\n      page: p, per_page: 100\n    } } });\n  }\n}\nreturn out;"
+      },
+      "id": "cw-d-001",
+      "name": "Org-search config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/mixed_companies/search",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {}
+      },
+      "id": "cw-d-002",
+      "name": "Apollo Org Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        640,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "kayDczBFFL4YuIDB",
+          "name": "Apollo_Professional"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Dedupe by domain, drop obvious non-carriers, keep everything Apollo returned\n// (geo is already done server-side; Apollo omits city on most records so we do\n// NOT geo-filter the response). VERTICAL read from the config node.\nconst VERTICAL = $('Org-search config').first().json._vertical;\nconst FP = {\n  lastmile: {\n    socal:true,\n    priority_cities: [\"ontario\",\"fontana\",\"city of industry\",\"rancho cucamonga\",\"riverside\",\"san bernardino\",\"jurupa valley\",\"rialto\",\"colton\",\"moreno valley\",\"perris\",\"redlands\",\"chino\",\"mira loma\",\"eastvale\"],\n    fit_keywords: [\"last mile\",\"final mile\",\"courier\",\"parcel\",\"delivery\",\"dispatch\",\"express\"],\n    deny: [\"software\",\"technologies\",\" saas\",\"consulting\",\"staffing\",\"recruit\",\"marketing agency\"],\n    label: \"Last-Mile / Courier (SoCal)\", name_flag: null\n  },\n  fashion_district: {\n    zip5: [\"90014\",\"90015\",\"90021\",\"90013\",\"90079\",\"90017\"],\n    priority_cities: [], fit_keywords: [], deny: [],\n    label: \"Apparel/Textile (Fashion District)\", name_flag: \"korean\"\n  }\n};\nconst P = FP[VERTICAL];\nfunction inGeo(o){\n  if (P.zip5){ const z=String(o.postal_code||\"\").slice(0,5); return P.zip5.includes(z); }\n  const st=String(o.state||\"\").toLowerCase();\n  return !(st && !(st===\"ca\"||st.includes(\"calif\")));   // server already constrained to CA; just guard strays\n}\nconst KSUR = new Set([\"kim\",\"lee\",\"park\",\"choi\",\"cho\",\"jung\",\"jeong\",\"kang\",\"yoon\",\"yun\",\"jang\",\"lim\",\"im\",\"han\",\"oh\",\"seo\",\"suh\",\"shin\",\"kwon\",\"hwang\",\"ahn\",\"an\",\"song\",\"yang\",\"bae\",\"baek\",\"nam\",\"noh\",\"roh\",\"ha\",\"koo\",\"ku\",\"min\",\"moon\",\"yu\",\"yoo\",\"ryu\",\"chung\",\"jeon\",\"jun\",\"ko\",\"go\",\"sung\",\"seong\",\"hong\",\"jin\",\"cha\",\"chu\",\"joo\",\"ju\"]);\nconst seen = new Set();\nconst result = [];\nfor (const it of items) {\n  const j = it.json || {};\n  const orgs = [].concat(j.organizations||[], j.accounts||[]);\n  for (const o of orgs) {\n    if (!inGeo(o)) continue;\n    const nm=(o.name||\"\").toLowerCase();\n    if ((P.deny||[]).some(x=>nm.includes(x))) continue;        // drop obvious software/agency noise\n    const d = (o.primary_domain||o.website_url||\"\").replace(/^https?:\\/\\//,\"\").replace(/^www\\./,\"\").replace(/\\/.*$/,\"\").toLowerCase();\n    if (!d || seen.has(d)) continue;\n    seen.add(d);\n    const city=(o.city||\"\").toLowerCase();\n    const blob=((o.name||\"\")+\" \"+(o.industry||\"\")).toLowerCase();\n    const priority=(P.priority_cities||[]).some(c=>city.includes(c));\n    const fit=(P.fit_keywords||[]).some(k=>blob.includes(k));\n    let nameFlag=false,nameSig=\"\";\n    if(P.name_flag===\"korean\"){ for(const w of (o.name||\"\").toLowerCase().split(/[^a-z]+/)) if(KSUR.has(w)){nameFlag=true;nameSig=\"surname:\"+w;} }\n    result.push({ json: { c:o.name, d, city:o.city||\"\", st:\"CA\", t:o.estimated_num_employees||0, ind:P.label, zip:String(o.postal_code||\"\").slice(0,5), address:o.street_address||o.raw_address||\"\", employees:o.estimated_num_employees||null, org_id:o.id||null, prospect_source:\"apollo_org_discovery_\"+VERTICAL, priority, fit, name_flag:nameFlag, name_signal:nameSig } });\n  }\n}\nresult.sort((a,b)=>(b.json.priority-a.json.priority)||(b.json.fit-a.json.fit));\nreturn result;"
+      },
+      "id": "cw-d-003",
+      "name": "Filter + score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Paste-ready wf12 array + a _debug block read straight from the raw Apollo\n// responses, so we can diagnose recall/geo without hunting nodes in n8n.\nconst raw = $('Apollo Org Search').all().map(i => i.json);\nlet totalOrgs=0, withCity=0, withState=0, caCount=0, withZip=0;\nconst states={}; let sample=null;\nfor (const r of raw) {\n  const orgs = [].concat(r.organizations||[], r.accounts||[]);\n  totalOrgs += orgs.length;\n  for (const o of orgs) {\n    if (!sample) sample = { keys:Object.keys(o).slice(0,40), name:o.name, city:o.city, state:o.state, country:o.country, postal_code:o.postal_code, primary_domain:o.primary_domain };\n    if (o.city) withCity++;\n    if (o.postal_code) withZip++;\n    if (o.state){ withState++; const s=String(o.state); states[s]=(states[s]||0)+1; }\n    const st=String(o.state||'').toLowerCase();\n    if (st==='ca'||st.includes('calif')) caCount++;\n  }\n}\nconst firstResp = raw[0] || {};\nconst rows = items.map(i=>i.json).filter(r=>r.d);\nconst arr = rows.map(r=>`  {c:${JSON.stringify(r.c)},d:${JSON.stringify(r.d)},city:${JSON.stringify(r.city)},st:'CA',t:${r.t||0},ind:${JSON.stringify(r.ind)}},`).join(\"\\n\");\nreturn [{ json: {\n  count: rows.length,\n  _debug: {\n    responses: raw.length,\n    firstResp_keys: Object.keys(firstResp),\n    pagination: firstResp.pagination || null,\n    totalOrgs, withCity, withZip, withState, caCount,\n    topStates: Object.entries(states).sort((a,b)=>b[1]-a[1]).slice(0,10),\n    sample\n  },\n  paste: \"const companies = [\\n\"+arr+\"\\n];\"\n} }];"
+      },
+      "id": "cw-d-004",
+      "name": "Build wf12 input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Run / Test": {
+      "main": [
+        [
+          {
+            "node": "Org-search config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Org-search config": {
+      "main": [
+        [
+          {
+            "node": "Apollo Org Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apollo Org Search": {
+      "main": [
+        [
+          {
+            "node": "Filter + score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter + score": {
+      "main": [
+        [
+          {
+            "node": "Build wf12 input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "cw-workflow-014"
+}
