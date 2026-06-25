@@ -37,12 +37,23 @@ for (const m of msgs) {
 if (!best || !best.webLink) {
   return [{ json: { found: false } }];
 }
-// Graph now returns webLinks on the NEW Outlook host (outlook.cloud.microsoft),
-// whose deeplink reader fails with "This message might have been moved or deleted"
-// even for valid messages. The IDENTICAL deeplink on outlook.office365.com opens
-// fine, so rewrite the host before storing. (Confirmed 2026-06-25 — only the host
-// differs.) The app also rewrites at render time as a backstop for older saved links.
-const webLink = String(best.webLink).replace(/^(https?:\/\/)outlook\.cloud\.microsoft\//i, '$1outlook.office365.com/');
+// Graph's webLink comes back as either the classic outlook.office365.com/owa/?ItemID=…
+// &viewmodel=ReadMessageItem form or the new outlook.cloud.microsoft/mail/deeplink/read/…
+// form — and BOTH fail with "This message might have been moved or deleted" (the owa form
+// redirects into the same broken new-Outlook reader). The ONE form that opens is:
+//   https://outlook.office365.com/mail/deeplink/read/<pathId>?ItemID=<ItemID>&exvsurl=1
+// where <pathId> = the ItemID with base64 '/' and '+' swapped to '-'. So extract the
+// ItemID from whatever Graph returns and rebuild that working URL before storing.
+// (Confirmed working 2026-06-25.) The app also rebuilds at render time as a backstop.
+function fixThreadUrl(u) {
+  if (!u || typeof u !== 'string') return u;
+  const m = /[?&]ItemID=([^&]+)/i.exec(u);
+  if (!m) return u.replace(/^(https?:\/\/)outlook\.cloud\.microsoft\//i, '$1outlook.office365.com/');
+  const itemId = m[1];
+  const pathId = itemId.replace(/%2F/gi, '-').replace(/%2B/gi, '-');
+  return 'https://outlook.office365.com/mail/deeplink/read/' + pathId + '?ItemID=' + itemId + '&exvsurl=1';
+}
+const webLink = fixThreadUrl(best.webLink);
 return [{ json: {
   found: true,
   webLink,

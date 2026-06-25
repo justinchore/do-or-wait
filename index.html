@@ -2654,15 +2654,24 @@ function knownContacts() {
   return [...set].filter(Boolean).sort((a, b) => a.localeCompare(b));
 }
 
-// Microsoft's NEW Outlook (outlook.cloud.microsoft) deeplink reader fails to open
-// message webLinks — it shows "This message might have been moved or deleted" even
-// for a valid, current message. The IDENTICAL deeplink on the outlook.office365.com
-// host opens fine. Graph now hands back the cloud.microsoft host, so rewrite it here
-// at render time — this fixes every already-stored link with no re-resolve needed.
-// (Confirmed 2026-06-25: only the host differs between the broken and working URLs.)
+// Open Outlook message links reliably. Graph's webLink comes back either as the
+// classic `outlook.office365.com/owa/?ItemID=…&viewmodel=ReadMessageItem` form OR
+// the new `outlook.cloud.microsoft/mail/deeplink/read/…` form — and BOTH currently
+// fail with "This message might have been moved or deleted" (the owa form redirects
+// into the same broken new-Outlook reader). The ONE form that opens is:
+//   https://outlook.office365.com/mail/deeplink/read/<pathId>?ItemID=<ItemID>&exvsurl=1
+// where <pathId> is the ItemID with base64 '/' and '+' swapped to '-'. So we extract
+// the ItemID from whatever Graph gave us and rebuild that working URL at render time —
+// fixing every already-stored link with no re-resolve. (Confirmed working 2026-06-25.)
 function fixThreadUrl(u) {
   if (!u || typeof u !== 'string') return u;
-  return u.replace(/^(https?:\/\/)outlook\.cloud\.microsoft\//i, '$1outlook.office365.com/');
+  try {
+    const m = /[?&]ItemID=([^&]+)/i.exec(u);
+    if (!m) return u.replace(/^(https?:\/\/)outlook\.cloud\.microsoft\//i, '$1outlook.office365.com/');
+    const itemId = m[1];                                          // URL-encoded standard base64
+    const pathId = itemId.replace(/%2F/gi, '-').replace(/%2B/gi, '-'); // deeplink path variant
+    return 'https://outlook.office365.com/mail/deeplink/read/' + pathId + '?ItemID=' + itemId + '&exvsurl=1';
+  } catch (_) { return u; }
 }
 
 // Compact email-thread chips for the COLLAPSED card summary, so a thread is one
