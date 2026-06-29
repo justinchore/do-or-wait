@@ -4638,9 +4638,16 @@ function openOutreachModal(domain){
   const conf=(d.draft_confidence!=null&&d.draft_confidence!=='')?Number(d.draft_confidence):null;
   const confC=conf==null?'':(conf>=70?'background:#dcfce7;color:#166534;':conf>=40?'background:#fef3c7;color:#92400e;':'background:#fee2e2;color:#991b1b;');
   const FITC={High:'background:#dcfce7;color:#166534;',Medium:'background:#fef3c7;color:#92400e;',Mixed:'background:#ffedd5;color:#9a3412;',Low:'background:#f3f4f6;color:#6b7280;'};
+  const bw=(d.body_words!=null&&d.body_words!=='')?Number(d.body_words):null;
+  const bf=(d.body_flesch!=null&&d.body_flesch!=='')?Number(d.body_flesch):null;
+  const lenGood=(bw!=null&&bw>=50&&bw<=80)&&(bf!=null&&bf>=60);
+  const lenBad=(bw!=null&&bw>100)||(bf!=null&&bf<50);
+  const lenC=lenGood?'background:#dcfce7;color:#166534;':lenBad?'background:#fee2e2;color:#991b1b;':'background:#fef3c7;color:#92400e;';
+  const lenTxt=[bw!=null?bw+'w':'',bf!=null?'Flesch '+bf:''].filter(Boolean).join(' · ');
   const dbadges=[
     d.prospect_fit?`<span title="MTM fit" style="font-size:11px;border-radius:10px;padding:2px 9px;${FITC[d.prospect_fit]||''}">${esc(d.prospect_fit)} fit</span>`:'',
     conf!=null?`<span title="${esc(d.confidence_reason||'')}" style="font-size:11px;border-radius:10px;padding:2px 9px;${confC}">Confidence ${conf}</span>`:'',
+    lenTxt?`<span title="Length & readability of the active draft (aim 60-80 words, Flesch 60+)" style="font-size:11px;border-radius:10px;padding:2px 9px;${lenC}">${lenTxt}</span>`:'',
     d.prospect_group?`<span style="font-size:11px;color:var(--text2);align-self:center;">${esc(d.prospect_group)}</span>`:''
   ].filter(Boolean).join(' ');
   const vtabs=vlist.length>1?`<div style="display:flex;gap:6px;margin:8px 0;flex-wrap:wrap;">${vlist.map((v,i)=>`<button onclick="setOutreachVariant('${domain}',${i},event)" style="font-size:11px;padding:4px 10px;border-radius:8px;cursor:pointer;border:1px solid ${i===vi?'#38D430':'var(--border)'};background:${i===vi?'#38D430':'var(--surface)'};color:${i===vi?'#fff':'var(--text)'};">${esc(VARLABEL[(v.style||'').toLowerCase()]||v.style||('V'+(i+1)))}</button>`).join('')}</div>`:'';
