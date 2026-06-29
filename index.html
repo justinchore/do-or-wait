@@ -4630,7 +4630,7 @@ function openOutreachModal(domain){
     fr('Company LinkedIn', d.org_linkedin?`<a href="${esc(d.org_linkedin)}" target="_blank" rel="noopener" style="${LINK}">Company page ↗</a>`:''),
     fr('Nearest Cubework', near?esc(near):'')
   ].join('');
-  const VARLABEL={agility:'Agility',turnkey:'Turnkey / CapEx',trigger:'Trigger-led','default':'Draft'};
+  const VARLABEL={mismatch:'Mismatch','forced-bet':'Forced bet','forcedbet':'Forced bet',freedom:'Freedom',commitment:'Commitment',agility:'Agility',turnkey:'Turnkey / CapEx',trigger:'Trigger-led','default':'Draft'};
   const vlist=Array.isArray(d.email_variants)?d.email_variants.filter(v=>v&&(v.subject||v.body)):[];
   const vi=vlist.length?Math.min(Math.max(outreachVariant[domain]||0,0),vlist.length-1):0;
   const av=vlist.length?vlist[vi]:{subject:d.email_subject||'',body:d.email_body||''};
