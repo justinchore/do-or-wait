@@ -8,7 +8,7 @@ A web app for Justin Cho (Justin.Cho@cubework.com) at Cubework. Tabs:
 4. **🏭 Avail** — Real-time availability dashboard for Cubework warehouse locations. Has an **⬇ Export JSON** button (toolbar) that opens a location-picker modal (`openAvailExport` / `doAvailExport`, overlay `#availexp-overlay`): choose which sites to include, then it **always syncs-first for client-fresh data** — it POSTs `AVAIL_WEBHOOK` (n8n workflow 4) per chosen location, waits for the Firestore write-back by polling each doc's `synced_at` against a pre-trigger baseline (deadline scales with location count, capped 5 min), then pulls a `getDocsFromServer` snapshot and downloads the selected docs as `do-or-wait-availability-YYYY-MM-DD.json` (array of `{_id, ...doc}`, same shape the listener consumes). Locations whose sync doesn't confirm in time are still exported (last-known) with a ⚠ note in the modal status.
 5. **💲 Pricing** — National rate card (read-only). Searchable table grouped by state; click a row to expand full pricing detail. Reads `pricing/current` (n8n-synced), falls back to `pricing-seed.js` snapshot.
 6. **💡 Notes** — Ideas/issues notebook (two editable fields per note, filter by date created)
-7. **📧 Outreach** — Apollo-sourced cold-outreach prospect list (separate from Leads). Spreadsheet-style table seeded from `outreach-seed.js`, overlaid live by the Firestore **`outreach`** collection (written by n8n workflow 12). Columns: Company, Contact, Email, Phone, Location, Industry, TEU, Tier, Score, Status. Industry + status + sort dropdowns (`setOutreachIndustry`/`setOutreachSort`/`setOutreachFilter`), defaults to "Has email". Click a row → detail modal (`openOutreachModal`) with company intel, a research brief, the draft email (Open-in-email / Copy), an editable **Status** (`saveOutreachStatus`), a **🔎 Research & draft** button (`researchProspect` → n8n workflow 13), and a **✕ Invalid** flag (`markOutreachInvalid`) that hides bad-fit prospects from normal views (review/restore via the "Invalid" filter). See the 2026-06-24 section below for the full pipeline.
+7. **📧 Outreach** — Apollo-sourced cold-outreach prospect list (separate from Leads). Spreadsheet-style table seeded from `outreach-seed.js`, overlaid live by the Firestore **`outreach`** collection (written by n8n workflow 12). Columns: Company, Contact, Email, Phone, Location, Industry, TEU, Tier, Score, Status. Industry + status + sort dropdowns (`setOutreachIndustry`/`setOutreachSort`/`setOutreachFilter`), defaults to "Has email". Click a row → detail modal (`openOutreachModal`) with company intel, a research brief, the draft email (Open-in-email / Copy), an editable **Status** (`saveOutreachStatus`), a **🔎 Research & draft** button (`researchProspect` → n8n workflow 13; **`res.ok`-checked 2026-06-25** — a 404/500 from the webhook now alerts with the status and resets the button instead of hanging silently on "Researching…"), a **✕ Invalid** flag (`markOutreachInvalid`) that hides bad-fit prospects from normal views (review/restore via the "Invalid" filter), and a **⬇ JSON export** button (`exportOutreachJson`, added 2026-06-25) that downloads the prospect's full record (seed merged with the live `outreach/{id}` doc) as `outreach-<id>-YYYY-MM-DD.json` via the shared `downloadJSONFile` helper. See the 2026-06-24 section below for the full pipeline.
 
 Deployed at: https://justinchore.github.io/do-or-wait/
 Source: `C:\Users\jcho\Documents\Claude\Projects\do_or_wait\index.html` (single HTML file, push to GitHub to deploy)
@@ -225,33 +225,49 @@ Each active lead card shows a compact button row (`renderLeadCard` → `quickLog
 ```
 do_or_wait/
   index.html            ← entire app (push to GitHub to deploy)
-  pricing-seed.js       ← auto-generated snapshot of the price sheet, loaded by index.html as the Pricing-tab fallback before/without the n8n sync. Regenerate from the master xlsx; NOT hand-edited. (Loaded via <script src> just before the module — the one static data asset outside index.html.)
-  REPLY_ASSISTANT_SPEC.md ← design spec (2026-06-17, status: Proposed) for an in-app "Reply Assistant": on a lead with an inbound email, ✍️ Draft reply → fresh availability sync + matcher → Claude drafts an availability/pricing-matched reply in house style → conversational refine ("wider net", "drop Fontana") → save to thread / Outlook draft. NOT yet built into index.html.
+  pricing-seed.js       ← auto-generated snapshot of the price sheet, loaded by index.html as the Pricing-tab fallback before/without the n8n sync. Regenerate from the master xlsx; NOT hand-edited. (Loaded via <script src> just before the module.)
+  outreach-seed.js      ← cumulative CA outreach-prospect seed (loaded via <script src> before the module, like pricing-seed.js); overlaid live by the `outreach` Firestore collection.
+  Copy of New Master List_ Price.xlsx ← the master price sheet (source for pricing-seed.js). GITIGNORED (large, internal, repo is public). CLAUDE.md elsewhere calls it "New Master List_ Price.xlsx" — the on-disk file has the "Copy of " prefix.
+  REPLY_ASSISTANT_SPEC.md ← design spec (2026-06-17, status: Proposed) for an in-app "Reply Assistant". NOT yet built into index.html.
+  reply_assistant_flow.mermaid ← flow diagram companion to REPLY_ASSISTANT_SPEC.md (the spec is still Proposed/unbuilt).
+  firestore.rules        ← Firestore security rules (locked to the 3-email allowlist; published in console 2026-06-24). Companion doc: FIRESTORE_SECURITY.md.
+  FIRESTORE_SECURITY.md  ← notes on the rules lockdown + the public-vs-secret apiKey explanation.
   CLAUDE.md             ← this file
-  .gitignore            ← keeps the master price xlsx (large, internal, repo is public) and *.xlsx out of git
+  .gitignore            ← keeps the master price xlsx, *.xlsx, node_modules/, and .writetest.tmp out of git
   sharepoint_location_links.txt ← SharePoint URLs for the CA locations (input for presets)
+  firestore-mcp/        ← SOURCE for the "Do or Wait — Firestore" MCP connector. Lets Claude read/write the do-or-wait Firestore live (list/create/update tasks·leads·notes, get_availability/pricing/renewals, trigger/sync availability, query_collection escape hatch). Runs on Justin's machine (sandboxes can't reach Firestore). NOTE: the connector that's actually live is an installed **desktop-extension** build that signs in with an allowlisted **email/password** account (nothing fancy) — so it gets an ID token that passes the locked rules. This repo folder is its SOURCE and lags the deployed build: the repo `server.js` still does unauthenticated web-API-key REST calls (`?key=…`, no token), which is the older approach. README.md, server.js, install.mjs, selftest.js, manifest.json, package.json; node_modules/ is gitignored. ⚠ README.md's "Firestore rules are open" line is STALE (rules are locked per 2026-06-24).
   n8n/
-    5_add_location.json        ← AUTHORITATIVE combined live workflow (both the availability-sync
-                                  and add-location chains). Import THIS into n8n. Edit by hand here
-                                  (the bash mount is read-only) or in the n8n UI, then re-export.
-    parse_build_patch.node.js  ← clean paste-ready copy of the "Parse + build patch" node code
-    4_availability_sync.json   ← older reference copy of just the sync chain (redundant — 5_add_location.json supersedes it)
-    1_queue_checker.json       ← email sequencer
-    2_send_trigger.json
-    3_reply_detector.json
+    -- core syncs / app webhooks --
+    5_add_location.json        ← AUTHORITATIVE combined live workflow (availability-sync + add-location chains). Import THIS. Edit by hand here (bash mount read-only) or in n8n UI, then re-export.
+    parse_build_patch.node.js  ← paste-ready copy of the "Parse + build patch" node code
+    4_availability_sync.json   ← older reference copy of just the sync chain (REDUNDANT — 5_add_location.json supersedes it; deletion candidate)
     6_followup_scanner.json    ← Follow-up Scanner: flags leads cold 3+ days (Outlook/Graph → Firestore, with direction). No sending.
-    7_pricing_sync.json        ← Pricing Sync: reads the Sales_US master price sheet (Graph workbook API) → Firestore pricing/current. Daily 6am.
-    10_renewals_sync.json      ← Renewals Sync: reads the Google renewal tracker sheet (CSV export, no creds) → Firestore renewals/current. Daily 7:30am. Uses only the Google Service Account cred for the Firestore write.
-    parse_renewals.node.js     ← clean paste-ready copy of the "Parse renewals" node code (workflow 10)
-    11_resolve_thread.json     ← Resolve Thread Link: webhook (path `resolve-thread`) that takes {subject,contact}, searches Graph, and RESPONDS with the newest message's `webLink` (+conversationId). Powers the app's 🔗 Email threads links. Reuses the `Microsoft OAuth2 — Cubework Outlook` cred + `OUTLOOK_USER_ID` env. Synchronous (Respond to Webhook node). Isolated from the scanner. Import + activate it (NOT cron — it's request-driven).
-    resolve_thread.nodes.js    ← clean paste-ready copy of workflow 11's two Code nodes (Build search / Pick newest hit)
-    8_prospect_finder.json     ← Prospect Finder: nightly (4am) workflow that imports/scores leasing prospect leads (Claude scoring) → Firestore. See its README.
-    8_prospect_finder.README.md ← docs for the prospect-finder workflow
-    prospect_score.node.js     ← clean paste-ready copy of the prospect-scoring Code node (workflow 8 prospect-finder)
-    templates.json             ← email-sequencer message templates (used by the 5-touch sequencer, currently OFF)
+    7_pricing_sync.json        ← Pricing Sync: Sales_US master price sheet (Graph workbook API) → pricing/current. Daily 6am.
+    10_renewals_sync.json      ← Renewals Sync: Google renewal tracker (CSV export, no creds) → renewals/current. Daily 7:30am.
+    parse_renewals.node.js     ← paste-ready copy of the "Parse renewals" node code (workflow 10)
+    11_resolve_thread.json     ← Resolve Thread Link: webhook (path `resolve-thread`), {subject,contact} → newest message `webLink`. Powers 🔗 Email threads. Request-driven (activate, NOT cron).
+    resolve_thread.nodes.js    ← paste-ready copy of workflow 11's two Code nodes
+    -- outreach pipeline (Apollo) --
+    12_apollo_ingestion.json   ← Apollo Ingestion: people-search → reveal email+phone → score+draft → outreach/{id}. (+ .README.md, apollo_ingestion.nodes.js)
+    13_research_prospect.json  ← Research & Personalize: webhook `research-prospect`, live web research + personalized draft → outreach/{id}. Must be Active. (+ .README.md, research_prospect.nodes.js)
+    14_apollo_org_discovery.json ← Apollo Org Discovery (reusable last-mile / fashion-district org search → paste-ready array for wf12). Reads only. (+ .README.md, .nodes.js, apollo_org_discovery.reusable.nodes.js, socal-last-mile.discovery-config.js)
+    15_apollo_phone_callback.json ← Apollo Phone Callback: webhook `apollo-phone-callback`, Apollo pushes phones → outreach/{slug}. Keep ACTIVE. (LIVE phone path)
+    16a_apollo_phone_reveal.json ← Apollo Phone Reveal: requests phone reveals + writes apollo_phone_map bridge. (LIVE phone path)
+    phone_reveal.nodes.js      ← paste-ready Code-node copies for the phone-reveal flow
+    8_prospect_finder.json     ← Prospect Finder: nightly (4am) import/score leads (Claude scoring) → Firestore. (+ .README.md, prospect_score.node.js)
+    -- email sequencer (currently OFF) --
+    1_queue_checker.json · 2_send_trigger.json · 3_reply_detector.json · templates.json
     SETUP.md
-  location_blueprints_sp/      ← per-location Site Plan tab CSV exports (one subfolder per location), used to BUILD & verify floorplan parser profiles. Not read at runtime — the sync reads the live tabs via Graph; these CSVs are the profile-dev fixtures.
+  outreach/                    ← outreach-campaign working files (CSVs, plans, cadence docs). Source/working artifacts, not read at runtime by the app.
+    christine-data-analysis.html ← analysis of Christine's importer workbook (prospect source)
+    ca-core-fit-batch1.csv · ca-distributors-trading-batch2.csv · ca-korean-fashion-district-batch3.csv · socal-last-mile-batch4.csv ← prospect batches fed into wf12
+    socal-last-mile-curated.js   ← curated last-mile list
+    household-durables-queue.csv / .xlsx ← household-durables prospect queue
+    outreach-hub.md · 30d-launch-outreach.md · korean-fashion-district-plan.md ← campaign plans/notes
+    outreach-send-cadence-and-templates.md / .html / .pdf ← send cadence + templates (3 formats of one doc)
+  location_blueprints_sp/      ← per-location Site Plan tab CSV + .xlsx exports (one subfolder per location). Floorplan-parser dev fixtures only; NOT read at runtime (and the floorplan feature is abandoned — see below).
 ```
+**Cleanup (Stage 2, done 2026-06-29):** deleted `.writetest.tmp` (0-byte temp), `least-occupied-warehouses-2026-06-22.html` (one-off report), `n8n/16b_apollo_phone_write.json` (dead poll path), and `n8n/14_15_phone_reveal.README.md` (stale — pointed at the never-created `14_apollo_phone_backfill.json`). Still on disk: `n8n/4_availability_sync.json` (redundant reference copy — kept as a backup; delete if you want). `n8n/14_apollo_org_discovery.README.md` is current — keep.
 
 ## Floor plans = LINK to the SharePoint Site Plan (FINAL — decided 2026-06-17)
 **Whole floor-plan feature abandoned in-app.** After trying auto-reconstruction (Graph + `.xlsx` color-region), uploaded images, and a LibreOffice weekly auto-render, Justin's final call: the n8n host can't install LibreOffice, and manual screenshots don't scale to 80+. So the in-app "Floor Plan" section is now **just a link** — `renderFloorplans` reads `availMap[propId].sharepoint_url` (+ `yardi_url`) and renders "📄 Open Site Plan (SharePoint) ↗". No rendering, upload, editor, or n8n. **Cleanup done 2026-06-18:** the dead floorplan artifacts were deleted from the repo — `n8n/8_floorplan_sync.json`, `n8n/9_floorplan_image_render.json`, `n8n/render_siteplan.py`, and the root `floorplan-seed.js` (the in-app machinery `fpUploadPlanImage`/`fpRemovePlanImage`/editor `fpStartEdit…`/`floorplanImages` listener/`FLOORPLAN_SEED` was already gone from `index.html`). The two sections below are kept as the written record of what was tried and why it didn't work — the files they describe no longer exist.
@@ -330,10 +346,45 @@ Manual trigger. Per company: **Apollo People Search** by domain (`mixed_people/a
 ### n8n workflow 13 — Research & Personalize (`n8n/13_research_prospect.json`) — the email agent
 Webhook `research-prospect`, request-driven by the 🔎 button; **must be Active**. OpenAI **`gpt-4o-search-preview`** (`web_search_options:{}`) does live web research INSIDE one call, returns `research_brief` (array) + personalized email, PATCHed onto `outreach/{id}`; the app modal auto-refreshes (`outreachModalDomain` + the listener re-opens it).
 - **The system prompt is the IP.** To tune it, paste the **"Build OpenAI request"** node (from `research_prospect.nodes.js`); only re-import on structural change. Current rules: write like a **logistics operator, not a marketer**; do NOT quote their website/products; open with the **strongest POSITIVE/neutral trigger event** (new DC, funding, hiring, expansion — rank strength) tied to a **specific** operational pain (e.g. East Coast hub → volatile West Coast balancing → overflow headache); **anti-fake-personalization** (if no real specific angle, open with one honest direct line, don't force it); **never reference negative/sensitive news**; pitch flexible month-to-month overflow space + **all-in pricing / total cost of occupancy / no NNN surprises**; **never the word "lease"** → say "no long-term commitments" (sets up the license-agreement convo on a call); no em/en dashes (also hard-stripped in code by `dedash` in "Build Firestore patch", and in wf 12's Build prospect doc); no bulleted lists; ~90–120 words; sign "Best, Justin"; two few-shot gold emails included.
-- Cost ~3–5¢/draft. **Open: switching this node to Claude Sonnet** (Anthropic web-search tool) for sharper writing/judgment — same cost; rebuild the call + parse nodes for the Messages API, prompt carries over verbatim. The model `gpt-4o-search-preview` is a search model and is the weak link on nuanced rule-following (fake personalization, dashes) — Sonnet expected to fix that. Anthropic API key not yet provisioned.
+- **Prompt tightened 2026-06-25** (after a Joneca draft opened "Saw your recent partnership…" about a **2023** deal, recapped products, and used banned phrases). Changes to the "Build OpenAI request" node: (1) **injects today's date** (`new Date()` → `TODAY'S DATE IS …`) so the model can judge recency — the model has no clock, which is why it called a 2-3yr-old event "recent"; (2) **hard RECENCY RULE** — a trigger only counts if dated within 12 months, else treat as NO TRIGGER and use the honest fallback opener, never imply an unverified date; (3) **NO PRODUCT RECAP** (hard) — never list/quote product names/brands/catalog; (4) explicit **email_subject rules** (3-6 words, sentence/lowercase, no title case/colon/company name/"Needs"/"Solutions"); (5) extended banned list (`such situations`, `designed for`, `ramp up production…`, `can become challenging`, `managing West Coast inventory`, `next stage of expansion`, …). The Joneca-style failures map 1:1 to these additions.
+- Cost ~3–5¢/draft. **Current model: `gpt-4o-search-preview`** (live). Switching this node to Claude Sonnet is a **deferred idea** (Sonnet expected to follow the nuanced rules — recency, anti-fake-personalization, no product recap, dashes — better than the search-preview model), **not started**; revisit later. If the model ever errors, the app's 🔎 button now surfaces it (see `researchProspect` `res.ok` handling below).
 
 ### New files
 - `outreach-seed.js` — cumulative CA prospect seed (loaded before the module, like `pricing-seed.js`).
 - `firestore.rules`, `FIRESTORE_SECURITY.md`.
 - `outreach/` — `christine-data-analysis.html` (workbook analysis), `ca-core-fit-batch1.csv`, `ca-distributors-trading-batch2.csv`.
 - `n8n/12_apollo_ingestion.json` (+ `.README.md`, `apollo_ingestion.nodes.js`), `n8n/13_research_prospect.json` (+ `.README.md`, `research_prospect.nodes.js`).
+
+## 2026-06-25 session — phone reveal (use-it-or-lose-it Apollo credits)
+
+**Decision.** Apollo sub is being cancelled, and current usage is tiny (**578 of 9,030 credits** used this cycle, nearly all Enrichment from the n8n pipeline — credit usage is workspace-level, not per-seat). So credits are use-it-or-lose-it. Reversed the old "email → reply → reveal phone" rule: reveal-on-reply spent credits on the *easy* contacts (if they reply you can just ask for the number). The valuable numbers are the **non-repliers'** (for cold-calling, what the Playbook is built for). New plan: **phone-reveal the whole list now + pull phone alongside email on every future batch**, before the sub lapses. At ~260 prospects × 8 credits ≈ 2,080, we're nowhere near the cap, so no tier rationing.
+
+**Apollo phone mechanics.** `people/bulk_match` reveals **email synchronously** but **phone asynchronously**: set `reveal_phone_number=true` + a mandatory `webhook_url` (query params), and Apollo POSTs the numbers to that webhook minutes later. Phone = **8 credits** each. Webhook payload: `{ people:[ { id, phone_numbers:[ { sanitized_number, raw_number, type_cd, status_cd, position } ] } ] }`.
+
+### Phone reveal — LIVE path is 16a → (Apollo push) → 15 (renumbered 2026-06-26)
+**Proven working — 120 numbers landed via workflow 15 on 2026-06-26.** Reveal is a request-now / receive-later pair bridged by the `apollo_phone_map` collection:
+
+- **`n8n/16a_apollo_phone_reveal.json`** — "CW — 16a. Apollo Phone Reveal" (manual). Lists `outreach` (Firestore REST, field-masked) → keeps prospects needing a phone (skips invalid, already-has-phone, and no-email-AND-no-linkedin) → `splitInBatches` 1 → `bulk_match` with `reveal_phone_number=true`&`webhook_url` (8 cr each) → extracts the Apollo person id → writes the `apollo_phone_map/{personId}={slug}` bridge and marks the outreach doc requested. It does NOT receive numbers — Apollo pushes those to 15.
+- **`n8n/15_apollo_phone_callback.json`** — "CW — 15. Apollo Phone Callback" — **must stay ACTIVE/published**. Webhook `apollo-phone-callback` (path → `https://ailinker.item.com/webhook/apollo-phone-callback`, **server-to-server from Apollo, NOT via the Cloudflare CORS worker**). Parses `people[].phone_numbers` (tolerant of wrapping), looks up `apollo_phone_map/{id}` → slug, PATCHes `outreach/{slug}` phone fields (updateMask, so nothing else is touched). Shared by 16a and 12. **Requires HTTPS + public reachability + active workflow** (Apollo's webhook rules). Idempotent (Apollo may retry).
+
+**DEAD — `16b_apollo_phone_write.json` (poll-based) does not work and is being removed.** Polling Apollo's `webhook_result` endpoint returns **404 for bulk reveals** — there is no pull path; the async push to 15 is the only way numbers land. Do not document or revive 16b as an alternative.
+
+**Two hard-won gotchas (do not repeat):**
+1. **Apollo's `request_id` is a 64-bit int** — `JSON.parse` rounds it and you lose the correlation. We sidestep it entirely by matching on the **person id** in the push, never the request id.
+2. **n8n Code nodes default to "run once for all items,"** which silently collapses a 50-item batch down to 1. Set them to run per-item where the batch must fan out.
+
+**`apollo_phone_map/{apolloPersonId}` = `{ slug, email, mapped_at }`** — the bridge between the sync reveal and the async push: 16a saves id→slug at request time; 15 looks it up by the same person id when the push arrives.
+
+**`outreach/{id}` phone fields** (written by 15): `phone` (best number, sanitized — prefers mobile, then valid, then position 0), `phone_type`, `phone_status`, `phone_all` (all numbers comma-joined), `phone_revealed_at`. The Outreach tab's existing `phone` column fills in automatically.
+
+### Workflow 12 change — phone now ON for future batches
+`Pick best contacts` enrichBody dropped the inline reveal flags (now `{details}` only); the reveal node sends `reveal_personal_emails=true`&`reveal_phone_number=true`&`webhook_url` as **query params**; a new **Save phone map** node (after Create prospect) writes `apollo_phone_map/{personId}={slug}` so workflow 15 attaches the async phone. New per-contact cost ≈ **9 credits** (1 email + 8 phone). The reveal node's display name still reads "(1 credit)" — kept to avoid breaking the `$('Apollo reveal email (1 credit)')` references in downstream Code nodes; it now costs ~9.
+
+### n8n workflow 14 — Apollo Org Discovery (`n8n/14_apollo_org_discovery.json`)
+Slot 14 is now **Org Discovery**, not phone backfill. "CW — 14. Apollo Org Discovery (reusable: last-mile / fashion-district)" — manual, reusable org-search head for verticals that can't be sourced from Christine's importer workbook (e.g. the LA Korean Fashion District's ~1,000 small private jobbers). Apollo `mixed_companies/search` by city/keyword/headcount → post-filters to district ZIPs in code (Apollo has no zip/radius param) → outputs a paste-ready company array to drop into workflow 12. **Reads orgs, writes nothing on its own.** Flags likely-Korean-owned orgs (`korean_likely`) by romanized-surname hints rather than dropping English-brand jobbers. Config node toggles `VERTICAL` (`lastmile` / `fashion_district`) and `pages`. Companions: `n8n/14_apollo_org_discovery.nodes.js`, `n8n/apollo_org_discovery.reusable.nodes.js`, `n8n/socal-last-mile.discovery-config.js`, seed `outreach/ca-korean-fashion-district-batch3.csv`. See `n8n/14_apollo_org_discovery.README.md`.
+
+### New / changed files (2026-06-25 → 2026-06-26)
+- `n8n/16a_apollo_phone_reveal.json` (live), `n8n/15_apollo_phone_callback.json` (live, keep active), `n8n/phone_reveal.nodes.js`.
+- `n8n/14_apollo_org_discovery.json` (+ `.README.md`, `.nodes.js`), `n8n/apollo_org_discovery.reusable.nodes.js`, `n8n/socal-last-mile.discovery-config.js`.
+- Updated: `n8n/12_apollo_ingestion.json` (phone reveal on).
+- **To delete (stale/dead):** `n8n/16b_apollo_phone_write.json` (polling 404s), `n8n/14_15_phone_reveal.README.md` (points at the never-created `14_apollo_phone_backfill.json`).

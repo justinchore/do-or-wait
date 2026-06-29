@@ -4,7 +4,9 @@
 
 ## What it does
 
-Given a company, OpenAI's **`gpt-4o-search-preview`** searches the web *inside the API call*, then writes (1) a **research brief** (recent news, what they sell, products, fit signals) and (2) a **personalized cold email** that references real facts about that company. Both are written back onto the Firestore `outreach/{id}` doc, and the app's Outreach modal refreshes to show them. No Claude, no separate search service — just your OpenAI key.
+Given a company, OpenAI's **`gpt-4o-search-preview`** searches the web *inside the API call*, then writes (1) a **research brief** (recent news, what they sell, fit signals) and (2) a **personalized cold email** that references real facts about that company. Both are written back onto the Firestore `outreach/{id}` doc, and the app's Outreach modal refreshes to show them. No Claude, no separate search service — just your OpenAI key.
+
+**Prompt rules (tightened 2026-06-25 — the "Build OpenAI request" node):** the system prompt **injects today's date** (the model has no clock) and enforces a **hard recency rule** (a trigger only counts if dated within 12 months, else use an honest fallback opener — no implying an unverified date), **no product recap** (never list/quote product names/brands), explicit **email_subject rules** (3–6 words, sentence/lowercase, no title case/colon/company name), and an extended **banned-phrase** list. Voice = logistics operator, not marketer. See CLAUDE.md → workflow 13 for the full rule set. *(Switching this node to Claude Sonnet is a deferred idea, not started — still on `gpt-4o-search-preview`.)*
 
 ## Flow
 
@@ -36,7 +38,7 @@ Per click: a small OpenAI **web-search tool fee** + tokens (~1 short search + ~1
 
 ## Voice
 
-The draft currently uses a clean, friendly-direct sales voice. To make it sound like **you**, paste a few of your real sent emails and I'll fold your tone into the system prompt (one-line change in *Build OpenAI request*).
+The draft is written as a **logistics operator, not a marketer** — plain, direct, short sentences, "we", all-in pricing, never the word "lease". The full voice/rule set lives in the `Build OpenAI request` system prompt (and is summarized in CLAUDE.md → workflow 13). To tune tone, edit that prompt; paste real sent emails to fold in more of your voice.
 
 ## Files
 - `13_research_prospect.json` — import this.

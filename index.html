@@ -4423,6 +4423,7 @@ let outreachFilter = 'enriched';   // all | enriched | pending  (default to work
 let outreachIndustry = 'all';
 let outreachSort = 'best';         // best | teu | company
 let outreachModalDomain = null;    // domain of the prospect whose modal is open (for live refresh)
+let outreachVariant = {};          // domain -> selected draft-variant index (Agility/Turnkey/Trigger)
 const expandedOutreach = new Set();
 
 function onOutreachSearch(v){ outreachSearch = (v||'').trim().toLowerCase(); renderOutreach(); }
@@ -4529,9 +4530,27 @@ function _outreachDoc(domain){
 }
 function copyOutreachDraft(domain, e){
   if(e) e.stopPropagation();
+  domain=(domain||'').toLowerCase();
   const d=_outreachDoc(domain);
-  const txt=(d.email_subject?('Subject: '+d.email_subject+'\n\n'):'')+(d.email_body||'');
+  const vl=Array.isArray(d.email_variants)?d.email_variants.filter(v=>v&&(v.subject||v.body)):[];
+  let sub=d.email_subject||'', body=d.email_body||'';
+  if(vl.length){ const i=Math.min(Math.max(outreachVariant[domain]||0,0),vl.length-1); sub=vl[i].subject||''; body=vl[i].body||''; }
+  const txt=(sub?('Subject: '+sub+'\n\n'):'')+(body||'');
   if(navigator.clipboard) navigator.clipboard.writeText(txt);
+}
+// Variant picker: switch the shown draft style (re-renders the modal).
+function setOutreachVariant(domain, i, e){ if(e) e.stopPropagation(); domain=(domain||'').toLowerCase(); outreachVariant[domain]=i; if(outreachModalDomain) openOutreachModal(outreachModalDomain); }
+// Make the selected variant the active email (what Open-in-email / Copy / sending uses).
+async function useOutreachVariant(id, domain, i, e){
+  if(e) e.stopPropagation();
+  domain=(domain||'').toLowerCase();
+  const d=_outreachDoc(domain);
+  const docId = id || d.id; if(!docId) return;
+  const vl=Array.isArray(d.email_variants)?d.email_variants.filter(v=>v&&(v.subject||v.body)):[];
+  const v=vl[i]; if(!v) return;
+  outreachVariant[domain]=i;
+  try { await setDoc(doc(db,'outreach',docId), { email_subject:v.subject||'', email_body:v.body||'' }, { merge:true }); } catch(err){ console.warn('use variant', err); }
+  // the outreach listener re-opens the modal on write, so the ✓ active state refreshes
 }
 function emailStatusBadge(s){
   s=(s||'').toLowerCase();
@@ -4611,13 +4630,31 @@ function openOutreachModal(domain){
     fr('Company LinkedIn', d.org_linkedin?`<a href="${esc(d.org_linkedin)}" target="_blank" rel="noopener" style="${LINK}">Company page ↗</a>`:''),
     fr('Nearest Cubework', near?esc(near):'')
   ].join('');
-  const draft=(d.email_subject||d.email_body)?`
-      <div style="margin-top:4px;font-size:13px;"><div style="color:var(--text2);">Subject</div>
-      <div style="font-weight:600;margin-bottom:6px;">${esc(d.email_subject||'')}</div>
-      <div style="white-space:pre-wrap;line-height:1.55;border-left:3px solid #38D430;padding-left:12px;">${esc(d.email_body||'')}</div>
-      <div style="margin-top:10px;display:flex;gap:8px;">
-        ${d.email?`<a href="mailto:${esc(d.email)}?subject=${encodeURIComponent(d.email_subject||'')}&body=${encodeURIComponent(d.email_body||'')}" style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;${LINK}">✉️ Open in email</a>`:''}
+  const VARLABEL={agility:'Agility',turnkey:'Turnkey / CapEx',trigger:'Trigger-led','default':'Draft'};
+  const vlist=Array.isArray(d.email_variants)?d.email_variants.filter(v=>v&&(v.subject||v.body)):[];
+  const vi=vlist.length?Math.min(Math.max(outreachVariant[domain]||0,0),vlist.length-1):0;
+  const av=vlist.length?vlist[vi]:{subject:d.email_subject||'',body:d.email_body||''};
+  const isActiveVar=(av.subject===(d.email_subject||'')&&av.body===(d.email_body||''));
+  const conf=(d.draft_confidence!=null&&d.draft_confidence!=='')?Number(d.draft_confidence):null;
+  const confC=conf==null?'':(conf>=70?'background:#dcfce7;color:#166534;':conf>=40?'background:#fef3c7;color:#92400e;':'background:#fee2e2;color:#991b1b;');
+  const FITC={High:'background:#dcfce7;color:#166534;',Medium:'background:#fef3c7;color:#92400e;',Mixed:'background:#ffedd5;color:#9a3412;',Low:'background:#f3f4f6;color:#6b7280;'};
+  const dbadges=[
+    d.prospect_fit?`<span title="MTM fit" style="font-size:11px;border-radius:10px;padding:2px 9px;${FITC[d.prospect_fit]||''}">${esc(d.prospect_fit)} fit</span>`:'',
+    conf!=null?`<span title="${esc(d.confidence_reason||'')}" style="font-size:11px;border-radius:10px;padding:2px 9px;${confC}">Confidence ${conf}</span>`:'',
+    d.prospect_group?`<span style="font-size:11px;color:var(--text2);align-self:center;">${esc(d.prospect_group)}</span>`:''
+  ].filter(Boolean).join(' ');
+  const vtabs=vlist.length>1?`<div style="display:flex;gap:6px;margin:8px 0;flex-wrap:wrap;">${vlist.map((v,i)=>`<button onclick="setOutreachVariant('${domain}',${i},event)" style="font-size:11px;padding:4px 10px;border-radius:8px;cursor:pointer;border:1px solid ${i===vi?'#38D430':'var(--border)'};background:${i===vi?'#38D430':'var(--surface)'};color:${i===vi?'#fff':'var(--text)'};">${esc(VARLABEL[(v.style||'').toLowerCase()]||v.style||('V'+(i+1)))}</button>`).join('')}</div>`:'';
+  const useBtn=(vlist.length>1)?(isActiveVar?`<span style="font-size:11px;color:#166534;align-self:center;">✓ active version</span>`:`<button onclick="useOutreachVariant('${esc(d.id||'')}','${domain}',${vi},event)" style="font-size:12px;padding:6px 12px;border:1px solid #38D430;border-radius:8px;background:#38D430;color:#fff;cursor:pointer;">★ Use this version</button>`):'';
+  const draft=(vlist.length||d.email_subject||d.email_body)?`
+      ${dbadges?`<div style="display:flex;gap:6px;align-items:center;margin:2px 0;flex-wrap:wrap;">${dbadges}</div>`:''}
+      ${vtabs}
+      <div style="margin-top:2px;font-size:13px;"><div style="color:var(--text2);">Subject</div>
+      <div style="font-weight:600;margin-bottom:6px;">${esc(av.subject||'')}</div>
+      <div style="white-space:pre-wrap;line-height:1.55;border-left:3px solid #38D430;padding-left:12px;">${esc(av.body||'')}</div>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+        ${d.email?`<a href="mailto:${esc(d.email)}?subject=${encodeURIComponent(av.subject||'')}&body=${encodeURIComponent(av.body||'')}" style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;${LINK}">✉️ Open in email</a>`:''}
         <button onclick="copyOutreachDraft('${domain}',event)" style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);cursor:pointer;">📋 Copy</button>
+        ${useBtn}
       </div></div>`:'<div style="color:var(--text2);font-size:13px;margin-top:4px;">Not pulled from Apollo yet — it’ll fill in when the workflow reaches this company.</div>';
   const statusBlock = enriched ? `<div style="margin-top:16px;display:flex;align-items:center;gap:10px;">
       <span style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);">Status</span>
@@ -4665,20 +4702,39 @@ function exportOutreachJson(domain, e){
 // Trigger the n8n research agent (workflow 13). It writes the brief + new draft back to Firestore;
 // the outreach listener then refreshes this modal automatically.
 async function researchProspect(domain, e){
+  e = e || (typeof event !== 'undefined' ? event : null);
   if(e) e.stopPropagation();
   domain=(domain||'').toLowerCase();
   const d=_outreachDoc(domain);
   const seed=(window.OUTREACH_SEED||[]).find(s=>(s.domain||'').toLowerCase()===domain)||{};
   const id = d.id || ('ap-' + domain.replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,''));
-  const btn = event && event.target; if(btn){ btn.disabled=true; btn.textContent='🔎 Researching…'; }
+  const btn = e && e.target;
+  const reset = () => { if(btn){ btn.disabled=false; btn.textContent = d.research_brief ? '🔎 Re-research' : '🔎 Research & draft'; } };
+  if(btn){ btn.disabled=true; btn.textContent='🔎 Researching…'; }
   try {
-    await fetch(RESEARCH_WEBHOOK, { method:'POST', headers:{'Content-Type':'application/json'},
+    const res = await fetch(RESEARCH_WEBHOOK, { method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ id, company:d.company||seed.company||domain, domain,
         industry:d.industry||seed.industry||'', location:d.person_loc||[seed.city,seed.state].filter(Boolean).join(', ') }) });
-    // success → n8n writes to Firestore → onSnapshot re-renders this modal with the brief + new draft
+    const text = await res.text().catch(()=> '');
+    if(!res.ok){
+      // fetch only throws on a network error, so a 404 (workflow inactive) or 500 (OpenAI/model
+      // error) would otherwise fail SILENTLY and leave the button stuck on "Researching…".
+      console.error('[research-prospect]', res.status, text);
+      reset();
+      alert('Research failed (HTTP ' + res.status + ').\n' +
+        (res.status === 404
+          ? 'The research-prospect webhook isn’t reachable — is n8n workflow 13 imported and Active?'
+          : 'Workflow 13 errored (often the OpenAI node / model). Check its Executions log in n8n.') +
+        (text ? '\n\n' + text.slice(0, 300) : ''));
+      return;
+    }
+    // Workflow 13 responds only AFTER the Firestore write, so on success the new draft is already
+    // saved and the outreach listener re-renders this modal momentarily. Reset as a fallback.
+    reset();
   } catch(err){
-    if(btn){ btn.disabled=false; btn.textContent='🔎 Research & draft'; }
-    alert('Research request failed — check that n8n workflow 13 is active.');
+    console.error('researchProspect failed:', err);
+    reset();
+    alert('Research request couldn’t be sent — network error, or the webhook is unreachable.');
   }
 }
 function outreachModalBgClick(e){ if(e.target && e.target.id==='outreach-modal-overlay') closeOutreachModal(); }
@@ -4908,6 +4964,8 @@ window.openOutreachModal   = openOutreachModal;
 window.closeOutreachModal  = closeOutreachModal;
 window.outreachModalBgClick= outreachModalBgClick;
 window.saveOutreachStatus  = saveOutreachStatus;
+window.setOutreachVariant  = setOutreachVariant;
+window.useOutreachVariant  = useOutreachVariant;
 window.researchProspect    = researchProspect;
 window.markOutreachInvalid = markOutreachInvalid;
 window.exportOutreachJson  = exportOutreachJson;

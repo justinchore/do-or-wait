@@ -1,0 +1,323 @@
+{
+  "name": "CW — 16a. Apollo Phone Reveal (request phones; Apollo pushes results to wf 15)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "59cd4a2b-8919-4c4d-ab1c-1a9013e3bfa2",
+      "name": "Run / Test",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2112,
+        2448
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/outreach",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "pageSize",
+              "value": "300"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5f736da8-f950-4000-a6a5-238d14b7f197",
+      "name": "List outreach",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1904,
+        2448
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "7IVvQuErxEJPoaMY",
+          "name": "Firebase_SDK_do_or_wait"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// CHUNK: start 3 to test. 0 = all. Use ~50 for safe chunks on the full run.\n// Skip: invalid, already has phone, already requested (phone_reveal_requested), no email/linkedin.\nconst CHUNK = 50;\nconst docs = ($json.documents) || [];\nconst out = [];\nfor (const d of docs) {\n  const f = d.fields || {};\n  const S = k => (f[k] && f[k].stringValue != null) ? f[k].stringValue : '';\n  const B = k => !!(f[k] && f[k].booleanValue);\n  const slug = (d.name || '').split('/').pop();\n  if (!slug) continue;\n  if (f.invalid && f.invalid.booleanValue) continue;\n  if (S('phone')) continue;\n  if (B('phone_reveal_requested')) continue;\n  const email = S('email'); const linkedin = S('linkedin');\n  if (!email && !linkedin) continue;\n  out.push({ json: { slug, email, linkedin, name: S('first_name'), domain: S('domain') } });\n}\nreturn CHUNK ? out.slice(0, CHUNK) : out;"
+      },
+      "id": "ea8c04d5-8158-4502-a15b-35b3644ff891",
+      "name": "Parse targets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1712,
+        2448
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Run for ALL items: build one reveal body per target (was collapsing to 1).\nconst out = [];\nfor (const it of $input.all()) {\n  const t = it.json;\n  let detail;\n  if (t.email) detail = { email: t.email };\n  else if (t.linkedin) detail = { linkedin_url: t.linkedin };\n  else { const p = String(t.name || '').trim().split(/\\s+/); detail = { first_name: p[0] || '', last_name: p.slice(1).join(' ') || '', domain: t.domain }; }\n  out.push({ json: { slug: t.slug, reqBody: { details: [ detail ] } } });\n}\nreturn out;"
+      },
+      "id": "0f5cc95f-eed3-4314-a89d-d5d0ac29f82f",
+      "name": "Build reveal body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1504,
+        2448
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/people/bulk_match",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "reveal_phone_number",
+              "value": "true"
+            },
+            {
+              "name": "reveal_personal_emails",
+              "value": "false"
+            },
+            {
+              "name": "webhook_url",
+              "value": "https://ailinker.item.com/webhook/apollo-phone-callback"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.reqBody) }}",
+        "options": {}
+      },
+      "id": "e6f80257-bbb7-4cb7-bc22-3cc852b1d0dd",
+      "name": "Apollo reveal phone (8 cr)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1312,
+        2448
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "kayDczBFFL4YuIDB",
+          "name": "Apollo_Professional"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Run for ALL items: one output per reveal (was collapsing 50 -> 1).\n// Apollo's person id (matches[0].id) is a normal hex string, no precision issue.\nconst reveals = $('Build reveal body').all();\nconst items = $input.all();\nconst out = [];\nfor (let i = 0; i < items.length; i++) {\n  const r = items[i].json || {};\n  const arr = r.matches || r.people || [];\n  const pid = (arr[0] && arr[0].id) ? String(arr[0].id) : '';\n  const slug = (reveals[i] && reveals[i].json && reveals[i].json.slug) || '';\n  const now = new Date().toISOString();\n  out.push({ json: { slug, personId: pid, ok: !!pid, mapBody: { fields: { slug: { stringValue: slug }, created_at: { timestampValue: now } } }, markBody: { fields: { phone_reveal_requested: { booleanValue: true } } } } });\n}\nreturn out;"
+      },
+      "id": "0ff02873-26b2-4bec-a57b-fe6800938549",
+      "name": "Extract person id",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1104,
+        2448
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "rk",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "2d64239a-0e4a-4d08-83b3-103651949467",
+      "name": "Got person id?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -912,
+        2448
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/apollo_phone_map/{{ $json.personId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.mapBody) }}",
+        "options": {}
+      },
+      "id": "de42a6fc-6b3e-4ddc-9b3a-fe854d939c1a",
+      "name": "Write id->slug map",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -704,
+        2384
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "7IVvQuErxEJPoaMY",
+          "name": "Firebase_SDK_do_or_wait"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/outreach/{{ $('Extract person id').item.json.slug }}?updateMask.fieldPaths=phone_reveal_requested",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Extract person id').item.json.markBody) }}",
+        "options": {}
+      },
+      "id": "6db5ddb6-06b7-45a1-88a4-b53550696207",
+      "name": "Mark outreach requested",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -512,
+        2384
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "7IVvQuErxEJPoaMY",
+          "name": "Firebase_SDK_do_or_wait"
+        }
+      },
+      "continueOnFail": true
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Run / Test": {
+      "main": [
+        [
+          {
+            "node": "List outreach",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List outreach": {
+      "main": [
+        [
+          {
+            "node": "Parse targets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse targets": {
+      "main": [
+        [
+          {
+            "node": "Build reveal body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build reveal body": {
+      "main": [
+        [
+          {
+            "node": "Apollo reveal phone (8 cr)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apollo reveal phone (8 cr)": {
+      "main": [
+        [
+          {
+            "node": "Extract person id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract person id": {
+      "main": [
+        [
+          {
+            "node": "Got person id?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Got person id?": {
+      "main": [
+        [
+          {
+            "node": "Write id->slug map",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write id->slug map": {
+      "main": [
+        [
+          {
+            "node": "Mark outreach requested",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "cde931ab-e005-47a4-bf0a-ba7a1a3ef03d",
+  "meta": {
+    "instanceId": "576f1552f658e6ccbe293a5c310c12c03fc3f516211957ae27ecb76646f5be19"
+  },
+  "id": "FIYU3Sl31PIb6Jmh",
+  "tags": []
+}

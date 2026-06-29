@@ -5,8 +5,12 @@ the **do-or-wait** Firestore database directly. Because the app listens with
 `onSnapshot`, anything Claude writes here appears in the app **live** — no refresh.
 
 It runs as a local process on **your** machine (so it can reach Firestore; sandboxes
-can't), and needs no credentials beyond the app's public web API key, since this
-project's Firestore rules are open.
+can't). Note: the project's Firestore rules were **locked down on 2026-06-24**
+(read/write limited to the 3-email allowlist), so the earlier "rules are open"
+assumption no longer holds. The live connector (installed desktop extension) signs in
+with an allowlisted **email/password** account, getting an ID token that passes the
+locked rules. The web-API-key-only calls in this repo's `server.js` are the older
+approach and lag the deployed build.
 
 ## What Claude can do once it's connected
 

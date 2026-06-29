@@ -1,0 +1,60 @@
+{
+  "name": "CW — 15. Apollo Phone Callback (Apollo pushes phones -> write to Outreach)",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "apollo-phone-callback", "responseMode": "onReceived", "responseData": "noData", "options": {} },
+      "id": "c0", "name": "Apollo phone callback", "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [200, 300], "webhookId": "apollo-phone-callback"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Apollo POSTs: { people:[ { id, phone_numbers:[ { sanitized_number, raw_number, type_cd, status_cd, position } ] } ] }\nconst b = ($json && $json.body) ? $json.body : $json;\nlet people = [];\nif (Array.isArray(b)) people = b;\nelse if (Array.isArray(b.people)) people = b.people;\nelse if (Array.isArray(b.matches)) people = b.matches;\nelse if (Array.isArray(b.contacts)) people = b.contacts;\nelse if (b.person) people = [b.person];\nelse if (b.id || b.phone_numbers) people = [b];\nfunction pick(p){ const a=p.phone_numbers||p.phones||[]; if(Array.isArray(a)&&a.length){ const sc=x=>{const t=String(x.type_cd||x.type||'').toLowerCase();let s=0;if(/mobile|cell/.test(t))s+=100;if(String(x.status_cd||'').toLowerCase().includes('valid'))s+=10;s-=Number(x.position)||0;return s;}; const best=a.slice().sort((x,y)=>sc(y)-sc(x))[0]; const all=a.map(x=>x.sanitized_number||x.raw_number||'').filter(Boolean).join(', '); return {num:best.sanitized_number||best.raw_number||best.number||'',type:best.type_cd||best.type||'',status:best.status_cd||best.status||'',all}; } return {num:p.sanitized_phone||p.phone_number||p.phone||'',type:'',status:'',all:''}; }\nconst out=[];\nfor(const p of people){ const id=p.id||p.person_id||''; const ph=pick(p); if(!id||!ph.num) continue; out.push({json:{apollo_id:String(id),phone:ph.num,phone_type:ph.type,phone_status:ph.status,phone_all:ph.all}}); }\nreturn out;"
+      },
+      "id": "c1", "name": "Parse callback", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/apollo_phone_map/{{ $json.apollo_id }}",
+        "authentication": "predefinedCredentialType", "nodeCredentialType": "googleApi", "options": {}
+      },
+      "id": "c2", "name": "Get id->slug map", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [640, 300],
+      "continueOnFail": true,
+      "credentials": { "googleApi": { "id": "REPLACE_WITH_CREDENTIAL_ID", "name": "Google Service Account — do-or-wait" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const ph = $('Parse callback').item.json;\nconst mapRes = $json || {};\nconst slug = (mapRes.fields && mapRes.fields.slug && mapRes.fields.slug.stringValue) || '';\nconst S = v => ({ stringValue: (v == null ? '' : String(v)) });\nconst fsBody = { fields: { phone: S(ph.phone), phone_type: S(ph.phone_type), phone_status: S(ph.phone_status), phone_all: S(ph.phone_all), phone_revealed_at: { timestampValue: new Date().toISOString() } } };\nreturn [{ json: { slug, fsBody, ok: !!(slug && ph.phone) } }];"
+      },
+      "id": "c3", "name": "Build patch", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [860, 300]
+    },
+    {
+      "parameters": {
+        "conditions": { "options": { "caseSensitive": true, "typeValidation": "loose", "version": 2 }, "combinator": "and",
+          "conditions": [ { "id": "ck", "leftValue": "={{ $json.ok }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true", "singleValue": true } } ] }
+      },
+      "id": "c4", "name": "Have slug + phone?", "type": "n8n-nodes-base.if", "typeVersion": 2.2, "position": [1080, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/outreach/{{ $json.slug }}?updateMask.fieldPaths=phone&updateMask.fieldPaths=phone_type&updateMask.fieldPaths=phone_status&updateMask.fieldPaths=phone_all&updateMask.fieldPaths=phone_revealed_at",
+        "authentication": "predefinedCredentialType", "nodeCredentialType": "googleApi",
+        "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify($json.fsBody) }}",
+        "options": {}
+      },
+      "id": "c5", "name": "Write phone to Outreach", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1300, 240],
+      "continueOnFail": true,
+      "credentials": { "googleApi": { "id": "REPLACE_WITH_CREDENTIAL_ID", "name": "Google Service Account — do-or-wait" } }
+    }
+  ],
+  "connections": {
+    "Apollo phone callback": { "main": [[{ "node": "Parse callback", "type": "main", "index": 0 }]] },
+    "Parse callback": { "main": [[{ "node": "Get id->slug map", "type": "main", "index": 0 }]] },
+    "Get id->slug map": { "main": [[{ "node": "Build patch", "type": "main", "index": 0 }]] },
+    "Build patch": { "main": [[{ "node": "Have slug + phone?", "type": "main", "index": 0 }]] },
+    "Have slug + phone?": { "main": [[{ "node": "Write phone to Outreach", "type": "main", "index": 0 }], []] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "cw-workflow-015b"
+}

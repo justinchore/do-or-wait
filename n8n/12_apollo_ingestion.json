@@ -84,7 +84,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Keep the 1-2 best warehousing decision-makers. ALWAYS returns one item (picked:[] if none)\n// so the batch loop never breaks; an IF node downstream skips no-contact companies.\nconst ctx = $('Build people search').item.json;\nconst people = ($json.people || $json.contacts || []);\nconst PRI = ['owner','president','ceo','coo','chief operating','operations','supply chain','logistics','distribution','warehouse','fulfillment'];\nconst rank = p => { const t=(p.title||'').toLowerCase(); const i=PRI.findIndex(k=>t.includes(k)); return i<0?99:i; };\nconst picked = people.filter(p=>p&&(p.id||p.first_name)).sort((a,b)=>rank(a)-rank(b)).slice(0,2)\n  .map(p=>({ id:p.id, first_name:p.first_name, last_name:p.last_name, title:p.title, linkedin_url:p.linkedin_url, seniority:p.seniority }));\nconst enrichBody = picked.length ? { reveal_personal_emails:true, reveal_phone_number:false,\n  details: picked.map(p => p.id ? { id:p.id } : { first_name:p.first_name, last_name:p.last_name, domain:ctx.domain }) } : null;\nreturn [{ json: { company:ctx.company, domain:ctx.domain, city:ctx.city, state:ctx.state, teu:ctx.teu, industry:ctx.industry, picked, enrichBody } }];"
+        "jsCode": "// Keep the 1-2 best warehousing decision-makers. ALWAYS returns one item (picked:[] if none)\n// so the batch loop never breaks; an IF node downstream skips no-contact companies.\nconst ctx = $('Build people search').item.json;\nconst people = ($json.people || $json.contacts || []);\nconst PRI = ['owner','president','ceo','coo','chief operating','operations','supply chain','logistics','distribution','warehouse','fulfillment'];\nconst rank = p => { const t=(p.title||'').toLowerCase(); const i=PRI.findIndex(k=>t.includes(k)); return i<0?99:i; };\nconst picked = people.filter(p=>p&&(p.id||p.first_name)).sort((a,b)=>rank(a)-rank(b)).slice(0,2)\n  .map(p=>({ id:p.id, first_name:p.first_name, last_name:p.last_name, title:p.title, linkedin_url:p.linkedin_url, seniority:p.seniority }));\nconst enrichBody = picked.length ? { details: picked.map(p => p.id ? { id:p.id } : { first_name:p.first_name, last_name:p.last_name, domain:ctx.domain }) } : null;\nreturn [{ json: { company:ctx.company, domain:ctx.domain, city:ctx.city, state:ctx.state, teu:ctx.teu, industry:ctx.industry, picked, enrichBody } }];"
       },
       "id": "cw-a-005",
       "name": "Pick best contacts",
@@ -102,6 +102,14 @@
         "url": "https://api.apollo.io/api/v1/people/bulk_match",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "reveal_personal_emails", "value": "true" },
+            { "name": "reveal_phone_number", "value": "true" },
+            { "name": "webhook_url", "value": "https://ailinker.item.com/webhook/apollo-phone-callback" }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.enrichBody) }}",
@@ -171,7 +179,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Build the rich Firestore `outreach` doc. NO GATE \u2014 write every qualified company\n// (tier is just a label). Context from 'Pick best contacts'; enrichment from 'Apollo reveal email';\n// OpenAI score on $json. Deterministic id ap-<domain> => re-runs skip (no clobber). Phone empty until reveal-on-reply.\nconst ctx = $('Pick best contacts').item.json;\nconst m   = ($('Apollo reveal email (1 credit)').item.json.matches || [])[0] || {};\nconst org = m.organization || {};\nconst p0  = (ctx.picked && ctx.picked[0]) || {};\nlet parsed = {};\ntry { const t=($json.choices&&$json.choices[0]&&$json.choices[0].message&&$json.choices[0].message.content)||$json.text||'{}';\n  parsed = JSON.parse(t.trim().replace(/^```json/i,'').replace(/```$/,'').trim()); } catch(e){ parsed = {}; }\nconst dedash = s => String(s==null?'':s).replace(/\\s*[\\u2014\\u2013]\\s*/g, ', ').replace(/\\s--\\s/g, ', ');\nconst email = m.email || (m.personal_emails && m.personal_emails[0]) || '';\nconst fullName = m.name || ((m.first_name||p0.first_name||'') + ' ' + (m.last_name||p0.last_name||'')).trim();\nconst title = m.title || p0.title || '';\nconst now = new Date().toISOString();\nconst slug = 'ap-' + ctx.domain.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'');\nconst S = v => ({ stringValue:(v==null?'':String(v)) });\nconst I = v => ({ integerValue:String(Math.round(Number(v)||0)) });\nconst pct = v => (v==null||v===''?'':(Math.round(Number(v)*1000)/10)+'%');\nconst fields = {\n  company:S(ctx.company), domain:S(ctx.domain),\n  first_name:S(fullName), contact:S(title), seniority:S(m.seniority||p0.seniority||''),\n  department:S((m.departments&&m.departments[0])||''), headline:S(m.headline||''), photo:S(m.photo_url||''),\n  email:S(email), email_status:S(m.email_status||''), linkedin:S(m.linkedin_url||p0.linkedin_url||''),\n  person_loc:S([m.city,m.state].filter(Boolean).join(', ')), phone:S(''),\n  industry:S(org.industry||ctx.industry||''), employees:I(org.estimated_num_employees), founded:S(org.founded_year||''),\n  annual_revenue:S(org.annual_revenue_printed||org.annual_revenue||''),\n  total_funding:S(org.total_funding_printed||org.total_funding||''),\n  latest_funding:S([org.latest_funding_stage,org.latest_funding_round_date].filter(Boolean).join(' \\u00b7 ')),\n  growth_6mo:S(pct(org.organization_headcount_six_month_growth)),\n  growth_12mo:S(pct(org.organization_headcount_twelve_month_growth)),\n  growth_24mo:S(pct(org.organization_headcount_twenty_four_month_growth)),\n  num_jobs:I(org.organization_num_jobs||org.num_jobs||0),\n  description:S(String(org.short_description||'').slice(0,600)),\n  org_phone:S(org.phone||org.primary_phone||org.sanitized_phone||''),\n  org_address:S(org.raw_address||[org.street_address,org.city,org.state].filter(Boolean).join(', ')),\n  org_state:S(org.state||ctx.state||''), org_website:S(org.website_url||('https://'+ctx.domain)), org_linkedin:S(org.linkedin_url||''),\n  teu:I(ctx.teu),\n  prospect_tier:S(parsed.tier||''), prospect_score:I(parsed.total!=null?parsed.total:0),\n  why_now:S(parsed.why_now||''), email_subject:S(dedash(parsed.email_subject||'')), email_body:S(dedash(parsed.email_body||'')),\n  status:S(''), prospect_source:S('Apollo'), createdAt:{ timestampValue:now }\n};\nreturn [{ json: { slug, hasEmail:!!email, fsBody:{ fields } } }];"
+        "jsCode": "// Build the rich Firestore `outreach` doc. NO GATE \u2014 write every qualified company\n// (tier is just a label). Context from 'Pick best contacts'; enrichment from 'Apollo reveal email';\n// OpenAI score on $json. Deterministic id ap-<domain> => re-runs skip (no clobber). Phone empty until reveal-on-reply.\nconst ctx = $('Pick best contacts').item.json;\nconst m   = ($('Apollo reveal email (1 credit)').item.json.matches || [])[0] || {};\nconst org = m.organization || {};\nconst p0  = (ctx.picked && ctx.picked[0]) || {};\nlet parsed = {};\ntry { const t=($json.choices&&$json.choices[0]&&$json.choices[0].message&&$json.choices[0].message.content)||$json.text||'{}';\n  parsed = JSON.parse(t.trim().replace(/^```json/i,'').replace(/```$/,'').trim()); } catch(e){ parsed = {}; }\nconst dedash = s => String(s==null?'':s).replace(/\\s*[\\u2014\\u2013]\\s*/g, ', ').replace(/\\s--\\s/g, ', ');\nconst email = m.email || (m.personal_emails && m.personal_emails[0]) || '';\nconst fullName = m.name || ((m.first_name||p0.first_name||'') + ' ' + (m.last_name||p0.last_name||'')).trim();\nconst title = m.title || p0.title || '';\nconst now = new Date().toISOString();\nconst slug = 'ap-' + ctx.domain.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'');\nconst S = v => ({ stringValue:(v==null?'':String(v)) });\nconst I = v => ({ integerValue:String(Math.round(Number(v)||0)) });\nconst pct = v => (v==null||v===''?'':(Math.round(Number(v)*1000)/10)+'%');\nconst fields = {\n  company:S(ctx.company), domain:S(ctx.domain),\n  first_name:S(fullName), contact:S(title), seniority:S(m.seniority||p0.seniority||''),\n  department:S((m.departments&&m.departments[0])||''), headline:S(m.headline||''), photo:S(m.photo_url||''),\n  email:S(email), email_status:S(m.email_status||''), linkedin:S(m.linkedin_url||p0.linkedin_url||''),\n  person_loc:S([m.city,m.state].filter(Boolean).join(', ')), phone:S(''),\n  industry:S(org.industry||ctx.industry||''), employees:I(org.estimated_num_employees), founded:S(org.founded_year||''),\n  annual_revenue:S(org.annual_revenue_printed||org.annual_revenue||''),\n  total_funding:S(org.total_funding_printed||org.total_funding||''),\n  latest_funding:S([org.latest_funding_stage,org.latest_funding_round_date].filter(Boolean).join(' \\u00b7 ')),\n  growth_6mo:S(pct(org.organization_headcount_six_month_growth)),\n  growth_12mo:S(pct(org.organization_headcount_twelve_month_growth)),\n  growth_24mo:S(pct(org.organization_headcount_twenty_four_month_growth)),\n  num_jobs:I(org.organization_num_jobs||org.num_jobs||0),\n  description:S(String(org.short_description||'').slice(0,600)),\n  org_phone:S(org.phone||org.primary_phone||org.sanitized_phone||''),\n  org_address:S(org.raw_address||[org.street_address,org.city,org.state].filter(Boolean).join(', ')),\n  org_state:S(org.state||ctx.state||''), org_website:S(org.website_url||('https://'+ctx.domain)), org_linkedin:S(org.linkedin_url||''),\n  teu:I(ctx.teu),\n  prospect_tier:S(parsed.tier||''), prospect_score:I(parsed.total!=null?parsed.total:0),\n  why_now:S(parsed.why_now||''), email_subject:S(dedash(parsed.email_subject||'')), email_body:S(dedash(parsed.email_body||'')),\n  status:S(''), prospect_source:S('Apollo'), createdAt:{ timestampValue:now }\n};\nconst apollo_id = m.id || '';\nconst mapBody = { fields: { slug:{ stringValue: slug }, mapped_at:{ timestampValue: now } } };\nreturn [{ json: { slug, apollo_id, hasEmail:!!email, fsBody:{ fields }, mapBody } }];"
       },
       "id": "cw-a-010",
       "name": "Build prospect doc",
@@ -206,6 +214,30 @@
         "googleApi": {
           "id": "REPLACE_WITH_CREDENTIAL_ID",
           "name": "Google Service Account \u2014 do-or-wait"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/apollo_phone_map/{{ $('Build prospect doc').item.json.apollo_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Build prospect doc').item.json.mapBody) }}",
+        "options": {}
+      },
+      "id": "cw-a-012",
+      "name": "Save phone map",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2400, 480],
+      "continueOnFail": true,
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Google Service Account — do-or-wait"
         }
       }
     },
@@ -354,6 +386,17 @@
       ]
     },
     "Create prospect in Firestore": {
+      "main": [
+        [
+          {
+            "node": "Save phone map",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save phone map": {
       "main": [
         [
           {
