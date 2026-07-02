@@ -2866,12 +2866,13 @@ function refreshCardEmailLinks(id, coll) {
   links.filter(l => l.url && l.subject && !l.resolving).forEach(l => resolveThreadLink(id, coll, l.id));
 }
 
-// Leads-only auto-refresh: re-checks every lead's already-linked, search-based
-// threads the moment you open the Leads tab. Same resolveThreadLink() call the
-// ↻ button / card-expand refresh use, just fired for the whole tab at once — not
-// a background job, not run for Tasks (leads are the time-sensitive one: a reply
-// can flip the follow-up clock). A 60s cooldown keeps rapid repeat tab-clicks from
-// re-firing the same batch of Graph searches.
+// Tab-open auto-refresh: re-checks every item's already-linked, search-based
+// threads the moment you open the Leads or Tasks tab. Same resolveThreadLink()
+// call the ↻ button / card-expand refresh use, just fired for the whole tab at
+// once. A 60s-per-tab cooldown keeps rapid repeat tab-clicks from re-firing the
+// same batch of Graph searches. (Was Leads-only at first — added to Tasks too
+// once Tasks stopped being the default/auto-loading tab, so opening it is a
+// deliberate click same as Leads, not something that fires on every page load.)
 let _lastLeadsAutoRefresh = 0;
 function refreshAllLeadEmailLinks() {
   const now = Date.now();
@@ -2886,6 +2887,19 @@ function refreshAllLeadEmailLinks() {
   // is the kind of thing that gets throttled, and resolveThreadLink now no longer
   // clobbers a good link on a bad response, but there's no reason to invite it.
   jobs.forEach(([leadId, linkId], i) => setTimeout(() => resolveThreadLink(leadId, 'leads', linkId), i * 250));
+}
+
+let _lastTasksAutoRefresh = 0;
+function refreshAllTaskEmailLinks() {
+  const now = Date.now();
+  if (now - _lastTasksAutoRefresh < 60000) return;
+  _lastTasksAutoRefresh = now;
+  const jobs = [];
+  topics.forEach(topic => {
+    const links = Array.isArray(topic.email_links) ? topic.email_links : [];
+    links.filter(l => l.url && l.subject && !l.resolving).forEach(l => jobs.push([topic.id, l.id]));
+  });
+  jobs.forEach(([topicId, linkId], i) => setTimeout(() => resolveThreadLink(topicId, 'topics', linkId), i * 250));
 }
 
 // Clears the 🆕 flag once you actually open the thread (fires on click, doesn't
@@ -3454,6 +3468,7 @@ function switchTab(tab) {
   if (tab === 'outreach') renderOutreach();
   if (tab === 'playbook') renderPlaybookCards();
   if (tab === 'leads') refreshAllLeadEmailLinks();
+  if (tab === 'tasks') refreshAllTaskEmailLinks();
 }
 
 // ═══════════════════════════════════════════════════════════════
