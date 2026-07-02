@@ -1653,6 +1653,17 @@ function render() {
   document.getElementById('do-badge').textContent   = doActive.length;
   document.getElementById('wait-badge').textContent = waitActive.length;
 
+  // Tab badge — count of tasks still showing the yellow "new mail" highlight
+  // (hasNewMail), so you can tell from the tab bar alone whether anything on this
+  // tab needs a look, without switching in.
+  const newMailTopics = topics.filter(t => !t.archived && hasNewMail(t)).length;
+  const tasksTab = document.querySelector('.tab-btn[data-tab="tasks"]');
+  if (tasksTab) {
+    tasksTab.innerHTML = newMailTopics > 0
+      ? `📋 Tasks <span class="tab-badge">${newMailTopics}</span>`
+      : '📋 Tasks';
+  }
+
   // New topics strip — hidden, topics only appear once they have a DO/WAIT entry
   document.getElementById('new-topics-wrap').style.display = 'none';
 
@@ -2313,12 +2324,15 @@ function renderLeadsSection() {
   // filter buttons
   document.querySelectorAll('.lf-btn').forEach(b => b.classList.toggle('active', b.dataset.stage === leadFilter));
 
-  // Tab badge — show count of pending approvals
-  const pendingCount = leads.filter(l => l.pending_email && !l.archived).length;
+  // Tab badge — count of leads needing a look: a pending email draft to approve,
+  // or the yellow "new mail" highlight (hasNewMail) on a linked thread. Counted
+  // once per lead even if both are true, so the number matches the number of
+  // cards you haven't addressed, not the number of reasons.
+  const needsAttention = leads.filter(l => !l.archived && (l.pending_email || hasNewMail(l))).length;
   const leadsTab = document.querySelector('.tab-btn[data-tab="leads"]');
   if (leadsTab) {
-    leadsTab.innerHTML = pendingCount > 0
-      ? `🎯 Leads <span class="tab-badge">${pendingCount}</span>`
+    leadsTab.innerHTML = needsAttention > 0
+      ? `🎯 Leads <span class="tab-badge">${needsAttention}</span>`
       : '🎯 Leads';
   }
 
