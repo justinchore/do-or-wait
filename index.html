@@ -1795,8 +1795,10 @@ function renderNote(topicId, entryId, note, coll='topics') {
 // ═══════════════════════════════════════════════════════════════
 function toggleCard(id) {
   // Accordion: clicking a card closes any other open one (clicking the open card collapses it).
+  const opening = !expandedIds.has(id);
   if (expandedIds.has(id)) expandedIds.delete(id); else { expandedIds.clear(); expandedIds.add(id); }
   render(); populateAudio();
+  if (opening) refreshCardEmailLinks(id, 'topics');
 }
 
 // Tap the collapsed-card snippet to expand just that line to its full text (and back),
@@ -2832,6 +2834,34 @@ async function resolveThreadLink(id, coll, linkId, ev) {
   await persistItem(item, coll);
 }
 
+// Re-checks a card's already-linked, search-based threads the moment you expand
+// it — same resolveThreadLink() call the ↻ button uses, just auto-fired on open
+// instead of a manual click. Still bounded to THAT one card's threads (usually
+// 0-2), not a sweep across every lead/task, so it stays a handful of Graph
+// searches per expand, not a background job.
+function refreshCardEmailLinks(id, coll) {
+  const item = findItem(id, coll);
+  const links = Array.isArray(item?.email_links) ? item.email_links : [];
+  links.filter(l => l.url && l.subject && !l.resolving).forEach(l => resolveThreadLink(id, coll, l.id));
+}
+
+// Leads-only auto-refresh: re-checks every lead's already-linked, search-based
+// threads the moment you open the Leads tab. Same resolveThreadLink() call the
+// ↻ button / card-expand refresh use, just fired for the whole tab at once — not
+// a background job, not run for Tasks (leads are the time-sensitive one: a reply
+// can flip the follow-up clock). A 60s cooldown keeps rapid repeat tab-clicks from
+// re-firing the same batch of Graph searches.
+let _lastLeadsAutoRefresh = 0;
+function refreshAllLeadEmailLinks() {
+  const now = Date.now();
+  if (now - _lastLeadsAutoRefresh < 60000) return;
+  _lastLeadsAutoRefresh = now;
+  leads.forEach(lead => {
+    const links = Array.isArray(lead.email_links) ? lead.email_links : [];
+    links.filter(l => l.url && l.subject && !l.resolving).forEach(l => resolveThreadLink(lead.id, 'leads', l.id));
+  });
+}
+
 // Clears the 🆕 flag once you actually open the thread (fires on click, doesn't
 // block the outbound navigation). No-op if there's nothing to clear.
 function markThreadSeen(id, coll, linkId) {
@@ -3243,9 +3273,11 @@ async function claudeAddTaskUpdate(opts) {
 
 function toggleLeadCard(id) {
   // Accordion: clicking a card closes any other open one (clicking the open card collapses it).
+  const opening = !expandedLeadIds.has(id);
   if (expandedLeadIds.has(id)) expandedLeadIds.delete(id); else { expandedLeadIds.clear(); expandedLeadIds.add(id); }
   renderLeadsSection();
   populateAudio();
+  if (opening) refreshCardEmailLinks(id, 'leads');
 }
 
 function setLeadFilter(stage) {
@@ -3395,6 +3427,7 @@ function switchTab(tab) {
   if (tab === 'pricing') renderPricing();
   if (tab === 'outreach') renderOutreach();
   if (tab === 'playbook') renderPlaybookCards();
+  if (tab === 'leads') refreshAllLeadEmailLinks();
 }
 
 // ═══════════════════════════════════════════════════════════════
