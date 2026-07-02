@@ -1706,7 +1706,7 @@ function renderCard(topic) {
           ${noteCount ? ` · 🎤 ${noteCount} note${noteCount !== 1 ? 's' : ''}` : ''}
           · last ${fmtDate(last?.createdAt || topic.createdAt)}
         </div>
-        ${emailLinkChips(topic)}
+        ${emailLinkChips(topic, 'topics')}
       </div>
       <span class="chevron">▼</span>
     </div>
@@ -2546,7 +2546,7 @@ function renderLeadCard(lead) {
           ${noteCount ? ` · 🎤 ${noteCount} note${noteCount!==1?'s':''}` : ''}
           · last ${fmtDate(last?.createdAt || lead.createdAt)}
         </div>
-        ${emailLinkChips(lead)}
+        ${emailLinkChips(lead, 'leads')}
         ${quickLog}
       </div>
       <span class="chevron">▼</span>
@@ -2678,15 +2678,15 @@ function fixThreadUrl(u) {
 // click away without expanding. Shows resolved (clickable) threads; if links
 // exist but none are resolved yet, a muted hint. Clicks stop propagation so the
 // card doesn't toggle.
-function emailLinkChips(item) {
+function emailLinkChips(item, coll) {
   const links = Array.isArray(item.email_links) ? item.email_links : [];
   if (!links.length) return '';
   const resolved = links.filter(l => l.url);
   if (!resolved.length) {
     return `<div style="margin-top:4px;font-size:11px;color:var(--text2);">🔗 ${links.length} email thread${links.length > 1 ? 's' : ''}</div>`;
   }
-  const chips = resolved.map(l => `<a href="${esc(fixThreadUrl(l.url))}" target="_blank" rel="noopener" onclick="event.stopPropagation()"
-       title="Open the Outlook thread" style="display:inline-flex;align-items:center;gap:3px;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:#0969da;text-decoration:none;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1px 8px;margin:0 4px 0 0;">📧 ${esc(l.label || l.subject || 'thread')}</a>`).join('');
+  const chips = resolved.map(l => `<a href="${esc(fixThreadUrl(l.url))}" target="_blank" rel="noopener" onclick="event.stopPropagation();markThreadSeen('${item.id}','${coll}','${l.id}')"
+       title="Open the Outlook thread" style="display:inline-flex;align-items:center;gap:3px;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:#0969da;text-decoration:none;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1px 8px;margin:0 4px 0 0;">${l.hasNew ? '🆕 ' : ''}📧 ${esc(l.label || l.subject || 'thread')}</a>`).join('');
   const extra = links.length > resolved.length
     ? `<span style="font-size:11px;color:var(--text2);">+${links.length - resolved.length}</span>` : '';
   return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:3px;margin-top:5px;">${chips}${extra}</div>`;
@@ -2703,10 +2703,11 @@ function renderEmailLinks(item, coll) {
               style="border:none;background:none;cursor:pointer;font-size:13px;color:var(--text2);">✖</button>`;
     let main;
     if (l.url) {                                   // resolved (or legacy pasted) — real working link
-      main = `<a href="${esc(fixThreadUrl(l.url))}" target="_blank" rel="noopener"
-         style="${lblStyle}color:#0969da;text-decoration:none;" title="Open the Outlook thread">📧 ${esc(l.label || l.subject || 'Email thread')} ↗</a>`;
+      const newBadge = l.hasNew ? '<span title="A newer message was found the last time you hit refresh" style="color:#1a7f37;font-weight:700;">🆕 </span>' : '';
+      main = `<a href="${esc(fixThreadUrl(l.url))}" target="_blank" rel="noopener" onclick="markThreadSeen('${item.id}','${coll}','${l.id}')"
+         style="${lblStyle}color:#0969da;text-decoration:none;" title="Open the Outlook thread">${newBadge}📧 ${esc(l.label || l.subject || 'Email thread')} ↗</a>`;
       if (l.subject) {                              // search-based link: can re-check Graph for a newer message
-        main += `<button onclick="resolveThreadLink('${item.id}','${coll}','${l.id}',event)" title="Refresh — re-checks Outlook for the newest message on this thread"
+        main += `<button onclick="resolveThreadLink('${item.id}','${coll}','${l.id}',event)" title="Refresh — re-checks Outlook and flags 🆕 if a newer message than what you last saw turns up"
                 style="border:none;background:none;cursor:pointer;font-size:12px;color:var(--text2);flex-shrink:0;">↻</button>`;
       }
     } else if (l.resolving) {                       // looking the thread up via Graph
@@ -2809,6 +2810,13 @@ async function resolveThreadLink(id, coll, linkId, ev) {
     if (!res.ok) {
       link.url = ''; link.resolveErr = 'offline';        // webhook returned an error/404 (active? imported?)
     } else if (data && data.found && data.webLink) {
+      // Flag 🆕 only when this refresh turns up a message newer than the one we
+      // already had tracked — never on the first-ever resolve (nothing to compare
+      // against yet), so a freshly linked thread doesn't start out flagged.
+      const prevDate = link.lastMsgDate || '';
+      const newDate  = data.date || '';
+      if (prevDate && newDate && new Date(newDate) > new Date(prevDate)) link.hasNew = true;
+      if (newDate) link.lastMsgDate = newDate;
       link.url = data.webLink;
       link.resolveErr = '';
       if (data.conversationId) link.conversationId = data.conversationId;
@@ -2822,6 +2830,17 @@ async function resolveThreadLink(id, coll, linkId, ev) {
   link.resolving = false;
   rerender(coll);
   await persistItem(item, coll);
+}
+
+// Clears the 🆕 flag once you actually open the thread (fires on click, doesn't
+// block the outbound navigation). No-op if there's nothing to clear.
+function markThreadSeen(id, coll, linkId) {
+  const item = findItem(id, coll);
+  const link = item?.email_links?.find(l => l.id === linkId);
+  if (!link || !link.hasNew) return;
+  link.hasNew = false;
+  rerender(coll);
+  persistItem(item, coll);
 }
 
 async function editEmailLink(id, coll, linkId, ev) {
@@ -4942,6 +4961,7 @@ window.openAddEmailLink    = openAddEmailLink;
 window.cancelAddEmailLink  = cancelAddEmailLink;
 window.submitAddEmailLink  = submitAddEmailLink;
 window.resolveThreadLink   = resolveThreadLink;
+window.markThreadSeen      = markThreadSeen;
 window.editEmailLink       = editEmailLink;
 window.removeEmailLink     = removeEmailLink;
 window.wlAddLocation       = wlAddLocation;
