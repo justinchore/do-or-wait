@@ -51,6 +51,8 @@
       --text2:     #6b7280;
       --border:    #e5e7eb;
       --note-bg:   #f9fafb;
+      --new-mail-bg:     #fffbdd;
+      --new-mail-border: #f5c518;
       --radius:    12px;
       --shadow:    0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.04);
       --shadow-lg: 0 8px 24px rgba(0,0,0,.12);
@@ -163,6 +165,10 @@
     .topic-card.do   { border-left-color: var(--do); }
     .topic-card.wait { border-left-color: var(--wait); }
     .topic-card.archived { opacity: .5; border-left-color: var(--border); }
+    /* A linked email thread got a new message since you last checked it — impossible-to-miss
+       whole-card tint, layered under the existing do/wait left-border and shadow. */
+    .topic-card.has-new-mail { background: var(--new-mail-bg); box-shadow: 0 0 0 1px var(--new-mail-border) inset, var(--shadow); }
+    .topic-card.has-new-mail:hover { box-shadow: 0 0 0 1px var(--new-mail-border) inset, var(--shadow-lg); }
     .card-summary { padding: 13px 14px 13px 15px; cursor: pointer; display: flex; align-items: flex-start; gap: 10px; }
     .drag-handle { cursor: grab; color: var(--text2); opacity: .35; font-size: 15px; line-height: 1.2; flex-shrink: 0; margin-top: 1px; user-select: none; transition: opacity .15s; }
     .topic-card:hover .drag-handle { opacity: .7; }
@@ -645,17 +651,17 @@
   <!-- New topics (no entries yet) -->
   <!-- Tab bar -->
   <div class="tab-bar">
-    <button class="tab-btn active" data-tab="tasks" onclick="switchTab('tasks')">📋 Tasks</button>
+    <button class="tab-btn" data-tab="tasks" onclick="switchTab('tasks')">📋 Tasks</button>
     <button class="tab-btn" data-tab="leads" onclick="switchTab('leads')">🎯 Leads</button>
     <button class="tab-btn" data-tab="outreach" onclick="switchTab('outreach')">📧 Outreach</button>
     <button class="tab-btn" data-tab="playbook" onclick="switchTab('playbook')">📞 Playbook</button>
-    <button class="tab-btn" data-tab="avail" onclick="switchTab('avail')">🏭 Avail</button>
+    <button class="tab-btn active" data-tab="avail" onclick="switchTab('avail')">🏭 Avail</button>
     <button class="tab-btn" data-tab="pricing" onclick="switchTab('pricing')">💲 Pricing</button>
     <button class="tab-btn" data-tab="notes" onclick="switchTab('notes')">💡 Notes</button>
   </div>
 
   <!-- Tasks view -->
-  <div id="tasks-view">
+  <div id="tasks-view" style="display:none">
   <div id="new-topics-wrap" style="display:none; max-width:1100px; margin:0 auto; padding:12px 12px 0; width:100%;">
     <div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--text2); margin-bottom:8px; padding:0 4px;">New — tap to add first entry</div>
     <div id="new-topics-list" style="display:flex; flex-direction:column; gap:8px;"></div>
@@ -863,7 +869,7 @@
   </div>
 
   <!-- Availability view -->
-  <div id="avail-view" style="display:none">
+  <div id="avail-view">
     <div id="avail-content" style="max-width:1100px;margin:0 auto;padding:16px;"></div>
     <div style="max-width:1100px;margin:0 auto;padding:0 16px 24px;">
       <button class="add-topic-btn" onclick="openAddLocation()">＋ Add Location</button>
@@ -1680,7 +1686,7 @@ function renderCard(topic) {
   const allRes  = allDone(topic);
   const noteCount = topic.entries.reduce((n, e) => n + (e.notes?.length || 0), 0);
   return `
-  <div class="topic-card ${topic.archived ? 'archived' : status}${isOpen ? ' open' : ''}" id="tc-${topic.id}"
+  <div class="topic-card ${topic.archived ? 'archived' : status}${isOpen ? ' open' : ''}${hasNewMail(topic) ? ' has-new-mail' : ''}" id="tc-${topic.id}"
        ondragstart="cardDragStart(event,'${topic.id}')" ondragend="cardDragEnd(event)"
        ondragover="cardDragOver(event,'${topic.id}')" ondragleave="cardDragLeave(event)"
        ondrop="cardDrop(event,'${topic.id}')">
@@ -2518,7 +2524,7 @@ function renderLeadCard(lead) {
       </div>`;
 
   return `
-  <div class="topic-card ${lead.archived ? 'archived' : status}${isOpen ? ' open' : ''}" id="lc-${lead.id}" style="border-left-color:${stage.color}"
+  <div class="topic-card ${lead.archived ? 'archived' : status}${isOpen ? ' open' : ''}${hasNewMail(lead) ? ' has-new-mail' : ''}" id="lc-${lead.id}" style="border-left-color:${stage.color}"
        ondragstart="leadDragStart(event,'${lead.id}')" ondragend="leadDragEnd(event)"
        ondragover="leadDragOver(event,'${lead.id}')" ondragleave="leadDragLeave(event)"
        ondrop="leadDrop(event,'${lead.id}')">
@@ -2680,6 +2686,14 @@ function fixThreadUrl(u) {
 // click away without expanding. Shows resolved (clickable) threads; if links
 // exist but none are resolved yet, a muted hint. Clicks stop propagation so the
 // card doesn't toggle.
+// Drives the whole-card highlight (see .has-new-mail CSS) — true if ANY linked
+// thread on this item has an unseen newer message. Just a boolean check over data
+// already in memory (the same `hasNew` flag the badges use), computed at render
+// time like every other card-state class (open/archived/do/wait) — no extra cost.
+function hasNewMail(item) {
+  return Array.isArray(item.email_links) && item.email_links.some(l => l.hasNew);
+}
+
 function emailLinkChips(item, coll) {
   const links = Array.isArray(item.email_links) ? item.email_links : [];
   if (!links.length) return '';
