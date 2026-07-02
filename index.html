@@ -2794,6 +2794,13 @@ async function resolveThreadLink(id, coll, linkId, ev) {
   const item = findItem(id, coll);
   const link = item?.email_links?.find(l => l.id === linkId);
   if (!link) return;
+  // A refresh of an ALREADY-working link should only ever improve it (find a newer
+  // message) or no-op — never regress it back to broken. Without this, the auto
+  // re-checks (tab-load / card-expand) could wipe out a perfectly good link on a
+  // transient miss: Graph's search index can lag a few seconds behind a message
+  // that JUST landed, and a burst of simultaneous re-checks can get throttled.
+  // Both looked like "no match" until a later, uncontested manual ↻ succeeded.
+  const hadUrl = !!link.url;
   link.resolving = true;
   link.resolveErr = '';
   rerender(coll);
@@ -2810,7 +2817,7 @@ async function resolveThreadLink(id, coll, linkId, ev) {
     if (Array.isArray(data)) data = data[0];              // tolerate array-wrapped response
     if (typeof data === 'string') { try { data = JSON.parse(data); } catch (_) {} } // tolerate double-encoded
     if (!res.ok) {
-      link.url = ''; link.resolveErr = 'offline';        // webhook returned an error/404 (active? imported?)
+      if (!hadUrl) { link.url = ''; link.resolveErr = 'offline'; }  // webhook returned an error/404 (active? imported?)
     } else if (data && data.found && data.webLink) {
       // Flag 🆕 only when this refresh turns up a message newer than the one we
       // already had tracked — never on the first-ever resolve (nothing to compare
@@ -2823,11 +2830,11 @@ async function resolveThreadLink(id, coll, linkId, ev) {
       link.resolveErr = '';
       if (data.conversationId) link.conversationId = data.conversationId;
     } else {
-      link.url = ''; link.resolveErr = 'nomatch';        // searched OK, but no message matched
+      if (!hadUrl) { link.url = ''; link.resolveErr = 'nomatch'; }  // searched OK, but no message matched (first resolve only)
     }
   } catch (e) {
     console.error('resolveThreadLink failed:', e);
-    link.url = ''; link.resolveErr = 'offline';          // couldn't reach the webhook at all
+    if (!hadUrl) { link.url = ''; link.resolveErr = 'offline'; }    // couldn't reach the webhook at all
   }
   link.resolving = false;
   rerender(coll);
@@ -2856,10 +2863,15 @@ function refreshAllLeadEmailLinks() {
   const now = Date.now();
   if (now - _lastLeadsAutoRefresh < 60000) return;
   _lastLeadsAutoRefresh = now;
+  const jobs = [];
   leads.forEach(lead => {
     const links = Array.isArray(lead.email_links) ? lead.email_links : [];
-    links.filter(l => l.url && l.subject && !l.resolving).forEach(l => resolveThreadLink(lead.id, 'leads', l.id));
+    links.filter(l => l.url && l.subject && !l.resolving).forEach(l => jobs.push([lead.id, l.id]));
   });
+  // Stagger rather than fire all at once — a burst of simultaneous Graph searches
+  // is the kind of thing that gets throttled, and resolveThreadLink now no longer
+  // clobbers a good link on a bad response, but there's no reason to invite it.
+  jobs.forEach(([leadId, linkId], i) => setTimeout(() => resolveThreadLink(leadId, 'leads', linkId), i * 250));
 }
 
 // Clears the 🆕 flag once you actually open the thread (fires on click, doesn't
