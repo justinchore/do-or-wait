@@ -1,5 +1,5 @@
 {
-  "name": "CW \u2014 5. Add Location",
+  "name": "CW — 5. Add Location",
   "nodes": [
     {
       "parameters": {
@@ -9,35 +9,35 @@
           "allowedOrigins": "*"
         }
       },
-      "id": "6e514205-7019-47f2-8320-58a23d5c8ab6",
+      "id": "81223d7d-f0d0-41d7-a051-78cd2d1f68bb",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
-        384,
-        224
+        7408,
+        5808
       ],
       "webhookId": "availability-sync"
     },
     {
       "parameters": {
         "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/config/properties",
-        "options": {},
         "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "googleApi"
+        "nodeCredentialType": "googleApi",
+        "options": {}
       },
-      "id": "d66fc715-f2a9-4661-a912-2a4a15e38126",
+      "id": "65b70523-60c4-4db3-a153-d7c569fd1531",
       "name": "Get property config",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        608,
-        224
+        7632,
+        5808
       ],
       "credentials": {
         "googleApi": {
-          "id": "REPLACE_WITH_CREDENTIAL_ID",
-          "name": "Google Service Account \u2014 do-or-wait"
+          "id": "7IVvQuErxEJPoaMY",
+          "name": "Firebase_SDK_do_or_wait"
         }
       }
     },
@@ -45,52 +45,52 @@
       "parameters": {
         "jsCode": "let propId = '';\ntry { propId = $('Webhook').first().json.body?.propId || ''; } catch (e) {}\nif (!propId) { try { propId = $('Build updated config').first().json?.propId || ''; } catch (e) {} }\nif (!propId) throw new Error('No propId found');\n\nfunction fsVal(field) {\n  if (!field) return null;\n  if (field.stringValue  !== undefined) return field.stringValue;\n  if (field.booleanValue !== undefined) return field.booleanValue;\n  if (field.integerValue !== undefined) return Number(field.integerValue);\n  if (field.mapValue) {\n    const out = {};\n    for (const [k,v] of Object.entries(field.mapValue.fields||{})) out[k] = fsVal(v);\n    return out;\n  }\n  return null;\n}\n\nconst doc = $input.first().json;\nconst arr = doc.fields?.properties?.arrayValue?.values || [];\n\nconst match = arr.map(item => {\n  const m = item.mapValue?.fields || {};\n  return {\n    id:             fsVal(m.id)             || '',\n    driveId:        fsVal(m.driveId)        || '',\n    itemId:         fsVal(m.itemId)         || '',\n    property:       fsVal(m.property)       || '',\n    address:        fsVal(m.address)        || '',\n    yardi_url:      fsVal(m.yardi_url)      || '',\n    sharepoint_url: fsVal(m.sharepoint_url) || ''\n  };\n}).find(p => p.id === propId);\n\nif (!match) throw new Error(`Property \"${propId}\" not found in config`);\n\nreturn [{ json: match }];\n"
       },
-      "id": "561a1854-f95e-41f1-a681-e40309b0384e",
+      "id": "b68bfa03-9437-4f7c-b0bb-e96f6432b3cf",
       "name": "Find property",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        832,
-        224
+        7856,
+        5808
       ]
     },
     {
       "parameters": {
         "jsCode": "const prop = $('Find property').first().json;\nconst meta = $input.first().json;\nreturn [{ json: { ...prop, lastModified: meta.lastModifiedDateTime } }];"
       },
-      "id": "dde919c4-618c-45e9-8076-b4f628060a3e",
+      "id": "ca8217f8-1f27-48af-980b-fc531eda1dbb",
       "name": "Merge metadata",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1264,
-        224
+        8288,
+        5808
       ]
     },
     {
       "parameters": {
-        "jsCode": "const prop   = $('Merge metadata').first().json;\nconst sheets = $input.first().json.value || [];\n\n// Match the licensee tab by PATTERN \u2014 names vary across locations\n// (\"BOT - NEW ACTIVE LICENSEE\", \"BOT - Active Licensee Lists\", etc.)\nconst norm = s => String(s.name || '').trim().toUpperCase();\nconst target =\n     sheets.find(s => norm(s).includes('LICENSEE'))\n  || sheets.find(s => norm(s) === 'ALL UNITS')\n  || sheets.find(s => norm(s).startsWith('BOT'))\n  || sheets[0];\n\nconst targetSheet = target ? target.name : 'Sheet1';\nreturn [{ json: { ...prop, sheetName: targetSheet, sheetEncoded: encodeURIComponent(targetSheet) } }];"
+        "jsCode": "const prop   = $('Merge metadata').first().json;\nconst sheets = $input.first().json.value || [];\n\n// Match the licensee tab by PATTERN — names vary across locations\n// (\"BOT - NEW ACTIVE LICENSEE\", \"BOT - Active Licensee Lists\", etc.)\nconst norm = s => String(s.name || '').trim().toUpperCase();\nconst target =\n     sheets.find(s => norm(s).includes('LICENSEE'))\n  || sheets.find(s => norm(s) === 'ALL UNITS')\n  || sheets.find(s => norm(s).startsWith('BOT'))\n  || sheets[0];\n\nconst targetSheet = target ? target.name : 'Sheet1';\nreturn [{ json: { ...prop, sheetName: targetSheet, sheetEncoded: encodeURIComponent(targetSheet) } }];"
       },
-      "id": "4bb7d789-8b38-4954-b7a0-0ae7f183e311",
+      "id": "bf23adf5-aa6b-4ac5-a67d-ed5cf6084d60",
       "name": "Pick data sheet",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1712,
-        224
+        8736,
+        5808
       ]
     },
     {
       "parameters": {
-        "jsCode": "const prop = $('Pick data sheet').first().json;\nconst rows = $input.first().json.values || [];\nconst now  = new Date().toISOString();\n\n// Reads the \"BOT - NEW ACTIVE LICENSEE\" tab (Layout A). Columns:\n// Unit # | Unit Type | Unit SF | Unit status | Company Name | Business Owner | Phone # | Email | Onsite POC | notes\nconst unitPattern = /^[A-Z]{1,5}\\d{1,4}(?:[A-Z]|-[A-Z0-9]{1,3})?$/i;\n\nfunction normType(typeText, unitId) {\n  const t = String(typeText || '').toUpperCase();\n  if (/OFFICE/.test(t)) return 'OFFICE';\n  if (/DOCK|DEDICAT|SHARED/.test(t)) return 'DOCK';\n  if (/TRAILER|TRUCK|VEHICLE|PARK/.test(t)) return 'TRAILER';\n  if (/WAREHOUSE|^WH$|^W$/.test(t)) return 'WH';\n  const u = unitId.toUpperCase();\n  if (u.startsWith('R')) return 'OFFICE';\n  if (u.startsWith('DOCK') || u.startsWith('DD')) return 'DOCK';\n  if (u.startsWith('P') || u.startsWith('Y')) return 'TRAILER';\n  return 'WH';\n}\n\nconst clean = v => { const s = String(v==null?'':v).trim(); return (s && !/^hold$/i.test(s)) ? s : null; };\n\nconst units = [];\nlet inTable = false;\nfor (const row of rows) {\n  const cells = row.map(c => String(c===null||c===undefined?'':c).trim());\n  const [c0,c1,c2,c3='',c4='',c5='',c6='',c7='',c8='',c9=''] = cells;\n  if (c0==='Unit #' && c1==='Unit Type') { inTable = true; continue; }\n  if (!inTable) continue;\n  const unitId = c0.replace(/\\s+/g,'').toUpperCase();\n  if (!unitPattern.test(unitId)) continue;\n  const sf = Number(String(c2).replace(/[^0-9]/g,''))||0;\n  const type = normType(c1, unitId);\n  const statusNorm = c3.toLowerCase();\n  const isHold = /hold/.test(statusNorm) || /hold/.test(c4.toLowerCase());\n  const available = statusNorm === 'vacant' || isHold;\n  const tenant = (statusNorm==='occupied' && c4) ? c4 : null;\n  units.push({\n    unit:unitId, type, sf, status:c3, tenant,\n    owner: clean(c5), phone: clean(c6), email: clean(c7), poc: clean(c8), notes: clean(c9),\n    available, hold:isHold\n  });\n}\n\nfunction summarise(type) {\n  const g=units.filter(u=>u.type===type), a=g.filter(u=>u.available);\n  const ts=g.reduce((s,u)=>s+u.sf,0), as=a.reduce((s,u)=>s+u.sf,0);\n  return { total_units:g.length, avail_units:a.length, total_sf:ts, avail_sf:as, avail_pct:ts>0?Math.round(as/ts*1000)/10:0 };\n}\n\nconst wh=summarise('WH'), off=summarise('OFFICE'), dock=summarise('DOCK'), trailer=summarise('TRAILER');\n\nconst toStr=v=>({stringValue:String(v)}), toInt=v=>({integerValue:String(Math.round(v))}),\n      toDbl=v=>({doubleValue:v}), toBool=v=>({booleanValue:v}), toNull=()=>({nullValue:null});\n\nconst summFs=s=>({mapValue:{fields:{total_units:toInt(s.total_units),avail_units:toInt(s.avail_units),total_sf:toInt(s.total_sf),avail_sf:toInt(s.avail_sf),avail_pct:toDbl(s.avail_pct)}}});\nconst unitFs=u=>({mapValue:{fields:{\n  unit:toStr(u.unit), type:toStr(u.type), sf:toInt(u.sf), status:toStr(u.status),\n  tenant:u.tenant?toStr(u.tenant):toNull(),\n  owner:u.owner?toStr(u.owner):toNull(),\n  phone:u.phone?toStr(u.phone):toNull(),\n  email:u.email?toStr(u.email):toNull(),\n  poc:u.poc?toStr(u.poc):toNull(),\n  notes:u.notes?toStr(u.notes):toNull(),\n  available:toBool(u.available), hold:toBool(u.hold)\n}}});\n\nconst patchBody = { fields: {\n  property:            toStr(prop.property||prop.id),\n  address:             toStr(prop.address||''),\n  yardi_url:           toStr(prop.yardi_url||''),\n  sharepoint_url:      toStr(prop.sharepoint_url||''),\n  sheet_last_modified: toStr(prop.lastModified||''),\n  synced_at:           toStr(now),\n  wh:      summFs(wh),  office: summFs(off),\n  dock:    summFs(dock), parking: summFs(trailer),\n  units: { arrayValue: { values: units.map(unitFs) } }\n}};\n\nreturn [{ json: { propId: prop.id, patchBody } }];\n"
+        "jsCode": "const prop = $('Pick data sheet').first().json;\nconst rows = $input.first().json.values || [];\nconst now  = new Date().toISOString();\n\n// Reads the \"BOT - NEW ACTIVE LICENSEE\" tab (Layout A). Columns:\n// Unit # | Unit Type | Unit SF | Unit status | Company Name | Business Owner | Phone # | Email | Onsite POC | notes\n// Accept standard codes (A01-A, B05, DOCK14, G0A, R101) AND bare 1-2 letter\n// block codes (F, B, C, G) that were previously dropped for having no digit.\n// Bounded to <=2 letters so section labels like WAREHOUSE SPACE never match.\nconst unitPattern = /^(?:[A-Z]{1,5}\\d{1,4}(?:[A-Z]|-[A-Z0-9]{1,3})?|[A-Z]{1,2})$/i;\n\nfunction normType(typeText, unitId) {\n  const t = String(typeText || '').toUpperCase();\n  if (/OFFICE/.test(t)) return 'OFFICE';\n  if (/DOCK|DEDICAT|SHARED/.test(t)) return 'DOCK';\n  if (/TRAILER|TRUCK|VEHICLE|PARK/.test(t)) return 'TRAILER';\n  if (/WAREHOUSE|^WH$|^W$/.test(t)) return 'WH';\n  const u = unitId.toUpperCase();\n  if (u.startsWith('R')) return 'OFFICE';\n  if (u.startsWith('DOCK') || u.startsWith('DD')) return 'DOCK';\n  if (u.startsWith('P') || u.startsWith('Y')) return 'TRAILER';\n  return 'WH';\n}\n\nconst clean = v => { const s = String(v==null?'':v).trim(); return (s && !/^hold$/i.test(s)) ? s : null; };\n\nconst units = [];\nlet inTable = false;\nfor (const row of rows) {\n  const cells = row.map(c => String(c===null||c===undefined?'':c).trim());\n  const [c0,c1,c2,c3='',c4='',c5='',c6='',c7='',c8='',c9=''] = cells;\n  if (c0==='Unit #' && c1==='Unit Type') { inTable = true; continue; }\n  if (!inTable) continue;\n  const unitId = c0.replace(/\\s+/g,'').toUpperCase();\n  if (!unitPattern.test(unitId)) continue;\n  const sf = Number(String(c2).replace(/[^0-9]/g,''))||0;\n  const type = normType(c1, unitId);\n  const statusNorm = c3.toLowerCase();\n  const isHold = /hold/.test(statusNorm) || /hold/.test(c4.toLowerCase());\n  const available = statusNorm === 'vacant' || isHold;\n  const tenant = (statusNorm==='occupied' && c4) ? c4 : null;\n  units.push({\n    unit:unitId, type, sf, status:c3, tenant,\n    owner: clean(c5), phone: clean(c6), email: clean(c7), poc: clean(c8), notes: clean(c9),\n    available, hold:isHold\n  });\n}\n\nfunction summarise(type) {\n  const g=units.filter(u=>u.type===type), a=g.filter(u=>u.available);\n  const ts=g.reduce((s,u)=>s+u.sf,0), as=a.reduce((s,u)=>s+u.sf,0);\n  return { total_units:g.length, avail_units:a.length, total_sf:ts, avail_sf:as, avail_pct:ts>0?Math.round(as/ts*1000)/10:0 };\n}\n\nconst wh=summarise('WH'), off=summarise('OFFICE'), dock=summarise('DOCK'), trailer=summarise('TRAILER');\n\nconst toStr=v=>({stringValue:String(v)}), toInt=v=>({integerValue:String(Math.round(v))}),\n      toDbl=v=>({doubleValue:v}), toBool=v=>({booleanValue:v}), toNull=()=>({nullValue:null});\n\nconst summFs=s=>({mapValue:{fields:{total_units:toInt(s.total_units),avail_units:toInt(s.avail_units),total_sf:toInt(s.total_sf),avail_sf:toInt(s.avail_sf),avail_pct:toDbl(s.avail_pct)}}});\nconst unitFs=u=>({mapValue:{fields:{\n  unit:toStr(u.unit), type:toStr(u.type), sf:toInt(u.sf), status:toStr(u.status),\n  tenant:u.tenant?toStr(u.tenant):toNull(),\n  owner:u.owner?toStr(u.owner):toNull(),\n  phone:u.phone?toStr(u.phone):toNull(),\n  email:u.email?toStr(u.email):toNull(),\n  poc:u.poc?toStr(u.poc):toNull(),\n  notes:u.notes?toStr(u.notes):toNull(),\n  available:toBool(u.available), hold:toBool(u.hold)\n}}});\n\nconst patchBody = { fields: {\n  property:            toStr(prop.property||prop.id),\n  address:             toStr(prop.address||''),\n  yardi_url:           toStr(prop.yardi_url||''),\n  sharepoint_url:      toStr(prop.sharepoint_url||''),\n  sheet_last_modified: toStr(prop.lastModified||''),\n  synced_at:           toStr(now),\n  wh:      summFs(wh),  office: summFs(off),\n  dock:    summFs(dock), parking: summFs(trailer),\n  units: { arrayValue: { values: units.map(unitFs) } }\n}};\n\nreturn [{ json: { propId: prop.id, patchBody } }];\n"
       },
-      "id": "73426df9-a1f9-4eb0-b658-584e5c9418e7",
+      "id": "947508dd-20e1-4588-aafd-6293303910c8",
       "name": "Parse + build patch",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2144,
-        224
+        9168,
+        5808
       ]
     },
     {
@@ -100,13 +100,13 @@
         "genericAuthType": "oAuth2Api",
         "options": {}
       },
-      "id": "fb802bc1-7a4b-42c8-b432-f09c600b0b97",
+      "id": "03259519-678a-4a43-b2b2-5d11230de840",
       "name": "Get file metadata1",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1056,
-        224
+        8080,
+        5808
       ],
       "credentials": {
         "microsoftOAuth2Api": {
@@ -126,13 +126,13 @@
         "genericAuthType": "oAuth2Api",
         "options": {}
       },
-      "id": "3dfd1d88-0f4d-4ddd-bcf0-1a2b64f9038f",
+      "id": "6bb2656d-f9d7-4ee7-bc2b-52a0e7415493",
       "name": "List worksheets1",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1488,
-        224
+        8512,
+        5808
       ],
       "credentials": {
         "microsoftOAuth2Api": {
@@ -152,13 +152,13 @@
         "genericAuthType": "oAuth2Api",
         "options": {}
       },
-      "id": "652b0ab8-dec3-4074-93c9-0474e39aecf6",
+      "id": "7e54a65d-9675-49f1-8624-ea022ea0aef1",
       "name": "Read sheet data1",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1936,
-        224
+        8960,
+        5808
       ],
       "credentials": {
         "microsoftOAuth2Api": {
@@ -175,25 +175,25 @@
       "parameters": {
         "method": "PATCH",
         "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/availability/{{ $json.propId }}?updateMask.fieldPaths=property&updateMask.fieldPaths=address&updateMask.fieldPaths=yardi_url&updateMask.fieldPaths=sharepoint_url&updateMask.fieldPaths=sheet_last_modified&updateMask.fieldPaths=synced_at&updateMask.fieldPaths=wh&updateMask.fieldPaths=office&updateMask.fieldPaths=dock&updateMask.fieldPaths=parking&updateMask.fieldPaths=units",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.patchBody) }}",
-        "options": {},
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "googleApi"
+        "options": {}
       },
-      "id": "6b42a7f3-dd20-4e5a-b74d-4715e8e82281",
+      "id": "21b50f35-2032-4090-b55d-f1453c344e94",
       "name": "Write to Firestore1",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2368,
-        224
+        9392,
+        5808
       ],
       "credentials": {
         "googleApi": {
-          "id": "REPLACE_WITH_CREDENTIAL_ID",
-          "name": "Google Service Account \u2014 do-or-wait"
+          "id": "7IVvQuErxEJPoaMY",
+          "name": "Firebase_SDK_do_or_wait"
         }
       }
     },
@@ -201,13 +201,13 @@
       "parameters": {
         "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst raw  = (body.sharepoint_url || '').trim();\nif (!raw) throw new Error('sharepoint_url is required');\nif (!body.property) throw new Error('property name is required');\n\nconst propId = body.property.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');\n\n// Detect sharing links (/:x:/s/, /:x:/r/ etc.)\nconst isSharingLink = /\\/:[a-z]+:\\/[sr]\\//i.test(raw);\n\nif (isSharingLink) {\n  const b64      = Buffer.from(raw).toString('base64').replace(/=/g,'').replace(/\\+/g,'-').replace(/\\//g,'_');\n  const shareId  = 'u!' + b64;\n  const resolveUrl = `https://graph.microsoft.com/v1.0/shares/${shareId}/driveItem`;\n  return [{ json: { ...body, propId, resolveUrl } }];\n}\n\n// Direct file path URL\nconst originMatch = raw.match(/^(https?:\\/\\/[^\\/]+)/);\nif (!originMatch) throw new Error('Invalid SharePoint URL');\nconst origin   = originMatch[1];\nconst pathname = raw.slice(origin.length).split('?')[0];\nconst rawParts = pathname.split('/').filter(Boolean);\nconst parts    = rawParts.map(p => { try { return decodeURIComponent(p); } catch(e) { return p; } });\nconst sitesIdx = parts.indexOf('sites');\nif (sitesIdx < 0) throw new Error('Could not find /sites/ in SharePoint URL');\n\nconst siteRelPath     = '/' + parts.slice(0, sitesIdx + 2).join('/');\nconst encodedFilePath = rawParts.slice(sitesIdx + 2).join('/');\nconst resolveUrl      = `https://graph.microsoft.com/v1.0/sites/${origin.replace('https://','')}}:${siteRelPath}:/drive/root:/${encodedFilePath}`;\n\nreturn [{ json: { ...body, propId, resolveUrl } }];"
       },
-      "id": "a957846f-01ae-4b85-b13c-92bc6ab4c0e2",
+      "id": "1df0699f-ef49-4c56-8ddd-04962fb1320d",
       "name": "Parse URL + generate ID",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1168,
-        1088
+        5856,
+        6672
       ]
     },
     {
@@ -217,13 +217,13 @@
         "genericAuthType": "oAuth2Api",
         "options": {}
       },
-      "id": "05ef131c-c6f0-451c-8446-be505851dab7",
+      "id": "6b0454d1-62b0-43ce-b702-d8cb1ca57b6c",
       "name": "Resolve SharePoint file",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -960,
-        1088
+        6064,
+        6672
       ],
       "credentials": {
         "microsoftOAuth2Api": {
@@ -240,34 +240,34 @@
       "parameters": {
         "jsCode": "const prev = $('Parse URL + generate ID').first().json;\nconst item = $input.first().json;\nconst driveId = item.parentReference?.driveId || '';\nconst itemId  = item.id || '';\nif (!driveId || !itemId) throw new Error('Could not resolve driveId/itemId from SharePoint URL');\nreturn [{ json: { ...prev, driveId, itemId } }];"
       },
-      "id": "49c7832a-12fa-4381-b45c-b446f24d4e5b",
+      "id": "fa3e1fda-fd97-47b1-b09d-e2790a599eef",
       "name": "Extract file IDs",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -736,
-        1088
+        6288,
+        6672
       ]
     },
     {
       "parameters": {
         "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/config/properties",
-        "options": {},
         "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "googleApi"
+        "nodeCredentialType": "googleApi",
+        "options": {}
       },
-      "id": "3368a4cf-43ec-45ef-8cf4-8f0aa0ef3ffb",
+      "id": "6e9cf337-757d-456c-a1c1-60ea9249e00b",
       "name": "Read current config",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -512,
-        1088
+        6512,
+        6672
       ],
       "credentials": {
         "googleApi": {
-          "id": "REPLACE_WITH_CREDENTIAL_ID",
-          "name": "Google Service Account \u2014 do-or-wait"
+          "id": "7IVvQuErxEJPoaMY",
+          "name": "Firebase_SDK_do_or_wait"
         }
       }
     },
@@ -275,38 +275,38 @@
       "parameters": {
         "jsCode": "const prop   = $('Extract file IDs').first().json;\nconst config = $input.first().json;\n\nconst toStr = v => ({ stringValue: String(v || '') });\n\nconst arr = config.fields?.properties?.arrayValue?.values || [];\n\n// Prevent duplicate IDs\nif (arr.some(it => it.mapValue?.fields?.id?.stringValue === prop.propId)) {\n  throw new Error(`Location \"${prop.propId}\" already exists in config. Edit it in Firestore directly.`);\n}\n\nconst newEntry = {\n  mapValue: {\n    fields: {\n      id:             toStr(prop.propId),\n      driveId:        toStr(prop.driveId),\n      itemId:         toStr(prop.itemId),\n      property:       toStr(prop.property),\n      address:        toStr(prop.address),\n      yardi_url:      toStr(prop.yardi_url),\n      sharepoint_url: toStr(prop.sharepoint_url)\n    }\n  }\n};\n\nconst updatedValues = [...arr, newEntry];\nconst patchBody = { fields: { properties: { arrayValue: { values: updatedValues } } } };\n\nreturn [{ json: { propId: prop.propId, pa: prop.pa || null, patchBody } }];"
       },
-      "id": "5faf73e8-25b1-4edf-8105-8976d841c08b",
+      "id": "70b908e1-a119-4dd1-9cb6-8b0bdec66ff7",
       "name": "Build updated config",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -288,
-        1088
+        6736,
+        6672
       ]
     },
     {
       "parameters": {
         "method": "PATCH",
         "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/config/properties?updateMask.fieldPaths=properties",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.patchBody) }}",
-        "options": {},
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "googleApi"
+        "options": {}
       },
-      "id": "425d5d4a-2642-44ae-a5a0-5fc29159c193",
+      "id": "8206dbd9-c5f1-48e3-961c-93a616c942d9",
       "name": "Save config",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -80,
-        1088
+        6944,
+        6672
       ],
       "credentials": {
         "googleApi": {
-          "id": "REPLACE_WITH_CREDENTIAL_ID",
-          "name": "Google Service Account \u2014 do-or-wait"
+          "id": "7IVvQuErxEJPoaMY",
+          "name": "Firebase_SDK_do_or_wait"
         }
       }
     },
@@ -314,25 +314,25 @@
       "parameters": {
         "method": "PATCH",
         "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/availability/{{ $('Build updated config').first().json.propId }}?updateMask.fieldPaths=pa",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ fields: { pa: { mapValue: { fields: { name: { stringValue: String((($('Build updated config').first().json.pa)||{}).name||'') }, phone: { stringValue: String((($('Build updated config').first().json.pa)||{}).phone||'') }, email: { stringValue: String((($('Build updated config').first().json.pa)||{}).email||'') } } } } } }) }}",
-        "options": {},
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "googleApi"
+        "options": {}
       },
-      "id": "da91fa77-9e90-4e9e-9cd8-d60d33ddd7a7",
+      "id": "d3e9b30a-ee71-4081-aff5-da6d18701c69",
       "name": "Save PA to availability",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        592,
-        976
+        7616,
+        6560
       ],
       "credentials": {
         "googleApi": {
-          "id": "REPLACE_WITH_CREDENTIAL_ID",
-          "name": "Google Service Account \u2014 do-or-wait"
+          "id": "7IVvQuErxEJPoaMY",
+          "name": "Firebase_SDK_do_or_wait"
         }
       }
     },
@@ -344,13 +344,13 @@
           "allowedOrigins": "*"
         }
       },
-      "id": "3da23376-fbc3-4011-9040-3376ad87e211",
+      "id": "ecc6ead3-5860-4244-981c-bc04b2d507a4",
       "name": "Webhook1",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
-        -1392,
-        1088
+        5632,
+        6672
       ],
       "webhookId": "add-location"
     }
@@ -389,6 +389,38 @@
             }
           },
           "webhookUrl": "https://ailinker.item.com/webhook/add-location",
+          "executionMode": "production"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ],
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "ailinker.item.com",
+            "x-real-ip": "162.158.91.137",
+            "x-forwarded-for": "2a06:98c0:3600::103, 162.158.91.137",
+            "x-forwarded-proto": "https",
+            "origin": "https://ailinker.item.com",
+            "connection": "upgrade",
+            "content-length": "31",
+            "content-type": "application/json",
+            "cf-ray": "a106a203fc652f07-LAX",
+            "cf-ew-via": "15",
+            "cdn-loop": "cloudflare; loops=1",
+            "cf-worker": "jchoustin91.workers.dev",
+            "cf-visitor": "{\"scheme\":\"https\"}",
+            "accept-encoding": "gzip, br"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "propId": "218-machlin-walnut"
+          },
+          "webhookUrl": "https://ailinker.item.com/webhook/availability-sync",
           "executionMode": "production"
         },
         "pairedItem": {
@@ -497,11 +529,6 @@
         ]
       ]
     },
-    "Write to Firestore1": {
-      "main": [
-        []
-      ]
-    },
     "Parse URL + generate ID": {
       "main": [
         [
@@ -596,7 +623,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "5c112683-b1b2-4833-be9e-0616aa62daf1",
+  "versionId": "f31acbb3-e261-4b9e-b06a-0098f7b75c7e",
   "meta": {
     "instanceId": "576f1552f658e6ccbe293a5c310c12c03fc3f516211957ae27ecb76646f5be19"
   },

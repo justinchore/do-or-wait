@@ -17,7 +17,10 @@ const prop = $('Pick data sheet').first().json;
 const rows = $input.first().json.values || [];
 const now  = new Date().toISOString();
 
-const unitPattern = /^[A-Z]{1,5}\d{1,4}(?:[A-Z]|-[A-Z0-9]{1,3})?$/i;
+// Accept standard codes (A01-A, B05, DOCK14, G0A, R101…) AND bare 1–2 letter
+// block codes (F, B, C, G) that were previously dropped for having no digit.
+// Bounded to ≤2 letters so section labels like "WAREHOUSE SPACE" never match.
+const unitPattern = /^(?:[A-Z]{1,5}\d{1,4}(?:[A-Z]|-[A-Z0-9]{1,3})?|[A-Z]{1,2})$/i;
 
 function normType(typeText, unitId) {
   const t = String(typeText || '').toUpperCase();

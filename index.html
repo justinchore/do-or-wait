@@ -2705,6 +2705,10 @@ function renderEmailLinks(item, coll) {
     if (l.url) {                                   // resolved (or legacy pasted) — real working link
       main = `<a href="${esc(fixThreadUrl(l.url))}" target="_blank" rel="noopener"
          style="${lblStyle}color:#0969da;text-decoration:none;" title="Open the Outlook thread">📧 ${esc(l.label || l.subject || 'Email thread')} ↗</a>`;
+      if (l.subject) {                              // search-based link: can re-check Graph for a newer message
+        main += `<button onclick="resolveThreadLink('${item.id}','${coll}','${l.id}',event)" title="Refresh — re-checks Outlook for the newest message on this thread"
+                style="border:none;background:none;cursor:pointer;font-size:12px;color:var(--text2);flex-shrink:0;">↻</button>`;
+      }
     } else if (l.resolving) {                       // looking the thread up via Graph
       main = `<span style="${lblStyle}color:var(--text2);">⏳ ${esc(l.label || l.subject || '')} — finding link…</span>`;
     } else {                                        // unresolved: distinguish "offline" vs "no match"
