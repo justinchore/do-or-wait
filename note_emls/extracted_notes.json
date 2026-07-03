@@ -1,0 +1,15 @@
+[
+  {
+    "trigger": "Customer Nathaniel Imperial (Imperial Empire LLC, parking customer at 218 Machlin Ct / Walnut) was billed for a yard parking spot he'd already asked to have removed. He escalated by email (Jun 29 - Jul 3) after Sales had told him the spot was long enough to line up personal vehicles, while CS then told him yard parking is commercial-vehicles-only (personal cars risk a $500 violation fee) and left his removal/credit request in 'ongoing review' for over a week.",
+    "why": "Sales and CS gave the customer contradictory terms before he ever signed up, and the credit/removal request sat unresolved while he kept getting billed - the exact kind of promise-mismatch + slow follow-through that turns a billing dispute into a customer threatening to leave entirely. It's compounded by the location closing (he must move out by Aug 15) and his claim that a salesman promised a lease renewal that never happened - he's already said he won't move to another Cubework site over it.",
+    "fix": "1) Resolve the parking credit/removal now rather than leaving it in review - stop billing for a spot the customer has repeatedly asked to cancel. 2) Align Sales and CS on what yard parking actually covers (commercial vehicles only) so this promise mismatch isn't sold again. 3) Separately follow up on the Aug 15 closure move-out and the alleged lease-renewal promise, since that's the real driver of him leaving Cubework, not just the parking fee.",
+    "meta": {
+      "subject": "Re: Removal of Vehicle Parking Spot - Imperial Empire LLC",
+      "from": "Nathaniel Imperial <nathaniel@imperial-empire.com>",
+      "to": "Ricgel Bansag <ricgel.bansag@cubework.com>",
+      "email_date": "2026-07-03",
+      "source_file": "Re_ Removal of Vehicle Parking Spot - Imperial Empire LLC.eml",
+      "extracted_at": "2026-07-03"
+    }
+  }
+]

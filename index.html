@@ -829,6 +829,14 @@
     <!-- Follow-up reminder banner (shown when leads have gone cold 3+ days) -->
     <div id="followup-banner" style="display:none; max-width:1100px; margin:12px auto 0; padding:0 16px; width:100%;"></div>
 
+    <!-- Space-match reminder banner (archived/dead/waitlist leads whose old ask now
+         matches live availability) -->
+    <div id="space-match-banner" style="display:none; max-width:1100px; margin:12px auto 0; padding:0 16px; width:100%;"></div>
+    <div style="max-width:1100px; margin:0 auto; padding:0 16px; width:100%;">
+      <button class="archived-tog" id="space-match-toggle" onclick="toggleSpaceMatches()" style="display:none"></button>
+      <div id="space-match-list" style="display:none; margin-top:8px;"></div>
+    </div>
+
     <!-- New leads strip (compact chips) -->
     <div id="new-leads-wrap" style="display:none; max-width:1100px; margin:0 auto; padding:12px 16px 0; width:100%;">
       <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--text2); margin-bottom:8px;">New — tap ＋ to add first update</div>
@@ -2426,6 +2434,41 @@ function renderLeadsSection() {
     }
   }
 
+  // Space matches — leads in the dead pool (archived / wl_on / stage lost) whose old
+  // ask now matches live availability. Proactive: computed on every render, not just
+  // when you happen to open that lead's card (unlike the old wlMatches-only path).
+  const deadPool = leads.filter(l => isDeadPoolLead(l) && !isSpaceMatchSnoozed(l));
+  const spaceMatchLeads = deadPool.filter(l => spaceMatches(l).length);
+  const smToggle = document.getElementById('space-match-toggle');
+  const smList = document.getElementById('space-match-list');
+  if (smToggle) {
+    smToggle.style.display = spaceMatchLeads.length ? 'block' : 'none';
+    smToggle.textContent = showSpaceMatches ? `▲ Hide space matches (${spaceMatchLeads.length})` : `▼ Show ${spaceMatchLeads.length} space match${spaceMatchLeads.length !== 1 ? 'es' : ''}`;
+  }
+  if (smList) {
+    smList.style.display = showSpaceMatches ? 'block' : 'none';
+    if (showSpaceMatches) smList.innerHTML = spaceMatchLeads.map(l => renderLeadCard(l)).join('');
+  }
+  const smBanner = document.getElementById('space-match-banner');
+  if (smBanner) {
+    if (spaceMatchLeads.length && !showSpaceMatches) {
+      const names = spaceMatchLeads.slice(0, 3).map(l => esc(l.company || 'a lead')).join(', ');
+      const more = spaceMatchLeads.length > 3 ? ` +${spaceMatchLeads.length - 3} more` : '';
+      smBanner.style.display = 'block';
+      smBanner.innerHTML = `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;border:1.5px dashed #059669;background:rgba(5,150,105,.07);border-radius:12px;padding:11px 15px;">
+          <span style="font-size:20px;line-height:1;">📦</span>
+          <div style="flex:1;min-width:180px;font-size:13px;color:var(--text);">
+            <b>${spaceMatchLeads.length} past lead${spaceMatchLeads.length !== 1 ? 's' : ''}</b> now ${spaceMatchLeads.length !== 1 ? 'have' : 'has'} matching space available
+            <span style="color:var(--text2);"> — ${names}${more}</span>
+          </div>
+          <button onclick="toggleSpaceMatches()" style="font-size:12px;font-weight:700;border:none;background:#059669;color:#fff;border-radius:8px;padding:6px 13px;cursor:pointer;">Review matches →</button>
+        </div>`;
+    } else {
+      smBanner.style.display = 'none';
+      smBanner.innerHTML = '';
+    }
+  }
+
   // stats
   const doEl   = document.getElementById('lead-do-badge');
   const waitEl = document.getElementById('lead-wait-badge');
@@ -2576,6 +2619,141 @@ function wlRecheck(leadId, ev) {
   renderLeadsSection();
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  SPACE MATCHES — "reconnect a dead lead when their old ask opens up"
+// ═══════════════════════════════════════════════════════════════
+// Pain point (2026-07-03): leads that go cold get archived (or marked wl_on /
+// stage 'lost') and drop out of the active board — but plenty of them wanted a
+// real space before they fizzled. The existing Waitlist block (wlMatches) only
+// checks for a match when you happen to open that lead's card, and only if you
+// explicitly set wl_locations. This is the proactive version: any lead in the
+// "dead pool" (archived, wl_on, or stage==='lost') gets watched automatically,
+// falling back to whatever's already on record (unit_sf/sqft) when no explicit
+// waitlist criteria were configured — no extra flagging step required.
+function isDeadPoolLead(lead) {
+  return !!(lead.archived || lead.wl_on || (lead.stage || 'cold') === 'lost');
+}
+
+function isSpaceMatchSnoozed(lead) {
+  const today = new Date().toISOString().slice(0, 10);
+  return !!(lead.dm_snooze_until && String(lead.dm_snooze_until) >= today);
+}
+
+// Generalized matcher: uses explicit wl_locations/wl_type/wl_sf_min/wl_sf_max when
+// set (identical behavior to wlMatches), else falls back to a size-window search
+// (0.5x-2x of unit_sf/sqft, via the same followupTargetSf heuristic used by the
+// follow-up "quick update" line) across ALL synced locations. Guards against
+// matching everything when there's nothing concrete to match on.
+function spaceMatches(lead) {
+  const hasWlLocs = lead.wl_locations && lead.wl_locations.length;
+  const locs = hasWlLocs ? lead.wl_locations : Object.keys(availMap);
+  const wantType = (lead.wl_type && lead.wl_type !== 'any') ? lead.wl_type : null;
+  const hasWlSize = !!(lead.wl_sf_min || (lead.wl_sf_max != null && lead.wl_sf_max !== ''));
+  const min = hasWlSize ? (Number(lead.wl_sf_min) || 0) : 0;
+  const max = hasWlSize ? ((lead.wl_sf_max != null && lead.wl_sf_max !== '') ? Number(lead.wl_sf_max) : Infinity) : Infinity;
+  const fallbackTarget = hasWlSize ? 0 : followupTargetSf(lead);
+  if (!hasWlLocs && !wantType && !hasWlSize && !fallbackTarget) return [];   // nothing concrete to match on
+
+  const out = [];
+  locs.forEach(pid => {
+    const d = availMap[pid]; if (!d) return;
+    (d.units || []).forEach(u => {
+      if (!(u.available || u.hold)) return;                 // holds count as available
+      if (wantType && u.type !== wantType) return;
+      const sf = Number(u.sf) || 0;
+      if (hasWlSize) { if (!(sf >= min && sf <= max)) return; }
+      else if (fallbackTarget > 0 && sf > 0 && (sf < fallbackTarget * 0.5 || sf > fallbackTarget * 2)) return;
+      out.push({ property: d.property || pid, unit: u.unit, sf, type: u.type, hold: !!u.hold });
+    });
+  });
+  out.sort((a, b) => a.property.localeCompare(b.property) || a.sf - b.sf);
+  return out;
+}
+
+// Basic re-engagement draft (per Justin: "a basic one") referencing the best match.
+// Same evergreen value props as the follow-up templates (all-inclusive, month-to-
+// month) — just framed as "this specific thing opened up", not a cold pitch.
+function spaceMatchMsgFor(lead) {
+  const matches = spaceMatches(lead);
+  if (!matches.length) return null;
+  const m = matches[0];
+  const sizeTxt = m.sf ? `${m.sf.toLocaleString()} sf` : 'a space';
+  const typeTxt = (m.type && m.type !== 'WH') ? `${m.type.toLowerCase()} ` : '';
+  const subject = `Cubework — space just opened up at ${m.property}`;
+  const body = `${fuHi(lead)}\n\nWanted to reach back out — ${sizeTxt} of ${typeTxt}space just opened up at ${m.property}, which lines up with what you were looking at before.\n\n${FU_INCLUSIVE} ${FU_FLEX}\n\nWant me to send more details or set up a quick look?${FU_SIGN}`;
+  return { subject, body, match: m, extra: matches.length - 1 };
+}
+
+function renderSpaceMatchBlock(lead) {
+  const msg = spaceMatchMsgFor(lead);
+  if (!msg) return '';
+  const extraTxt = msg.extra > 0 ? ` <span style="color:var(--text2);font-weight:400;">(+${msg.extra} more match${msg.extra !== 1 ? 'es' : ''})</span>` : '';
+  return `
+  <div class="email-preview" style="border-color:#059669;background:rgba(5,150,105,.05);">
+    <div class="email-preview-hd">
+      <span class="email-ready-badge" style="background:#059669;">📦 Space match — ${esc(msg.match.property)} · ${msg.match.sf ? msg.match.sf.toLocaleString() + ' sf' : esc(msg.match.type)}</span>
+      ${extraTxt}
+    </div>
+    <div class="email-meta">
+      <b>To:</b> ${esc(lead.email || '—')}<br>
+      <b>Subject:</b> ${esc(msg.subject)}
+    </div>
+    <hr class="email-divider">
+    <div class="email-body">${esc(msg.body)}</div>
+    <div class="email-actions">
+      ${lead.email ? `<button class="approve-btn" onclick="openSpaceMatchEmail('${lead.id}',event)">✉️ Open in email</button>` : ''}
+      <button class="email-snooze-btn" onclick="copySpaceMatchMsg('${lead.id}',event)">📋 Copy</button>
+      <button class="email-skip-btn" onclick="snoozeSpaceMatch('${lead.id}',event)" title="Stop showing this match for 14 days">Snooze 14 days</button>
+    </div>
+  </div>`;
+}
+
+function openSpaceMatchEmail(leadId, e) {
+  if (e) e.stopPropagation();
+  const lead = leads.find(l => l.id === leadId);
+  if (!lead || !lead.email) return;
+  const msg = spaceMatchMsgFor(lead);
+  if (!msg) return;
+  window.location.href =
+    `mailto:${encodeURIComponent(lead.email)}?subject=${encodeURIComponent(msg.subject)}&body=${encodeURIComponent(msg.body)}`;
+}
+
+async function copySpaceMatchMsg(leadId, e) {
+  if (e) e.stopPropagation();
+  const lead = leads.find(l => l.id === leadId);
+  if (!lead) return;
+  const msg = spaceMatchMsgFor(lead);
+  if (!msg) return;
+  const text = `Subject: ${msg.subject}\n\n${msg.body}`;
+  try { await navigator.clipboard.writeText(text); }
+  catch (err) {
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (_) {}
+    document.body.removeChild(ta);
+  }
+  const btn = e && e.target;
+  if (btn) { const o = btn.textContent; btn.textContent = '✓ Copied'; setTimeout(() => { btn.textContent = o; }, 1500); }
+}
+
+async function snoozeSpaceMatch(leadId, e) {
+  if (e) e.stopPropagation();
+  const lead = leads.find(l => l.id === leadId);
+  if (!lead) return;
+  const until = new Date();
+  until.setDate(until.getDate() + 14);
+  const updated = { ...lead, dm_snooze_until: until.toISOString().slice(0, 10), updatedAt: new Date().toISOString() };
+  const i = leads.findIndex(l => l.id === leadId); if (i >= 0) leads[i] = updated;
+  renderLeadsSection();
+  await persistItem(updated, 'leads');
+}
+
+let showSpaceMatches = false;
+function toggleSpaceMatches() {
+  showSpaceMatches = !showSpaceMatches;
+  renderLeadsSection();
+}
+
 function renderLeadCard(lead) {
   const status  = currentStatus(lead);
   const isOpen  = expandedLeadIds.has(lead.id);
@@ -2643,7 +2821,7 @@ function renderLeadCard(lead) {
       ${due && !lead.pending_email ? renderFollowupBlock(lead) : ''}
       ${renderLeadDetails(lead)}
       ${renderEmailLinks(lead, 'leads')}
-      ${lead.wl_on ? renderWaitlistBlock(lead) : ''}
+      ${lead.wl_on ? renderWaitlistBlock(lead) : (isDeadPoolLead(lead) ? renderSpaceMatchBlock(lead) : '')}
       ${lead.entries.map(e => renderLeadEntry(lead, e)).join('')}
       <div class="thread-foot">
         <button class="archive-btn" onclick="toggleArchive('${lead.id}','leads')">
@@ -5169,6 +5347,10 @@ window.openFollowupEmail   = openFollowupEmail;
 window.copyFollowupMsg     = copyFollowupMsg;
 window.snoozeFollowup      = snoozeFollowup;
 window.moveToWaitlist      = moveToWaitlist;
+window.toggleSpaceMatches  = toggleSpaceMatches;
+window.openSpaceMatchEmail = openSpaceMatchEmail;
+window.copySpaceMatchMsg   = copySpaceMatchMsg;
+window.snoozeSpaceMatch    = snoozeSpaceMatch;
 </script>
 </body>
 </html>
