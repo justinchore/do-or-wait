@@ -298,11 +298,15 @@
     .tab-bar {
       background: var(--surface); border-bottom: 1px solid var(--border);
       padding: 0 16px; display: flex; gap: 0;
+      /* 7 tabs don't fit a phone-width viewport — scroll instead of cramming/overflowing.
+         No-op on desktop: overflow-x:auto only shows a scrollbar once content overflows. */
+      overflow-x: auto; -webkit-overflow-scrolling: touch;
     }
     .tab-btn {
       padding: 12px 18px; font-size: 14px; font-weight: 600; font-family: inherit;
       background: none; border: none; border-bottom: 2px solid transparent;
       color: var(--text2); cursor: pointer; transition: all .15s; margin-bottom: -1px;
+      white-space: nowrap; flex-shrink: 0;
     }
     .tab-btn:hover { color: var(--text); }
     .tab-btn.active { color: var(--text); border-bottom-color: var(--text); }
@@ -1545,34 +1549,48 @@ function cardDragOver(ev, overId) {
 
 function cardDragLeave(ev) { ev.currentTarget.classList.remove('drag-over'); }
 
-async function cardDrop(ev, targetId) {
-  ev.preventDefault();
-  ev.currentTarget.classList.remove('drag-over');
-  if (!dragId || dragId === targetId) return;
-  const dragged = topics.find(t => t.id === dragId);
-  const target  = topics.find(t => t.id === targetId);
+// Shared reorder math for BOTH the native-DnD drop handlers (mouse, desktop) and
+// the touch-drag handler below (phone) — one place computes the new order so the
+// two input paths can never drift apart. Behavior is unchanged from the original
+// cardDrop/leadDrop bodies; this is a straight extraction, not a rewrite.
+async function commitReorder(coll, draggedId, targetId, after) {
+  const list = coll === 'leads' ? leads : topics;
+  const dragged = list.find(x => x.id === draggedId);
+  const target  = list.find(x => x.id === targetId);
   if (!dragged || !target) return;
   const status = currentStatus(target);
   if (currentStatus(dragged) !== status) return; // reorder within a column only
 
-  // Current order of this column's active cards
-  const col = topics.filter(t => !t.archived && currentStatus(t) === status).sort(byOrder);
-  const ids = col.map(t => t.id);
-  ids.splice(ids.indexOf(dragId), 1);
-
-  // Insert before/after target depending on drop position
-  const rect  = ev.currentTarget.getBoundingClientRect();
-  const after = ev.clientY > rect.top + rect.height / 2;
-  ids.splice(ids.indexOf(targetId) + (after ? 1 : 0), 0, dragId);
+  const col = (coll === 'leads'
+    ? list.filter(l => !l.archived && l.entries.length && currentStatus(l) === status)
+    : list.filter(t => !t.archived && currentStatus(t) === status)
+  ).sort(byOrder);
+  const ids = col.map(x => x.id);
+  ids.splice(ids.indexOf(draggedId), 1);
+  ids.splice(ids.indexOf(targetId) + (after ? 1 : 0), 0, draggedId);
 
   // Reassign sequential orders, persist only what changed
   const changed = [];
   ids.forEach((id, i) => {
-    const t = topics.find(x => x.id === id);
-    if (t && t.order !== i) { t.order = i; changed.push(t); }
+    const x = list.find(y => y.id === id);
+    if (x && x.order !== i) { x.order = i; changed.push(x); }
   });
-  render();
-  for (const t of changed) await saveTopic(t);
+  if (coll === 'leads') {
+    renderLeadsSection();
+    for (const l of changed) await persistItem(l, 'leads');
+  } else {
+    render();
+    for (const t of changed) await saveTopic(t);
+  }
+}
+
+async function cardDrop(ev, targetId) {
+  ev.preventDefault();
+  ev.currentTarget.classList.remove('drag-over');
+  if (!dragId || dragId === targetId) return;
+  const rect  = ev.currentTarget.getBoundingClientRect();
+  const after = ev.clientY > rect.top + rect.height / 2;
+  await commitReorder('topics', dragId, targetId, after);
 }
 
 // ── Leads drag-to-reorder (parallel to topics) ────────────────
@@ -1610,30 +1628,75 @@ async function leadDrop(ev, targetId) {
   ev.preventDefault();
   ev.currentTarget.classList.remove('drag-over');
   if (!leadDragId || leadDragId === targetId) return;
-  const dragged = leads.find(l => l.id === leadDragId);
-  const target  = leads.find(l => l.id === targetId);
-  if (!dragged || !target) return;
-  const status = currentStatus(target);
-  if (currentStatus(dragged) !== status) return; // reorder within a column only
-
-  // Current order of this column's active cards
-  const col = leads.filter(l => !l.archived && l.entries.length && currentStatus(l) === status).sort(byOrder);
-  const ids = col.map(l => l.id);
-  ids.splice(ids.indexOf(leadDragId), 1);
-
-  // Insert before/after target depending on drop position
   const rect  = ev.currentTarget.getBoundingClientRect();
   const after = ev.clientY > rect.top + rect.height / 2;
-  ids.splice(ids.indexOf(targetId) + (after ? 1 : 0), 0, leadDragId);
+  await commitReorder('leads', leadDragId, targetId, after);
+}
 
-  // Reassign sequential orders, persist only what changed
-  const changed = [];
-  ids.forEach((id, i) => {
-    const l = leads.find(x => x.id === id);
-    if (l && l.order !== i) { l.order = i; changed.push(l); }
-  });
-  renderLeadsSection();
-  for (const l of changed) await persistItem(l, 'leads');
+// ── Touch drag-to-reorder (phone) ─────────────────────────────
+// The drag above is native HTML5 Drag-and-Drop, armed via mousedown/mouseup on
+// the handle — that API has NO touch support on iOS Safari, so reordering did
+// nothing on a phone. This is a fully separate, additive path: it only starts
+// from a touchstart on the handle, so mouse/desktop behavior above is untouched.
+// It reuses commitReorder() for the actual reorder math (same code both paths).
+let touchDrag = null; // { coll, id, overEl, overId, lastY }
+
+function startTouchDrag(ev, id, coll) {
+  ev.preventDefault();               // don't let the page scroll while grabbing the handle
+  const card = document.getElementById((coll === 'leads' ? 'lc-' : 'tc-') + id);
+  if (!card) return;
+  touchDrag = { coll, id, overEl: null, overId: null, lastY: 0 };
+  card.classList.add('dragging');
+  document.addEventListener('touchmove', onTouchDragMove, { passive: false });
+  document.addEventListener('touchend', onTouchDragEnd);
+  document.addEventListener('touchcancel', onTouchDragEnd);
+}
+
+function onTouchDragMove(ev) {
+  if (!touchDrag) return;
+  ev.preventDefault();               // block scroll for the duration of the drag
+  const t = ev.touches[0];
+  if (!t) return;
+  touchDrag.lastY = t.clientY;
+  const prefix = touchDrag.coll === 'leads' ? 'lc-' : 'tc-';
+  const el   = document.elementFromPoint(t.clientX, t.clientY);
+  const card = el && el.closest('.topic-card');
+  const overId = (card && card.id.startsWith(prefix)) ? card.id.slice(prefix.length) : null;
+
+  let valid = false;
+  if (overId && overId !== touchDrag.id) {
+    const list    = touchDrag.coll === 'leads' ? leads : topics;
+    const dragged = list.find(x => x.id === touchDrag.id);
+    const over    = list.find(x => x.id === overId);
+    valid = !!(dragged && over && currentStatus(dragged) === currentStatus(over)); // same column only
+  }
+  if (valid) {
+    if (touchDrag.overEl && touchDrag.overEl !== card) touchDrag.overEl.classList.remove('drag-over');
+    card.classList.add('drag-over');
+    touchDrag.overEl = card;
+    touchDrag.overId = overId;
+  } else if (touchDrag.overEl) {
+    touchDrag.overEl.classList.remove('drag-over');
+    touchDrag.overEl = null;
+    touchDrag.overId = null;
+  }
+}
+
+async function onTouchDragEnd() {
+  document.removeEventListener('touchmove', onTouchDragMove);
+  document.removeEventListener('touchend', onTouchDragEnd);
+  document.removeEventListener('touchcancel', onTouchDragEnd);
+  if (!touchDrag) return;
+  const { coll, id, overEl, overId, lastY } = touchDrag;
+  const card = document.getElementById((coll === 'leads' ? 'lc-' : 'tc-') + id);
+  if (card) card.classList.remove('dragging');
+  if (overEl) overEl.classList.remove('drag-over');
+  touchDrag = null;
+  if (overId && overEl) {
+    const rect  = overEl.getBoundingClientRect();
+    const after = lastY > rect.top + rect.height / 2;
+    await commitReorder(coll, id, overId, after);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1704,6 +1767,7 @@ function renderCard(topic) {
     <div class="card-summary" onclick="toggleCard('${topic.id}')">
       ${topic.archived ? '' : `<span class="drag-handle" title="Drag to reorder"
             onmousedown="enableDrag('${topic.id}')" onmouseup="disableDrag('${topic.id}')"
+            ontouchstart="startTouchDrag(event,'${topic.id}','topics')"
             onclick="event.stopPropagation()">⠿</span>`}
       <div class="card-summary-body">
         <div class="card-title">
@@ -2545,6 +2609,7 @@ function renderLeadCard(lead) {
     <div class="card-summary" onclick="toggleLeadCard('${lead.id}')">
       ${(lead.archived || ['won','lost'].includes(lead.stage||'cold')) ? '' : `<span class="drag-handle" title="Drag to reorder"
             onmousedown="enableLeadDrag('${lead.id}')" onmouseup="disableLeadDrag('${lead.id}')"
+            ontouchstart="startTouchDrag(event,'${lead.id}','leads')"
             onclick="event.stopPropagation()">⠿</span>`}
       <div class="card-summary-body">
         <div class="card-title">
@@ -4361,6 +4426,8 @@ function noteCard(n) {
     const ta = 'width:100%;min-height:64px;margin:4px 0 12px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:14px;font-family:inherit;line-height:1.45;resize:vertical;box-sizing:border-box;background:var(--bg);color:var(--text);';
     return `<div style="${card}">
         <div style="margin-bottom:10px;">${meta}</div>
+        <label style="${lbl}">What triggered this?</label>
+        <textarea id="trigger-${n.id}" placeholder="What triggered it…" style="${ta}">${esc(n.trigger || '')}</textarea>
         <label style="${lbl}">Why does this issue matter?</label>
         <textarea id="why-${n.id}" placeholder="Why this matters…" style="${ta}">${esc(n.why || '')}</textarea>
         <label style="${lbl}">What's the fix?</label>
@@ -4382,22 +4449,23 @@ function noteCard(n) {
           <button onclick="deleteIdeaNote('${n.id}')" style="font-size:12px;color:#b91c1c;background:transparent;border:1px solid #fecaca;border-radius:8px;padding:4px 10px;cursor:pointer;">Delete</button>
         </div>
       </div>
+      ${block('What triggered this?', n.trigger)}
       ${block('Why does this issue matter?', n.why)}
       ${block("What's the fix?", n.fix)}
     </div>`;
 }
 
 async function newIdeaNote() {
-  const note = { id: 'n' + Date.now(), why: '', fix: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  const note = { id: 'n' + Date.now(), trigger: '', why: '', fix: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
   editingNotes.add(note.id);             // open the new note straight into edit mode
   await persistItem(note, 'notes');      // onSnapshot adds it and renders it editing
-  setTimeout(() => { const t = document.getElementById('why-' + note.id); if (t) t.focus(); }, 120);
+  setTimeout(() => { const t = document.getElementById('trigger-' + note.id); if (t) t.focus(); }, 120);
 }
 
 function editNote(id) {
   editingNotes.add(id);
   renderNotes();
-  setTimeout(() => { const t = document.getElementById('why-' + id); if (t) t.focus(); }, 40);
+  setTimeout(() => { const t = document.getElementById('trigger-' + id); if (t) t.focus(); }, 40);
 }
 
 function cancelNote(id) {
@@ -4408,9 +4476,10 @@ function cancelNote(id) {
 async function saveIdeaNote(id) {
   const n = ideaNotes.find(x => x.id === id);
   if (!n) return;
+  const triggerEl = document.getElementById('trigger-' + id);
   const whyEl = document.getElementById('why-' + id);
   const fixEl = document.getElementById('fix-' + id);
-  const note = { ...n, why: whyEl ? whyEl.value : n.why, fix: fixEl ? fixEl.value : n.fix, updatedAt: new Date().toISOString() };
+  const note = { ...n, trigger: triggerEl ? triggerEl.value : n.trigger, why: whyEl ? whyEl.value : n.why, fix: fixEl ? fixEl.value : n.fix, updatedAt: new Date().toISOString() };
   const i = ideaNotes.findIndex(x => x.id === id);
   if (i >= 0) ideaNotes[i] = note;
   editingNotes.delete(id);
@@ -5063,6 +5132,7 @@ window.leadDragEnd         = leadDragEnd;
 window.leadDragOver        = leadDragOver;
 window.leadDragLeave       = leadDragLeave;
 window.leadDrop            = leadDrop;
+window.startTouchDrag      = startTouchDrag;
 window.setLeadFilter       = setLeadFilter;
 window.toggleHideWaitlist  = toggleHideWaitlist;
 window.toggleWonLost       = toggleWonLost;
