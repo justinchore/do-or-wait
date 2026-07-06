@@ -43,7 +43,7 @@
     },
     {
       "parameters": {
-        "jsCode": "let propId = '';\ntry { propId = $('Webhook').first().json.body?.propId || ''; } catch (e) {}\nif (!propId) { try { propId = $('Build updated config').first().json?.propId || ''; } catch (e) {} }\nif (!propId) throw new Error('No propId found');\n\nfunction fsVal(field) {\n  if (!field) return null;\n  if (field.stringValue  !== undefined) return field.stringValue;\n  if (field.booleanValue !== undefined) return field.booleanValue;\n  if (field.integerValue !== undefined) return Number(field.integerValue);\n  if (field.mapValue) {\n    const out = {};\n    for (const [k,v] of Object.entries(field.mapValue.fields||{})) out[k] = fsVal(v);\n    return out;\n  }\n  return null;\n}\n\nconst doc = $input.first().json;\nconst arr = doc.fields?.properties?.arrayValue?.values || [];\n\nconst match = arr.map(item => {\n  const m = item.mapValue?.fields || {};\n  return {\n    id:             fsVal(m.id)             || '',\n    driveId:        fsVal(m.driveId)        || '',\n    itemId:         fsVal(m.itemId)         || '',\n    property:       fsVal(m.property)       || '',\n    address:        fsVal(m.address)        || '',\n    yardi_url:      fsVal(m.yardi_url)      || '',\n    sharepoint_url: fsVal(m.sharepoint_url) || ''\n  };\n}).find(p => p.id === propId);\n\nif (!match) throw new Error(`Property \"${propId}\" not found in config`);\n\nreturn [{ json: match }];\n"
+        "jsCode": "let propId = '';\ntry { propId = $('Webhook').first().json.body?.propId || ''; } catch (e) {}\nif (!propId) { try { propId = $('Build updated config').first().json?.propId || ''; } catch (e) {} }\nif (!propId) { try { propId = $('Batch locations (loop)').first().json?.propId || ''; } catch (e) {} }\nif (!propId) throw new Error('No propId found');\n\nfunction fsVal(field) {\n  if (!field) return null;\n  if (field.stringValue  !== undefined) return field.stringValue;\n  if (field.booleanValue !== undefined) return field.booleanValue;\n  if (field.integerValue !== undefined) return Number(field.integerValue);\n  if (field.mapValue) {\n    const out = {};\n    for (const [k,v] of Object.entries(field.mapValue.fields||{})) out[k] = fsVal(v);\n    return out;\n  }\n  return null;\n}\n\nconst doc = $input.first().json;\nconst arr = doc.fields?.properties?.arrayValue?.values || [];\n\nconst match = arr.map(item => {\n  const m = item.mapValue?.fields || {};\n  return {\n    id:             fsVal(m.id)             || '',\n    driveId:        fsVal(m.driveId)        || '',\n    itemId:         fsVal(m.itemId)         || '',\n    property:       fsVal(m.property)       || '',\n    address:        fsVal(m.address)        || '',\n    yardi_url:      fsVal(m.yardi_url)      || '',\n    sharepoint_url: fsVal(m.sharepoint_url) || ''\n  };\n}).find(p => p.id === propId);\n\nif (!match) throw new Error(`Property \"${propId}\" not found in config`);\n\nreturn [{ json: match }];\n"
       },
       "id": "b68bfa03-9437-4f7c-b0bb-e96f6432b3cf",
       "name": "Find property",
@@ -353,6 +353,96 @@
         6672
       ],
       "webhookId": "add-location"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 3 * * *"
+            }
+          ]
+        }
+      },
+      "id": "c1a2b3c4-1111-4a5b-8c6d-000000000001",
+      "name": "Daily Sync - Cron",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        5856,
+        7400
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/config/properties",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "options": {}
+      },
+      "id": "c1a2b3c4-1111-4a5b-8c6d-000000000002",
+      "name": "Get all properties (cron)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        6080,
+        7400
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "7IVvQuErxEJPoaMY",
+          "name": "Firebase_SDK_do_or_wait"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const doc = $input.first().json;\nconst arr = doc.fields?.properties?.arrayValue?.values || [];\nconst propIds = arr.map(item => item.mapValue?.fields?.id?.stringValue || '').filter(Boolean);\nif (!propIds.length) throw new Error('No configured locations found in config/properties');\nreturn propIds.map(propId => ({ json: { propId } }));"
+      },
+      "id": "c1a2b3c4-1111-4a5b-8c6d-000000000003",
+      "name": "Build propId list",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6304,
+        7400
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "c1a2b3c4-1111-4a5b-8c6d-000000000004",
+      "name": "Batch locations (loop)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        6528,
+        7400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ailinker.item.com/webhook/availability-sync",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ propId: $json.propId }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "c1a2b3c4-1111-4a5b-8c6d-000000000005",
+      "name": "Trigger location sync",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueRegularOutput",
+      "position": [
+        6752,
+        7400
+      ]
     }
   ],
   "pinData": {
@@ -611,6 +701,62 @@
         [
           {
             "node": "Parse URL + generate ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily Sync - Cron": {
+      "main": [
+        [
+          {
+            "node": "Get all properties (cron)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get all properties (cron)": {
+      "main": [
+        [
+          {
+            "node": "Build propId list",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build propId list": {
+      "main": [
+        [
+          {
+            "node": "Batch locations (loop)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch locations (loop)": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Trigger location sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger location sync": {
+      "main": [
+        [
+          {
+            "node": "Batch locations (loop)",
             "type": "main",
             "index": 0
           }

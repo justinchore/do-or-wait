@@ -2663,7 +2663,7 @@ function spaceMatches(lead) {
       const sf = Number(u.sf) || 0;
       if (hasWlSize) { if (!(sf >= min && sf <= max)) return; }
       else if (fallbackTarget > 0 && sf > 0 && (sf < fallbackTarget * 0.5 || sf > fallbackTarget * 2)) return;
-      out.push({ property: d.property || pid, unit: u.unit, sf, type: u.type, hold: !!u.hold });
+      out.push({ property: d.property || pid, propId: pid, synced_at: d.synced_at || null, unit: u.unit, sf, type: u.type, hold: !!u.hold });
     });
   });
   out.sort((a, b) => a.property.localeCompare(b.property) || a.sf - b.sf);
@@ -2694,6 +2694,7 @@ function renderSpaceMatchBlock(lead) {
       <span class="email-ready-badge" style="background:#059669;">📦 Space match — ${esc(msg.match.property)} · ${msg.match.sf ? msg.match.sf.toLocaleString() + ' sf' : esc(msg.match.type)}</span>
       ${extraTxt}
     </div>
+    <div style="font-size:11px;color:var(--text2);margin:2px 0 8px;">${esc(availExpSyncLabel(msg.match.synced_at))}</div>
     <div class="email-meta">
       <b>To:</b> ${esc(lead.email || '—')}<br>
       <b>Subject:</b> ${esc(msg.subject)}
@@ -2818,7 +2819,7 @@ function renderLeadCard(lead) {
     </div>
     <div class="thread">
       ${lead.pending_email ? renderEmailPreview(lead) : ''}
-      ${due && !lead.pending_email ? renderFollowupBlock(lead) : ''}
+      ${lead.followup_draft ? renderFollowupDraftBlock(lead) : (due ? renderFollowupBlock(lead) : '')}
       ${renderLeadDetails(lead)}
       ${renderEmailLinks(lead, 'leads')}
       ${lead.wl_on ? renderWaitlistBlock(lead) : (isDeadPoolLead(lead) ? renderSpaceMatchBlock(lead) : '')}
@@ -2829,6 +2830,7 @@ function renderLeadCard(lead) {
         </button>
         <div style="display:flex;gap:6px;">
           <button class="btn sm" onclick="openEditLeadDetails('${lead.id}',event)">✏️ Details</button>
+          ${!lead.archived ? `<button class="btn sm" onclick="generateFollowup('${lead.id}',event)">${lead.followup_draft ? '✨ Regenerate follow-up' : '✨ Generate follow-up'}</button>` : ''}
           ${!lead.archived ? `<button class="btn sm dark" onclick="openAddLeadEntry('${lead.id}',event)">＋ Update</button>` : ''}
         </div>
       </div>
@@ -2870,6 +2872,129 @@ function renderFollowupBlock(lead) {
       <button class="email-skip-btn" onclick="moveToWaitlist('${lead.id}',event)" title="Stop follow-ups — just watch for matching space">⏳ Move to waitlist</button>
     </div>
   </div>`;
+}
+
+// ── Manual follow-up generator (Claude, via n8n workflow 17) ───────────────
+// Separate from the automatic 3-day-cold block above (that one's flagged for a
+// later rework — this is the on-demand button). Reads the lead's linked email
+// thread if one's resolved (last ~5 messages, real content, via Graph) or,
+// if no thread is linked, falls back to Justin's own logged updates. If
+// NEITHER exists there's nothing real to write from, so it never calls the
+// webhook — it just tells you to log something or link a thread first.
+function leadNotesContext(lead) {
+  return (lead.entries || [])
+    .filter(e => e && e.text && e.createdAt)
+    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
+    .slice(-5)
+    .map(e => `[${fmtDate(e.createdAt)}]${e.kind ? ` (${e.kind})` : ''} ${e.text}`)
+    .join('\n');
+}
+function leadThreadConversationId(lead) {
+  const link = (lead.email_links || []).find(l => l.url && l.conversationId);
+  return link ? link.conversationId : '';
+}
+async function generateFollowup(leadId, e) {
+  e = e || (typeof event !== 'undefined' ? event : null);
+  if (e) e.stopPropagation();
+  const lead = leads.find(l => l.id === leadId);
+  if (!lead) return;
+  const conversationId = leadThreadConversationId(lead);
+  const notesText = leadNotesContext(lead);
+  if (!conversationId && !notesText) {
+    alert('Nothing to base a follow-up on yet — link an email thread or log an update on this lead first.');
+    return;
+  }
+  const btn = e && e.target;
+  const reset = () => { if (btn) { btn.disabled = false; btn.textContent = lead.followup_draft ? '✨ Regenerate follow-up' : '✨ Generate follow-up'; } };
+  if (btn) { btn.disabled = true; btn.textContent = '✨ Generating…'; }
+  try {
+    const res = await fetch(FOLLOWUP_GEN_WEBHOOK, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        leadId, company: lead.company || '', first_name: lead.first_name || '', contact: lead.contact || '',
+        segment: lead.segment || '', stage: lead.stage || 'cold', unit: lead.unit || '', unit_sf: lead.unit_sf || '',
+        conversationId, notesText
+      })
+    });
+    const text = await res.text().catch(() => '');
+    if (!res.ok) {
+      // fetch only throws on a network error, so a 404 (workflow inactive) or 500
+      // (Claude/model error) would otherwise fail silently and strand the button
+      // on "Generating…" — same fix as researchProspect's res.ok check.
+      console.error('[generate-followup]', res.status, text);
+      reset();
+      alert('Follow-up generation failed (HTTP ' + res.status + ').\n' +
+        (res.status === 404
+          ? 'The generate-followup webhook isn’t reachable — is n8n workflow 17 imported and Active?'
+          : 'Workflow 17 errored (often the Claude node). Check its Executions log in n8n.') +
+        (text ? '\n\n' + text.slice(0, 300) : ''));
+      return;
+    }
+    // Workflow 17 responds only after the Firestore write, so the leads listener
+    // picks up the new followup_draft and re-renders this card momentarily.
+    reset();
+  } catch (err) {
+    console.error('generateFollowup failed:', err);
+    reset();
+    alert('Could not reach the follow-up generator — check your connection and try again.');
+  }
+}
+
+function renderFollowupDraftBlock(lead) {
+  const d = lead.followup_draft;
+  if (!d || !d.body) return '';
+  const sourceTxt = d.source === 'thread' ? 'from the email thread' : 'from your logged updates';
+  return `
+  <div class="email-preview" style="border-color:#7c3aed;background:rgba(124,58,237,.04);">
+    <div class="email-preview-hd">
+      <span class="email-ready-badge" style="background:#7c3aed;">✨ Generated follow-up — ${esc(sourceTxt)}</span>
+      <button onclick="generateFollowup('${lead.id}',event)" title="Generate a new version"
+              style="font-size:11px;border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:2px 9px;cursor:pointer;color:var(--text);">↻ Regenerate</button>
+    </div>
+    <div class="email-meta">
+      <b>To:</b> ${esc(lead.email || '—')}<br>
+      <b>Subject:</b> ${esc(d.subject || '')}
+    </div>
+    <hr class="email-divider">
+    <div class="email-body">${esc(d.body)}</div>
+    <div class="email-actions">
+      ${lead.email ? `<button class="approve-btn" onclick="openGeneratedFollowupEmail('${lead.id}',event)">✉️ Open in email</button>` : ''}
+      <button class="email-snooze-btn" onclick="copyGeneratedFollowupMsg('${lead.id}',event)">📋 Copy</button>
+      <button class="email-skip-btn" onclick="dismissFollowupDraft('${lead.id}',event)">✕ Dismiss</button>
+    </div>
+  </div>`;
+}
+function openGeneratedFollowupEmail(leadId, e) {
+  if (e) e.stopPropagation();
+  const lead = leads.find(l => l.id === leadId);
+  const d = lead && lead.followup_draft;
+  if (!lead || !lead.email || !d) return;
+  window.location.href = `mailto:${encodeURIComponent(lead.email)}?subject=${encodeURIComponent(d.subject || '')}&body=${encodeURIComponent(d.body || '')}`;
+}
+async function copyGeneratedFollowupMsg(leadId, e) {
+  if (e) e.stopPropagation();
+  const lead = leads.find(l => l.id === leadId);
+  const d = lead && lead.followup_draft;
+  if (!d) return;
+  const text = `Subject: ${d.subject}\n\n${d.body}`;
+  try { await navigator.clipboard.writeText(text); }
+  catch (err) {
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (_) {}
+    document.body.removeChild(ta);
+  }
+  const btn = e && e.target;
+  if (btn) { const o = btn.textContent; btn.textContent = '✓ Copied'; setTimeout(() => { btn.textContent = o; }, 1500); }
+}
+async function dismissFollowupDraft(leadId, e) {
+  if (e) e.stopPropagation();
+  const lead = leads.find(l => l.id === leadId);
+  if (!lead) return;
+  const updated = { ...lead, followup_draft: null, updatedAt: new Date().toISOString() };
+  const i = leads.findIndex(l => l.id === leadId); if (i >= 0) leads[i] = updated;
+  renderLeadsSection();
+  await persistItem(updated, 'leads');
 }
 
 function renderEmailPreview(lead) {
@@ -3807,6 +3932,7 @@ const AVAIL_WEBHOOK        = `${PROXY}/webhook/availability-sync`;
 const ADD_LOCATION_WEBHOOK = `${PROXY}/webhook/add-location`;
 const RESOLVE_THREAD_WEBHOOK = `${PROXY}/webhook/resolve-thread`; // subject+contact → real Outlook webLink (n8n workflow 11)
 const RESEARCH_WEBHOOK     = `${PROXY}/webhook/research-prospect`; // company → web research + personalized draft (n8n workflow 13)
+const FOLLOWUP_GEN_WEBHOOK = `${PROXY}/webhook/generate-followup`; // lead + thread/notes context → value-add follow-up draft (n8n workflow 17)
 
 // Listen to ALL availability docs (scales to multiple locations)
 unsubAvail = liveSnapshot(collection(db, 'availability'), snap => {
@@ -5351,6 +5477,10 @@ window.toggleSpaceMatches  = toggleSpaceMatches;
 window.openSpaceMatchEmail = openSpaceMatchEmail;
 window.copySpaceMatchMsg   = copySpaceMatchMsg;
 window.snoozeSpaceMatch    = snoozeSpaceMatch;
+window.generateFollowup    = generateFollowup;
+window.openGeneratedFollowupEmail = openGeneratedFollowupEmail;
+window.copyGeneratedFollowupMsg   = copyGeneratedFollowupMsg;
+window.dismissFollowupDraft       = dismissFollowupDraft;
 </script>
 </body>
 </html>
