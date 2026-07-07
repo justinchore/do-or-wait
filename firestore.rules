@@ -3,19 +3,27 @@ rules_version = '2';
 // ─────────────────────────────────────────────────────────────────────────
 // Do-or-Wait Firestore security rules
 //
-// IMPORTANT SEQUENCING: do NOT paste the RECOMMENDED block into the Firebase
-// console until the app signs users in (see FIRESTORE_SECURITY.md). The app
-// currently connects with NO auth, so these rules would lock it out.
-// n8n is unaffected — its Google service account bypasses rules entirely.
+// LIVE / PUBLISHED (locked down 2026-06-24). Two roles:
+//   1. Full users (isAllowed)   — everything, read + write. MUST match
+//      ALLOWED_EMAILS in index.html.
+//   2. Avail-only (isAvailOnly) — READ-ONLY on availability/config/renewals
+//      data (what the Avail tab shows). No access to anything else
+//      (leads, tasks, notes, outreach, pricing), even via a direct
+//      Firestore call from the browser console. MUST match
+//      AVAIL_ONLY_EMAILS in index.html. This is the real enforcement for
+//      that restricted role — index.html only controls what the UI shows;
+//      this is what actually stops her token from reading/writing more.
+//
+// n8n is unaffected either way — its Google service account bypasses
+// rules entirely (IAM, not these rules).
 // ─────────────────────────────────────────────────────────────────────────
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // A signed-in user on the explicit allowlist. MUST match ALLOWED_EMAILS in
-    // index.html. Emails lowercased to compare. (No email_verified check — the
-    // email/password accounts are hand-created in the console and aren't
-    // "verified"; the 3-email allowlist is the real gate.)
+    // Full access. Emails lowercased to compare. (No email_verified check —
+    // the email/password accounts are hand-created in the console and
+    // aren't "verified"; the allowlist is the real gate.)
     function isAllowed() {
       return request.auth != null
         && request.auth.token.email.lower() in [
@@ -25,16 +33,36 @@ service cloud.firestore {
         ];
     }
 
-    // ===== RECOMMENDED (turn on AFTER the app has Google sign-in) =====
+    // Restricted role: read-only, Avail-tab data only.
+    function isAvailOnly() {
+      return request.auth != null
+        && request.auth.token.email.lower() in [
+          'lucy.wang@cubework.com'
+        ];
+    }
+
+    function isAnyAllowed() {
+      return isAllowed() || isAvailOnly();
+    }
+
+    // Avail-tab data: full users read/write, avail-only users read-only.
+    match /availability/{propId} {
+      allow read:  if isAnyAllowed();
+      allow write: if isAllowed();
+    }
+    match /config/properties {
+      allow read:  if isAnyAllowed();
+      allow write: if isAllowed();
+    }
+    match /renewals/current {
+      allow read:  if isAnyAllowed();
+      allow write: if isAllowed();
+    }
+
+    // Everything else (topics, leads, notes, outreach, pricing,
+    // apollo_phone_map, floorplans, etc.) — full users only.
     match /{document=**} {
       allow read, write: if isAllowed();
     }
-
-    // ===== INTERIM (weak, low-effort) — any signed-in user incl. anonymous =====
-    // Stops drive-by access from anyone who merely has the project ID, but
-    // anyone who loads the app can still get a token. Use only as a stopgap.
-    // match /{document=**} {
-    //   allow read, write: if request.auth != null;
-    // }
   }
 }

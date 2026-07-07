@@ -883,7 +883,7 @@
   <!-- Availability view -->
   <div id="avail-view">
     <div id="avail-content" style="max-width:1100px;margin:0 auto;padding:16px;"></div>
-    <div style="max-width:1100px;margin:0 auto;padding:0 16px 24px;">
+    <div style="max-width:1100px;margin:0 auto;padding:0 16px 24px;" id="avail-add-loc-wrap">
       <button class="add-topic-btn" onclick="openAddLocation()">＋ Add Location</button>
     </div>
   </div>
@@ -1278,6 +1278,14 @@ const ALLOWED_EMAILS = [
 ];
 // (email/password auth — no OAuth provider / cross-domain redirect, so it works on mobile)
 
+// Restricted role: can sign in, but gets ONLY the Avail tab, read-only (no sync/export/
+// edit/add/remove). MUST match the avail-only allowlist in firestore.rules — the real
+// enforcement lives there; this list just controls what the app SHOWS her.
+const AVAIL_ONLY_EMAILS = [
+  'lucy.wang@cubework.com'
+];
+let AVAIL_READONLY = false; // set true in onAuthStateChanged when a restricted email signs in
+
 // Defer every Firestore listener until auth is ready, then flush.
 let _authReady = false;
 const _pendingListeners = [];
@@ -1312,14 +1320,30 @@ function doEmailSignIn(){
 }
 function doSignOut(){ signOut(auth); }
 
+// Hides every tab but Avail and strips write controls for a restricted sign-in.
+// Cosmetic/UX only — the real gate is firestore.rules, which restricts what her
+// token can read/write regardless of what the UI shows.
+function lockToAvailReadOnly() {
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.style.display = b.dataset.tab === 'avail' ? '' : 'none';
+  });
+  const addLocWrap = document.getElementById('avail-add-loc-wrap');
+  if (addLocWrap) addLocWrap.style.display = 'none';
+  switchTab('avail');
+}
+
 onAuthStateChanged(auth, user => {
   const appEl  = document.getElementById('app');
   const authEl = document.getElementById('auth-screen');
   const email  = ((user && user.email) || '').toLowerCase();
-  if (user && ALLOWED_EMAILS.includes(email)) {
+  const allowedFull = ALLOWED_EMAILS.includes(email);
+  const allowedAvailOnly = AVAIL_ONLY_EMAILS.includes(email);
+  if (user && (allowedFull || allowedAvailOnly)) {
+    AVAIL_READONLY = allowedAvailOnly;
     if (authEl) authEl.style.display = 'none';
     if (appEl)  appEl.style.display  = '';
     startLiveData();                          // attach Firestore listeners (once)
+    if (AVAIL_READONLY) lockToAvailReadOnly();
   } else {
     if (user) {                               // signed in but not on the allowlist
       const m = document.getElementById('auth-msg');
@@ -2830,7 +2854,7 @@ function renderLeadCard(lead) {
         </button>
         <div style="display:flex;gap:6px;">
           <button class="btn sm" onclick="openEditLeadDetails('${lead.id}',event)">✏️ Details</button>
-          ${!lead.archived ? `<button class="btn sm" onclick="generateFollowup('${lead.id}',event)">${lead.followup_draft ? '✨ Regenerate follow-up' : '✨ Generate follow-up'}</button>` : ''}
+          ${!lead.archived && (leadThreadConversationId(lead) || leadNotesContext(lead)) ? `<button class="btn sm" onclick="generateFollowup('${lead.id}',event)">${lead.followup_draft ? '✨ Regenerate follow-up' : '✨ Generate follow-up'}</button>` : ''}
           ${!lead.archived ? `<button class="btn sm dark" onclick="openAddLeadEntry('${lead.id}',event)">＋ Update</button>` : ''}
         </div>
       </div>
@@ -3954,8 +3978,8 @@ function renderAvailability() {
       <div class="avail-loading">
         <div style="font-size:2rem;margin-bottom:12px">🏭</div>
         <div style="font-weight:700;margin-bottom:6px">No availability data yet</div>
-        <div style="margin-bottom:16px">Import and activate Workflow 4 in n8n to start syncing.</div>
-        <button class="avail-link avail-refresh" onclick="triggerAvailSync()">⟳ Sync now</button>
+        ${AVAIL_READONLY ? '' : `<div style="margin-bottom:16px">Import and activate Workflow 4 in n8n to start syncing.</div>
+        <button class="avail-link avail-refresh" onclick="triggerAvailSync()">⟳ Sync now</button>`}
       </div>`;
     return;
   }
@@ -3976,7 +4000,7 @@ function renderAvailability() {
         style="flex:1;min-width:200px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;font-size:14px;outline:none;background:var(--surface);color:var(--text);box-sizing:border-box;" />
       <span style="font-size:12px;color:var(--text2);">Sort:</span>
       ${sortBtn('sf','Most available')}${sortBtn('name','A–Z')}
-      <button onclick="openAvailExport()" title="Pick locations and export a fresh JSON snapshot" style="font-size:12px;border:1px solid var(--border);border-radius:8px;padding:5px 10px;cursor:pointer;background:var(--surface);color:var(--text);">⬇ Export JSON</button>
+      ${AVAIL_READONLY ? '' : `<button onclick="openAvailExport()" title="Pick locations and export a fresh JSON snapshot" style="font-size:12px;border:1px solid var(--border);border-radius:8px;padding:5px 10px;cursor:pointer;background:var(--surface);color:var(--text);">⬇ Export JSON</button>`}
     </div>`;
 
   const sections = stateKeys.map(st => {
@@ -4028,6 +4052,7 @@ function applyAvailSearch() {
 
 // ── Availability JSON export: pick locations → fresh getDocs snapshot → download
 function openAvailExport() {
+  if (AVAIL_READONLY) return;
   const ids = Object.keys(availMap);
   const groups = {};
   ids.forEach(id => { const s = stateOf(availMap[id]); (groups[s] = groups[s] || []).push(id); });
@@ -4076,6 +4101,7 @@ function refreshExportSyncTimes() {
   });
 }
 async function doAvailExport() {
+  if (AVAIL_READONLY) return;
   const chosen = [...document.querySelectorAll('#availexp-list input[type=checkbox]:checked')].map(c => c.value);
   const st = document.getElementById('availexp-status');
   if (!chosen.length) { st.textContent = 'Pick at least one location.'; return; }
@@ -4167,12 +4193,15 @@ function renderLocCard(propId, d) {
   const expDate = expRaw ? new Date(expRaw + 'T00:00:00') : null;
   const expStr = expDate ? expDate.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) : '';
   const expired = expDate ? (expDate.getTime() < Date.now()) : false;
-  const ownStyle = 'display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:2px 9px;border-radius:20px;cursor:pointer;';
+  const ownStyle = `display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:2px 9px;border-radius:20px;${AVAIL_READONLY ? '' : 'cursor:pointer;'}`;
+  const ownClick = AVAIL_READONLY ? '' : `onclick="openEditOwnership('${propId}',event)"`;
   const ownBadge = own === 'own'
-    ? `<span onclick="openEditOwnership('${propId}',event)" style="${ownStyle}background:#e0e7ff;color:#3730a3;">🏢 Owned</span>`
+    ? `<span ${ownClick} style="${ownStyle}background:#e0e7ff;color:#3730a3;">🏢 Owned</span>`
     : own === 'lease'
-    ? `<span onclick="openEditOwnership('${propId}',event)" style="${ownStyle}background:${expired ? '#fee2e2' : '#fef3c7'};color:${expired ? '#b91c1c' : '#92400e'};">📄 Leased${expStr ? ` · ${expired ? 'EXPIRED ' : 'exp '}${expStr}` : ' · set exp'}</span>`
-    : `<span onclick="openEditOwnership('${propId}',event)" style="${ownStyle}background:var(--bg);color:var(--text2);border:1px dashed var(--border);">＋ Own / Lease</span>`;
+    ? `<span ${ownClick} style="${ownStyle}background:${expired ? '#fee2e2' : '#fef3c7'};color:${expired ? '#b91c1c' : '#92400e'};">📄 Leased${expStr ? ` · ${expired ? 'EXPIRED ' : 'exp '}${expStr}` : ' · set exp'}</span>`
+    : AVAIL_READONLY
+    ? '' // nothing set yet, and she can't set it — don't show an empty-state edit affordance
+    : `<span ${ownClick} style="${ownStyle}background:var(--bg);color:var(--text2);border:1px dashed var(--border);">＋ Own / Lease</span>`;
 
   const body = isOpen ? renderLocBody(propId, d) : '';
 
@@ -4181,15 +4210,16 @@ function renderLocCard(propId, d) {
     ? `<div class="loc-pa" style="margin-top:0">
         <span class="loc-pa-name">👤 ${esc(pa.name)}</span>
         ${pa.phone ? `<a class="loc-pa-phone" href="tel:${esc(pa.phone)}" onclick="event.stopPropagation()">📞 ${esc(pa.phone)}</a>` : ''}
-        <button class="loc-pa-edit" onclick="openEditPA('${propId}',event)">edit</button>
+        ${AVAIL_READONLY ? '' : `<button class="loc-pa-edit" onclick="openEditPA('${propId}',event)">edit</button>`}
       </div>`
+    : AVAIL_READONLY ? ''
     : `<div class="loc-pa" style="margin-top:0"><button class="loc-pa-edit" onclick="openEditPA('${propId}',event)">+ Add property associate</button></div>`;
 
   const quickLinks = [
     d.yardi_url      ? `<a class="loc-ql" href="${esc(d.yardi_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Blueprint ↗</a>` : '',
     d.yardi_url      ? `<a class="loc-ql" href="${esc(yardiSpaces(d.yardi_url))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Spaces ↗</a>` : '',
     d.sharepoint_url ? `<a class="loc-ql" href="${esc(d.sharepoint_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">SharePoint ↗</a>` : '',
-    `<button class="loc-ql avail-refresh" id="refresh-${propId}" onclick="event.stopPropagation();triggerAvailSync('${propId}')">⟳</button>`
+    AVAIL_READONLY ? '' : `<button class="loc-ql avail-refresh" id="refresh-${propId}" onclick="event.stopPropagation();triggerAvailSync('${propId}')">⟳</button>`
   ].filter(Boolean).join('');
 
   return `
@@ -4319,9 +4349,9 @@ function renderLocBody(propId, d) {
     <!-- Floorplan injected here -->
     <div id="fp-section-${propId}"></div>
 
-    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);text-align:right;">
+    ${AVAIL_READONLY ? '' : `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);text-align:right;">
       <button onclick="removeLocation('${propId}',event)" style="font-size:12px;color:#b91c1c;background:transparent;border:1px solid #fecaca;border-radius:8px;padding:5px 11px;cursor:pointer;">Remove location</button>
-    </div>`;
+    </div>`}`;
 }
 
 function setAvailFilter(propId, f, ev) {
@@ -4345,6 +4375,7 @@ function toggleUnitDetail(key, ev) {
 }
 
 async function removeLocation(propId, ev) {
+  if (AVAIL_READONLY) return;
   if (ev) ev.stopPropagation();
   const name = (availMap[propId] && availMap[propId].property) || propId;
   if (!confirm(`Remove "${name}" from the dashboard?\n\nThis deletes its availability data and removes it from the location config. The SharePoint sheet is not touched.`)) return;
@@ -4387,6 +4418,7 @@ function toggleAvailCard(propId) {
 }
 
 async function triggerAvailSync(propId) {
+  if (AVAIL_READONLY) return;
   const btn = document.getElementById(`refresh-${propId}`);
   if (btn) { btn.textContent = '⟳ Syncing…'; btn.classList.add('spinning'); }
   const resetBtn = () => { if (btn) { btn.textContent = '⟳'; btn.classList.remove('spinning'); } };
@@ -4531,6 +4563,7 @@ function autofillLocation(key, e) {
 }
 
 function openAddLocation() {
+  if (AVAIL_READONLY) return;
   ['al-name','al-address','al-sp','al-yardi','al-pa-name','al-pa-phone','al-pa-email','al-avail','al-hold']
     .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   document.getElementById('addloc-status').textContent = '';
@@ -4545,6 +4578,7 @@ function closeAddLocation() {
 }
 
 async function submitAddLocation() {
+  if (AVAIL_READONLY) return;
   const name  = document.getElementById('al-name').value.trim();
   const sp    = document.getElementById('al-sp').value.trim();
   if (!name) { document.getElementById('al-name').focus(); return; }
@@ -4594,6 +4628,7 @@ async function submitAddLocation() {
 //  PROPERTY ASSOCIATE
 // ═══════════════════════════════════════════════════════════════
 function openEditPA(propId, e) {
+  if (AVAIL_READONLY) return;
   e.stopPropagation();
   const pa = availMap[propId]?.pa || {};
   document.getElementById('pa-prop-id').value = propId;
@@ -4609,6 +4644,7 @@ function closePAModal() {
 }
 
 async function savePA() {
+  if (AVAIL_READONLY) return;
   const propId = document.getElementById('pa-prop-id').value;
   const name   = document.getElementById('pa-name').value.trim();
   const phone  = document.getElementById('pa-phone').value.trim();
@@ -4645,6 +4681,7 @@ async function savePA() {
 
 // ── Ownership (own / lease + lease expiration) ────────────────
 function openEditOwnership(propId, e) {
+  if (AVAIL_READONLY) return;
   if (e) e.stopPropagation();
   const d = availMap[propId] || {};
   document.getElementById('own-prop-id').value = propId;
@@ -4659,6 +4696,7 @@ function ownToggleExp() {
 }
 function closeOwnModal() { document.getElementById('own-overlay').classList.remove('open'); }
 async function saveOwnership() {
+  if (AVAIL_READONLY) return;
   const propId = document.getElementById('own-prop-id').value;
   const type   = document.getElementById('own-type').value;
   const exp    = type === 'lease' ? document.getElementById('own-exp').value : '';
