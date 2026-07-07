@@ -1,0 +1,167 @@
+{
+  "name": "CW — 18. Pricing BD Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "cronExpression", "expression": "0 30 6 * * *" }] }
+      },
+      "id": "cw-pb-001",
+      "name": "Daily 6:30am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pricing-bd-sync",
+        "responseMode": "responseNode",
+        "options": { "allowedOrigins": "*" }
+      },
+      "id": "cw-pb-002",
+      "name": "Manual sync webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 460],
+      "webhookId": "pricing-bd-sync"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Both triggers land here first. Reset the cross-loop accumulator so a fresh\n// run never inherits leftover rows from a prior run that errored mid-loop.\nconst sd = $getWorkflowStaticData('global');\nsd.rows = [];\nreturn [{ json: {} }];"
+      },
+      "id": "cw-pb-003",
+      "name": "Reset accumulator",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 380]
+    },
+    {
+      "parameters": {
+        "url": "https://graph.microsoft.com/v1.0/drives/b!NqOhqfgNDEy9VSk-AuJqlB28H4LACSBCj5XJoInGBLtTDZlSzxqLQouZ3cpmVAnp/items/01MTLWTO7BSZIMMN3ZNZAYOKPCDMTT55DG/workbook/worksheets?$select=name",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {}
+      },
+      "id": "cw-pb-004",
+      "name": "List worksheets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 380],
+      "credentials": {
+        "microsoftOAuth2Api": { "id": "A3ZyY4XtVcBv1yU3", "name": "Microsoft account 3" },
+        "oAuth2Api": { "id": "yA4MMh3TXmKCSDGY", "name": "n8n-cubework" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Every tab except the Overview/Instructions cover tab is a state (or UNIS) rate\n// card sheet — fan out one item per tab name so the loop below can read each one.\nconst resp = $input.first().json || {};\nconst list = Array.isArray(resp.value) ? resp.value : [];\nconst skip = /overview|instructions/i;\nconst tabs = list.map(w => (w && w.name) || '').filter(n => n && !skip.test(n));\nif (!tabs.length) throw new Error('No worksheet names came back — check the workbook / credential.');\nreturn tabs.map(name => ({ json: { name } }));"
+      },
+      "id": "cw-pb-005",
+      "name": "Filter state tabs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 380]
+    },
+    {
+      "parameters": { "batchSize": 1, "options": {} },
+      "id": "cw-pb-006",
+      "name": "Batch tabs (loop)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1100, 380]
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.microsoft.com/v1.0/drives/b!NqOhqfgNDEy9VSk-AuJqlB28H4LACSBCj5XJoInGBLtTDZlSzxqLQouZ3cpmVAnp/items/01MTLWTO7BSZIMMN3ZNZAYOKPCDMTT55DG/workbook/worksheets('{{ encodeURIComponent($json.name) }}')/usedRange(valuesOnly=true)?$select=values",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {}
+      },
+      "id": "cw-pb-007",
+      "name": "Read tab grid",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 280],
+      "credentials": {
+        "microsoftOAuth2Api": { "id": "A3ZyY4XtVcBv1yU3", "name": "Microsoft account 3" },
+        "oAuth2Api": { "id": "yA4MMh3TXmKCSDGY", "name": "n8n-cubework" }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse one state (or UNIS) tab's raw grid into building-card records and append\n// them to the cross-loop accumulator. Verified against a real usedRange() pull of\n// the AZ tab (2026-07-07) — see n8n/pricing_bd_raw_grid.json for the fixture this\n// was built against. Layout per card, top to bottom:\n//   [indexNum, \"Name  —  Address [optional tag]\", ...]        <- card start (col0 is a number)\n//   [\"\", \"Building SF\", <num>, \"Lease\", <date|Own>, \"Occupancy\", <pct>]\n//   [optional single-cell free-text rows: BELOW BREAK-EVEN / PROMO / other notes]\n//   [\"\", \"Band\", \"Tier\", \"Current\", \"Recommended\", \"Floor–Ceiling\", \"Action\"]  <- tier header\n//   [\"\", \"<sf range>\", \"<tier name>\", <current>, <recommended>, \"<floor-ceiling>\", \"<action>\"]  x1-6\n//   [\"\", \"ADD-ONS / ANCILLARY PRICING\", \"\", \"\", \"\", \"\", \"\"]   <- add-ons marker\n//   [\"\", label, value, label, value, label, value]  x N        <- add-on rows, 3 label/value pairs\n//   [\"\", \"Conf Room — ...\", \"\", \"\", \"\", \"\", \"\"]\n//   [\"\", \"Note: ...\", \"\", \"\", \"\", \"\", \"\"]\n//   [blank row separator]\n// The UNIS tab additionally has bare \"— CA —\" style divider rows between state\n// groups (its cards don't carry their own state otherwise).\n\nconst grid = ($json.values) || [];\nconst tabName = (($('Batch tabs (loop)').item || {}).json || {}).name || '';\nconst isUnis = /unis/i.test(tabName);\n\nfunction tabDefaultState(g, tab) {\n  for (const row of g.slice(0, 5)) {\n    const cell = String((row && row[0]) || '');\n    const m = /CUBEWORK\\s*\\|\\s*([A-Z]{2})\\s*—/.exec(cell);\n    if (m) return m[1];\n  }\n  const t = tab.trim();\n  return /^[A-Z]{2}$/.test(t) ? t : (t || 'Other');\n}\nlet currentState = tabDefaultState(grid, tabName);\n\nconst TIER_LABELS = new Set([\n  '≤ 2,000 SF', '2,001 – 5,000 SF', '5,001 – 10,000 SF',\n  '10,001 – 30,000 SF', '30,001 – 100,000 SF', '100,000+ SF'\n]);\nconst ADDON_KEYMAP = {\n  'office': 'office', 'dock': 'dock', 'cubicle/desk': 'cubicle_desk', 'virtual office': 'virtual_office',\n  'truck/container pkg': 'truck_container_pkg', 'sm vehicle pkg': 'sm_vehicle_pkg', 'whse wifi': 'whse_wifi',\n  'deposit': 'deposit', 'day office': 'day_office', 'day whse': 'day_whse', 'day dock': 'day_dock', 'event space': 'event_space'\n};\nfunction slug(s) { return String(s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, ''); }\nfunction addonKey(label) { const k = String(label || '').toLowerCase().trim(); return ADDON_KEYMAP[k] || slug(label); }\nfunction clean(v) { return (v === null || v === undefined) ? '' : v; }\nfunction isBlankRow(row) { return !row || row.every(c => clean(c) === ''); }\n\nconst rows = [];\nlet card = null;\nfunction pushCard() { if (card) rows.push(card); card = null; }\n\nfor (let i = 0; i < grid.length; i++) {\n  const row = grid[i] || [];\n  const c0 = row[0];\n  const c1 = clean(row[1]).toString().trim();\n\n  // UNIS-tab state divider, e.g. \"— CA —\"\n  const divM = /^—\\s*([A-Za-z]{2,})\\s*—$/.exec(c1);\n  if (divM && isBlankRow(row.slice(2)) && (c0 === '' || c0 == null)) { currentState = divM[1].toUpperCase(); continue; }\n\n  // New card start\n  if (typeof c0 === 'number') {\n    pushCard();\n    const rawLoc = clean(row[1]).toString();\n    const tagM = /\\[([^\\]]+)\\]\\s*$/.exec(rawLoc);\n    const tag = tagM ? tagM[1].trim() : '';\n    const withoutTag = rawLoc.replace(/\\[([^\\]]+)\\]\\s*$/, '').trim();\n    const parts = withoutTag.split('—').map(s => s.trim());\n    card = {\n      _id: 'pb' + tabName + '_' + c0 + '_' + i,\n      state: currentState, unis: isUnis, index: c0,\n      name: parts[0] || withoutTag, address: parts.slice(1).join(' — ') || '',\n      tag: tag || null, building_sf: '', lease: '', occupancy_pct: '',\n      bands: [], addons: {}, conf_room: '', notes: [], below_break_even: '', promo: ''\n    };\n    continue;\n  }\n\n  if (!card) continue; // stray row before the first card (title / legend / blank)\n\n  if (c1 === 'Building SF') { card.building_sf = clean(row[2]); card.lease = String(clean(row[4])).trim(); card.occupancy_pct = clean(row[6]); continue; }\n  if (c1 === 'Band' && clean(row[2]) === 'Tier') continue;                 // tier table header\n  if (TIER_LABELS.has(c1)) {\n    card.bands.push({ sf_range: c1, tier: clean(row[2]), current: clean(row[3]), recommended: clean(row[4]), floor_ceiling: clean(row[5]), action: clean(row[6]) });\n    continue;\n  }\n  if (c1 === 'ADD-ONS / ANCILLARY PRICING') continue;                      // add-ons marker\n  if (isBlankRow(row)) continue;                                          // spacer between cards\n\n  // Any other single-populated-cell row is free text: break-even / promo / conf room / generic note\n  if (isBlankRow(row.slice(2)) && c1) {\n    if (/^BELOW BREAK-EVEN/i.test(c1)) card.below_break_even = c1;\n    else if (/^PROMO/i.test(c1)) card.promo = c1;\n    else if (/^Conf Room/i.test(c1)) card.conf_room = c1;\n    else card.notes.push(c1);\n    continue;\n  }\n\n  // Otherwise: generic label/value pairs across the row = add-ons\n  for (let col = 1; col < row.length; col += 2) {\n    const label = clean(row[col]).toString().trim();\n    const val = clean(row[col + 1]);\n    if (!label) continue;\n    card.addons[addonKey(label)] = val;\n  }\n}\npushCard();\n\nconst sd = $getWorkflowStaticData('global');\nif (!Array.isArray(sd.rows)) sd.rows = [];\nsd.rows.push(...rows);\n\nreturn [{ json: { tab: tabName, cardsParsed: rows.length } }];"
+      },
+      "id": "cw-pb-008",
+      "name": "Parse tab",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 280]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Snapshot the accumulator built across every loop iteration, reset it for the\n// next run, and build the Firestore PATCH body for pricing_bd/current.\nconst sd = $getWorkflowStaticData('global');\nconst rows = Array.isArray(sd.rows) ? sd.rows.slice() : [];\nsd.rows = [];\n\nif (rows.length === 0) throw new Error('Pricing BD parse produced 0 rows — check tab names / usedRange.');\n\nfunction fv(v) {\n  if (v === null || v === undefined) return { nullValue: null };\n  if (typeof v === 'number') return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };\n  if (typeof v === 'boolean') return { booleanValue: v };\n  if (Array.isArray(v)) return { arrayValue: { values: v.map(fv) } };\n  if (typeof v === 'object') { const fields = {}; for (const k in v) fields[k] = fv(v[k]); return { mapValue: { fields } }; }\n  return { stringValue: String(v) };\n}\n\nconst arr = rows.map(r => fv(r));\nconst patchBody = { fields: {\n  rows: { arrayValue: { values: arr } },\n  updatedAt: { stringValue: new Date().toISOString() },\n  source: { stringValue: 'n8n pricing_bd sync (workflow 18)' },\n  count: { integerValue: String(rows.length) }\n} };\n\nreturn [{ json: { patchBody, count: rows.length } }];"
+      },
+      "id": "cw-pb-009",
+      "name": "Build Firestore patch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 560]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/pricing_bd/current?updateMask.fieldPaths=rows&updateMask.fieldPaths=updatedAt&updateMask.fieldPaths=source&updateMask.fieldPaths=count",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.patchBody) }}",
+        "options": {}
+      },
+      "id": "cw-pb-010",
+      "name": "Write pricing_bd to Firestore",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1320, 560],
+      "credentials": {
+        "googleApi": { "id": "REPLACE_WITH_CREDENTIAL_ID", "name": "Firebase_SDK_do_or_wait" }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": { "entries": [{ "name": "Access-Control-Allow-Origin", "value": "*" }] }
+        },
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, count: $('Build Firestore patch').item.json.count }) }}"
+      },
+      "id": "cw-pb-011",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1540, 560]
+    }
+  ],
+  "connections": {
+    "Daily 6:30am": { "main": [[{ "node": "Reset accumulator", "type": "main", "index": 0 }]] },
+    "Manual sync webhook": { "main": [[{ "node": "Reset accumulator", "type": "main", "index": 0 }]] },
+    "Reset accumulator": { "main": [[{ "node": "List worksheets", "type": "main", "index": 0 }]] },
+    "List worksheets": { "main": [[{ "node": "Filter state tabs", "type": "main", "index": 0 }]] },
+    "Filter state tabs": { "main": [[{ "node": "Batch tabs (loop)", "type": "main", "index": 0 }]] },
+    "Batch tabs (loop)": {
+      "main": [
+        [{ "node": "Build Firestore patch", "type": "main", "index": 0 }],
+        [{ "node": "Read tab grid", "type": "main", "index": 0 }]
+      ]
+    },
+    "Read tab grid": { "main": [[{ "node": "Parse tab", "type": "main", "index": 0 }]] },
+    "Parse tab": { "main": [[{ "node": "Batch tabs (loop)", "type": "main", "index": 0 }]] },
+    "Build Firestore patch": { "main": [[{ "node": "Write pricing_bd to Firestore", "type": "main", "index": 0 }]] },
+    "Write pricing_bd to Firestore": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "cw-workflow-018"
+}

@@ -661,6 +661,7 @@
     <button class="tab-btn" data-tab="playbook" onclick="switchTab('playbook')">📞 Playbook</button>
     <button class="tab-btn active" data-tab="avail" onclick="switchTab('avail')">🏭 Avail</button>
     <button class="tab-btn" data-tab="pricing" onclick="switchTab('pricing')">💲 Pricing</button>
+    <button class="tab-btn" data-tab="ratebands" onclick="switchTab('ratebands')">📊 Rate Bands</button>
     <button class="tab-btn" data-tab="notes" onclick="switchTab('notes')">💡 Notes</button>
   </div>
 
@@ -918,6 +919,29 @@
         <span id="pricing-meta" style="font-size:12px;color:var(--text2);"></span>
       </div>
       <div id="pricing-content"></div>
+    </div>
+  </div>
+
+  <!-- Rate Bands view (internal Sales/BD negotiating bands — staff only, separate from Pricing) -->
+  <div id="ratebands-view" style="display:none">
+    <div style="max-width:1200px;margin:0 auto;padding:16px;width:100%;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px;">
+        <input id="ratebands-search" oninput="onRateBandsSearch(this.value)" placeholder="Search city, address, or state…"
+               style="flex:1;min-width:200px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:14px;" />
+        <select id="ratebands-state" onchange="setRateBandsState(this.value)"
+               style="padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:13px;"></select>
+        <select id="ratebands-scope" onchange="setRateBandsScope(this.value)"
+               style="padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:13px;">
+          <option value="cubework">Cubework buildings</option>
+          <option value="unis">UNIS sites</option>
+          <option value="all">All</option>
+        </select>
+        <button id="ratebands-sync-btn" onclick="syncRateBandsNow(event)" title="Pull a fresh copy from the Sales/BD sheet right now"
+               style="font-size:12px;border:1px solid var(--border);border-radius:8px;padding:6px 10px;cursor:pointer;background:var(--surface);color:var(--text);">⟳ Sync now</button>
+        <span id="ratebands-meta" style="font-size:12px;color:var(--text2);"></span>
+      </div>
+      <div style="font-size:11px;color:var(--text2);margin-bottom:14px;">Internal Sales &amp; BD reference — never quote below the Floor without sign-off from Kevin Chang or Christine Wei.</div>
+      <div id="ratebands-content"></div>
     </div>
   </div>
 
@@ -3864,6 +3888,7 @@ function switchTab(tab) {
   document.getElementById('playbook-view').style.display = tab === 'playbook' ? '' : 'none';
   document.getElementById('avail-view').style.display    = tab === 'avail'    ? '' : 'none';
   document.getElementById('pricing-view').style.display  = tab === 'pricing'  ? '' : 'none';
+  document.getElementById('ratebands-view').style.display = tab === 'ratebands' ? '' : 'none';
   document.getElementById('notes-view').style.display    = tab === 'notes'    ? '' : 'none';
   document.getElementById('outreach-view').style.display = tab === 'outreach' ? '' : 'none';
   document.querySelectorAll('.tab-btn').forEach(b => {
@@ -3871,6 +3896,7 @@ function switchTab(tab) {
   });
   if (tab === 'notes') renderNotes();
   if (tab === 'pricing') renderPricing();
+  if (tab === 'ratebands') renderRateBands();
   if (tab === 'outreach') renderOutreach();
   if (tab === 'playbook') renderPlaybookCards();
   if (tab === 'leads') refreshAllLeadEmailLinks();
@@ -3957,6 +3983,7 @@ const ADD_LOCATION_WEBHOOK = `${PROXY}/webhook/add-location`;
 const RESOLVE_THREAD_WEBHOOK = `${PROXY}/webhook/resolve-thread`; // subject+contact → real Outlook webLink (n8n workflow 11)
 const RESEARCH_WEBHOOK     = `${PROXY}/webhook/research-prospect`; // company → web research + personalized draft (n8n workflow 13)
 const FOLLOWUP_GEN_WEBHOOK = `${PROXY}/webhook/generate-followup`; // lead + thread/notes context → value-add follow-up draft (n8n workflow 17)
+const PRICING_BD_SYNC_WEBHOOK = `${PROXY}/webhook/pricing-bd-sync`; // manual "Sync now" for the Rate Bands tab (n8n workflow 18)
 
 // Listen to ALL availability docs (scales to multiple locations)
 unsubAvail = liveSnapshot(collection(db, 'availability'), snap => {
@@ -4932,6 +4959,151 @@ try {
 renderPricing();
 
 // ═══════════════════════════════════════════════════════════════
+//  RATE BANDS — internal Sales/BD negotiating tool. Reads Firestore
+//  pricing_bd/current (written by the n8n Pricing BD Sync, workflow 18).
+//  Fully separate from pricing/current — the two source sheets carry
+//  different, non-overlapping info (see CLAUDE.md, 2026-07-07 session)
+//  and neither sync touches the other's doc.
+// ═══════════════════════════════════════════════════════════════
+let rateBandsRows      = [];
+let rateBandsUpdatedAt = '';
+let rateBandsSearch    = '';
+let rateBandsState     = 'all';
+let rateBandsScope     = 'cubework';   // 'cubework' | 'unis' | 'all'
+const expandedBand = new Set();
+
+const RB_ADDON_LABELS = [
+  ['office','Office'], ['dock','Dock'], ['cubicle_desk','Cubicle/Desk'], ['virtual_office','Virtual Office'],
+  ['truck_container_pkg','Truck/Container Pkg'], ['sm_vehicle_pkg','Sm Vehicle Pkg'], ['whse_wifi','Whse WiFi'],
+  ['deposit','Deposit'], ['day_office','Day Office'], ['day_whse','Day Whse'], ['day_dock','Day Dock'], ['event_space','Event Space'],
+];
+const RB_ACTION_STYLE = {
+  RAISE: 'background:#dcfce7;color:#166534;', HOLD: 'background:var(--bg);color:var(--text2);', LOWER: 'background:#fee2e2;color:#991b1b;'
+};
+
+function rbVal(v){ return (v === '' || v == null) ? '<span style="color:var(--text2)">—</span>' : esc(String(v)); }
+function onRateBandsSearch(v){ rateBandsSearch = (v||'').trim().toLowerCase(); renderRateBands(); }
+function setRateBandsState(v){ rateBandsState = v; renderRateBands(); }
+function setRateBandsScope(v){ rateBandsScope = v; renderRateBands(); }
+function toggleBandCard(id, e){ if(e) e.stopPropagation(); if(expandedBand.has(id)) expandedBand.delete(id); else expandedBand.add(id); renderRateBands(); }
+
+async function syncRateBandsNow(e){
+  if (e) e.stopPropagation();
+  const btn = document.getElementById('ratebands-sync-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⟳ Syncing…'; }
+  try {
+    const res = await fetch(PRICING_BD_SYNC_WEBHOOK, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const text = await res.text().catch(() => '');
+    if (!res.ok) {
+      alert('Rate Bands sync failed (HTTP ' + res.status + ').\n' +
+        (res.status === 404 ? 'The pricing-bd-sync webhook isn’t reachable — is n8n workflow 18 imported and Active?' : 'Workflow 18 errored — check its Executions log in n8n.') +
+        (text ? '\n\n' + text.slice(0, 300) : ''));
+    }
+  } catch (err) {
+    console.error('syncRateBandsNow failed:', err);
+    alert('Could not reach the Rate Bands sync — check your connection and try again.');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⟳ Sync now'; }
+  }
+}
+
+function renderRateBands(){
+  const host = document.getElementById('ratebands-content'); if(!host) return;
+  const sel = document.getElementById('ratebands-state');
+  if(sel){
+    const states = [...new Set(rateBandsRows.map(r=>r.state).filter(Boolean))].sort();
+    sel.innerHTML = '<option value="all">All states</option>' +
+      states.map(s=>`<option value="${esc(s)}">${esc(STATE_NAMES[s]||s)}</option>`).join('');
+    sel.value = rateBandsState;
+  }
+  let rows = rateBandsRows;
+  if (rateBandsScope === 'cubework') rows = rows.filter(r => !r.unis);
+  else if (rateBandsScope === 'unis') rows = rows.filter(r => r.unis);
+  rows = rows.filter(r => rateBandsState === 'all' || r.state === rateBandsState);
+  if (rateBandsSearch) rows = rows.filter(r => [r.state,r.name,r.address].some(x => String(x||'').toLowerCase().includes(rateBandsSearch)));
+  rows = rows.slice().sort((a,b)=> String(a.state||'').localeCompare(String(b.state||'')) || String(a.name||'').localeCompare(String(b.name||'')));
+
+  const meta = document.getElementById('ratebands-meta');
+  if (meta) meta.textContent = rateBandsRows.length
+    ? `${rows.length} building${rows.length!==1?'s':''} · synced ${rateBandsUpdatedAt ? new Date(rateBandsUpdatedAt).toLocaleString([], {month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}) : '—'}`
+    : 'Not synced yet';
+  if (!rateBandsRows.length){ host.innerHTML = '<div class="empty">No Rate Bands data yet — hit ⟳ Sync now once workflow 18 is imported and active.</div>'; return; }
+  if (!rows.length){ host.innerHTML = '<div class="empty">No buildings match.</div>'; return; }
+
+  const groups = {}; rows.forEach(r => { (groups[r.state||'Other'] = groups[r.state||'Other'] || []).push(r); });
+  host.innerHTML = Object.keys(groups).sort().map(st => `
+    <div style="margin-bottom:18px;">
+      <div style="font-weight:700;font-size:13px;margin:0 0 8px;">${esc(STATE_NAMES[st]||st)} <span style="color:var(--text2);font-weight:400;">(${groups[st].length})</span></div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        ${groups[st].map(r => renderBandCard(r)).join('')}
+      </div>
+    </div>`).join('');
+}
+
+function renderBandCard(r){
+  const open = expandedBand.has(r._id);
+  const tagBadge = r.tag ? `<span style="font-size:10px;font-weight:600;background:${/inactive/i.test(r.tag)?'#f1f5f9':/pending/i.test(r.tag)?'#fef3c7':'#e0e7ff'};color:${/inactive/i.test(r.tag)?'#64748b':/pending/i.test(r.tag)?'#92400e':'#3730a3'};border-radius:10px;padding:1px 7px;">${esc(r.tag)}</span>` : '';
+  const beFlag = r.below_break_even ? `<span title="${esc(r.below_break_even)}" style="font-size:10px;font-weight:600;background:#fee2e2;color:#991b1b;border-radius:10px;padding:1px 7px;">⚠ below break-even</span>` : '';
+  const promoFlag = r.promo ? `<span title="${esc(r.promo)}" style="font-size:10px;font-weight:600;background:#dbeafe;color:#1e40af;border-radius:10px;padding:1px 7px;">🏷 promo</span>` : '';
+  const occ = r.occupancy_pct === '' || r.occupancy_pct == null ? '' :
+    `<span style="font-size:11px;font-weight:600;color:${r.occupancy_pct>=90?'#166534':r.occupancy_pct>=70?'var(--text2)':'#991b1b'};">${r.occupancy_pct}% occ</span>`;
+
+  const bandRows = r.bands.map(b => `
+    <tr style="border-top:1px solid var(--border);">
+      <td style="padding:4px 6px;">${esc(b.sf_range)}</td>
+      <td style="padding:4px 6px;color:var(--text2);">${esc(b.tier)}</td>
+      <td style="padding:4px 6px;text-align:right;font-weight:700;">${b.current===''?'—':'$'+b.current}</td>
+      <td style="padding:4px 6px;text-align:right;">${b.recommended===''?'—':'$'+b.recommended}</td>
+      <td style="padding:4px 6px;text-align:right;color:var(--text2);white-space:nowrap;">${rbVal(b.floor_ceiling)}</td>
+      <td style="padding:4px 6px;text-align:center;">${b.action?`<span style="font-size:10px;font-weight:700;border-radius:8px;padding:1px 7px;${RB_ACTION_STYLE[b.action]||''}">${esc(b.action)}</span>`:'—'}</td>
+    </tr>`).join('');
+
+  const addons = RB_ADDON_LABELS.filter(([k]) => r.addons && r.addons[k] !== undefined && r.addons[k] !== '')
+    .map(([k,lab]) => `<div style="display:flex;justify-content:space-between;gap:10px;padding:3px 0;border-top:1px solid var(--border);font-size:12px;"><span style="color:var(--text2);">${lab}</span><span style="font-weight:600;">${esc(String(r.addons[k]))}</span></div>`).join('');
+
+  const notesBlock = (r.notes && r.notes.length) ? r.notes.map(n => `<div style="font-size:11px;color:var(--text2);font-style:italic;margin-top:4px;">${esc(n)}</div>`).join('') : '';
+
+  const detail = open ? `
+    <div style="padding:10px 12px;border-top:1px solid var(--border);background:var(--bg);">
+      <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;margin-bottom:8px;">
+        <div><span style="color:var(--text2);">Building SF</span> <strong>${r.building_sf===''?'—':Number(r.building_sf).toLocaleString()}</strong></div>
+        <div><span style="color:var(--text2);">Lease</span> <strong>${esc(r.lease||'—')}</strong></div>
+      </div>
+      ${r.promo ? `<div style="font-size:12px;background:#dbeafe;color:#1e40af;border-radius:8px;padding:6px 10px;margin-bottom:8px;">${esc(r.promo)}</div>` : ''}
+      ${r.below_break_even ? `<div style="font-size:12px;background:#fee2e2;color:#991b1b;border-radius:8px;padding:6px 10px;margin-bottom:8px;">${esc(r.below_break_even)}</div>` : ''}
+      ${r.bands.length ? `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead><tr style="color:var(--text2);font-size:10px;text-transform:uppercase;letter-spacing:.04em;text-align:left;">
+          <th style="padding:4px 6px;">SF range</th><th style="padding:4px 6px;">Tier</th>
+          <th style="padding:4px 6px;text-align:right;">Current</th><th style="padding:4px 6px;text-align:right;">Recommended</th>
+          <th style="padding:4px 6px;text-align:right;">Floor–Ceiling</th><th style="padding:4px 6px;text-align:center;">Action</th>
+        </tr></thead><tbody>${bandRows}</tbody></table></div>` : '<div style="font-size:12px;color:var(--text2);">No tier bands on file.</div>'}
+      ${addons ? `<div style="margin-top:8px;">${addons}</div>` : ''}
+      ${r.conf_room ? `<div style="font-size:11px;color:var(--text2);margin-top:6px;">${esc(r.conf_room)}</div>` : ''}
+      ${notesBlock}
+    </div>` : '';
+
+  return `<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;">
+      <div onclick="toggleBandCard('${r._id}',event)" style="cursor:pointer;padding:9px 12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span style="color:var(--text2);">${open?'▾':'▸'}</span>
+        <span style="font-weight:700;">${esc(r.name||'')}</span>
+        ${tagBadge}${beFlag}${promoFlag}
+        <span style="flex:1;min-width:120px;color:var(--text2);font-size:12px;">${esc(r.address||'')}</span>
+        ${occ}
+      </div>
+      ${detail}
+    </div>`;
+}
+
+// Live from Firestore (written by the n8n Pricing BD Sync). No snapshot fallback —
+// this is internal-only data with no bundled seed, unlike the public Pricing tab.
+try {
+  liveSnapshot(doc(db,'pricing_bd','current'), snap => {
+    const d = snap.exists() ? snap.data() : null;
+    if (d && Array.isArray(d.rows)) { rateBandsRows = d.rows; rateBandsUpdatedAt = d.updatedAt || ''; renderRateBands(); }
+  }, err => console.warn('pricing_bd listener', err));
+} catch(e){ console.warn('pricing_bd listener init', e); }
+
+// ═══════════════════════════════════════════════════════════════
 //  OUTREACH — Apollo-sourced prospect working list (📧 Outreach tab).
 //  Seeded from outreach-seed.js (all target companies show immediately);
 //  live contact/email data overlays from Firestore `outreach` collection
@@ -5504,6 +5676,11 @@ window.doEmailSignIn       = doEmailSignIn;
 window.doSignOut           = doSignOut;
 window.setPricingState     = setPricingState;
 window.togglePriceRow      = togglePriceRow;
+window.onRateBandsSearch   = onRateBandsSearch;
+window.setRateBandsState   = setRateBandsState;
+window.setRateBandsScope   = setRateBandsScope;
+window.toggleBandCard      = toggleBandCard;
+window.syncRateBandsNow    = syncRateBandsNow;
 window.onPlaybookSearch    = onPlaybookSearch;
 window.togglePbCard        = togglePbCard;
 window.cycleFollowupTpl    = cycleFollowupTpl;
