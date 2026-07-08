@@ -7,9 +7,12 @@ rules_version = '2';
 //   1. Full users (isAllowed)   — everything, read + write. MUST match
 //      ALLOWED_EMAILS in index.html.
 //   2. Avail-only (isAvailOnly) — READ-ONLY on availability/config/renewals
-//      data (what the Avail tab shows). No access to anything else
-//      (leads, tasks, notes, outreach, pricing), even via a direct
-//      Firestore call from the browser console. MUST match
+//      and roster data (what the Avail + Roster tabs show — Roster was
+//      opened up to this role 2026-07-07, unlike Pricing/Rate Bands, since
+//      it's just a staff contact directory, not sensitive/negotiating data).
+//      No access to anything else (leads, tasks, notes, outreach, pricing,
+//      pricing_bd), even via a direct Firestore call from the browser
+//      console. MUST match
 //      AVAIL_ONLY_EMAILS in index.html. This is the real enforcement for
 //      that restricted role — index.html only controls what the UI shows;
 //      this is what actually stops her token from reading/writing more.
@@ -58,8 +61,12 @@ service cloud.firestore {
       allow read:  if isAnyAllowed();
       allow write: if isAllowed();
     }
+    match /roster/current {
+      allow read:  if isAnyAllowed();
+      allow write: if isAllowed();
+    }
 
-    // Everything else (topics, leads, notes, outreach, pricing,
+    // Everything else (topics, leads, notes, outreach, pricing, pricing_bd,
     // apollo_phone_map, floorplans, etc.) — full users only.
     match /{document=**} {
       allow read, write: if isAllowed();

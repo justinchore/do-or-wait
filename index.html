@@ -660,6 +660,7 @@
     <button class="tab-btn" data-tab="outreach" onclick="switchTab('outreach')">📧 Outreach</button>
     <button class="tab-btn" data-tab="playbook" onclick="switchTab('playbook')">📞 Playbook</button>
     <button class="tab-btn active" data-tab="avail" onclick="switchTab('avail')">🏭 Avail</button>
+    <button class="tab-btn" data-tab="roster" onclick="switchTab('roster')">🗂️ Roster</button>
     <button class="tab-btn" data-tab="pricing" onclick="switchTab('pricing')">💲 Pricing</button>
     <button class="tab-btn" data-tab="ratebands" onclick="switchTab('ratebands')">📊 Rate Bands</button>
     <button class="tab-btn" data-tab="notes" onclick="switchTab('notes')">💡 Notes</button>
@@ -905,6 +906,22 @@
         <button class="btn sm" onclick="clearNoteSince()">clear</button>
       </div>
       <div id="notes-list"></div>
+    </div>
+  </div>
+
+  <!-- Roster view (staff contact directory — visible to Avail-only role too) -->
+  <div id="roster-view" style="display:none">
+    <div style="max-width:1000px;margin:0 auto;padding:16px;width:100%;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+        <input id="roster-search" oninput="onRosterSearch(this.value)" placeholder="Search location, state, or staff name…"
+               style="flex:1;min-width:200px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:14px;" />
+        <select id="roster-state" onchange="setRosterState(this.value)"
+               style="padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:13px;"></select>
+        <button id="roster-sync-btn" onclick="syncRosterNow(event)" title="Pull a fresh copy from the Locations Master Roster sheet"
+               style="font-size:12px;border:1px solid var(--border);border-radius:8px;padding:6px 10px;cursor:pointer;background:var(--surface);color:var(--text);">⟳ Sync now</button>
+        <span id="roster-meta" style="font-size:12px;color:var(--text2);"></span>
+      </div>
+      <div id="roster-content"></div>
     </div>
   </div>
 
@@ -1344,12 +1361,14 @@ function doEmailSignIn(){
 }
 function doSignOut(){ signOut(auth); }
 
-// Hides every tab but Avail and strips write controls for a restricted sign-in.
-// Cosmetic/UX only — the real gate is firestore.rules, which restricts what her
-// token can read/write regardless of what the UI shows.
+// Hides every tab but Avail (and Roster, added 2026-07-07 — it's just a staff
+// contact directory, not sensitive/negotiating data like Pricing/Rate Bands)
+// and strips write controls for a restricted sign-in. Cosmetic/UX only — the
+// real gate is firestore.rules, which restricts what her token can read/write
+// regardless of what the UI shows.
 function lockToAvailReadOnly() {
   document.querySelectorAll('.tab-btn').forEach(b => {
-    b.style.display = b.dataset.tab === 'avail' ? '' : 'none';
+    b.style.display = (b.dataset.tab === 'avail' || b.dataset.tab === 'roster') ? '' : 'none';
   });
   const addLocWrap = document.getElementById('avail-add-loc-wrap');
   if (addLocWrap) addLocWrap.style.display = 'none';
@@ -3887,6 +3906,7 @@ function switchTab(tab) {
   document.getElementById('leads-view').style.display    = tab === 'leads'    ? '' : 'none';
   document.getElementById('playbook-view').style.display = tab === 'playbook' ? '' : 'none';
   document.getElementById('avail-view').style.display    = tab === 'avail'    ? '' : 'none';
+  document.getElementById('roster-view').style.display   = tab === 'roster'   ? '' : 'none';
   document.getElementById('pricing-view').style.display  = tab === 'pricing'  ? '' : 'none';
   document.getElementById('ratebands-view').style.display = tab === 'ratebands' ? '' : 'none';
   document.getElementById('notes-view').style.display    = tab === 'notes'    ? '' : 'none';
@@ -3895,6 +3915,7 @@ function switchTab(tab) {
     b.classList.toggle('active', b.dataset.tab === tab);
   });
   if (tab === 'notes') renderNotes();
+  if (tab === 'roster') renderRoster();
   if (tab === 'pricing') renderPricing();
   if (tab === 'ratebands') renderRateBands();
   if (tab === 'outreach') renderOutreach();
@@ -3984,6 +4005,7 @@ const RESOLVE_THREAD_WEBHOOK = `${PROXY}/webhook/resolve-thread`; // subject+con
 const RESEARCH_WEBHOOK     = `${PROXY}/webhook/research-prospect`; // company → web research + personalized draft (n8n workflow 13)
 const FOLLOWUP_GEN_WEBHOOK = `${PROXY}/webhook/generate-followup`; // lead + thread/notes context → value-add follow-up draft (n8n workflow 17)
 const PRICING_BD_SYNC_WEBHOOK = `${PROXY}/webhook/pricing-bd-sync`; // manual "Sync now" for the Rate Bands tab (n8n workflow 18)
+const ROSTER_SYNC_WEBHOOK = `${PROXY}/webhook/roster-sync`; // manual "Sync now" for the Roster tab (n8n workflow 19)
 
 // Listen to ALL availability docs (scales to multiple locations)
 unsubAvail = liveSnapshot(collection(db, 'availability'), snap => {
@@ -5104,6 +5126,93 @@ try {
 } catch(e){ console.warn('pricing_bd listener init', e); }
 
 // ═══════════════════════════════════════════════════════════════
+//  ROSTER — staff contact directory (who to call for a location).
+//  Reads Firestore roster/current (written by the n8n Roster Sync,
+//  workflow 19, manual-only — the sheet changes rarely). Visible to the
+//  Avail-only restricted role too (see lockToAvailReadOnly) since it's
+//  just a contact directory, not sensitive pricing/negotiating data.
+// ═══════════════════════════════════════════════════════════════
+let rosterRows      = [];
+let rosterUpdatedAt = '';
+let rosterSearch    = '';
+let rosterState     = 'all';
+
+function onRosterSearch(v){ rosterSearch = (v||'').trim().toLowerCase(); renderRoster(); }
+function setRosterState(v){ rosterState = v; renderRoster(); }
+
+async function syncRosterNow(e){
+  if (e) e.stopPropagation();
+  if (AVAIL_READONLY) return;
+  const btn = document.getElementById('roster-sync-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⟳ Syncing…'; }
+  try {
+    const res = await fetch(ROSTER_SYNC_WEBHOOK, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const text = await res.text().catch(() => '');
+    if (!res.ok) {
+      alert('Roster sync failed (HTTP ' + res.status + ').\n' +
+        (res.status === 404 ? 'The roster-sync webhook isn’t reachable — is n8n workflow 19 imported and Active?' : 'Workflow 19 errored — check its Executions log in n8n.') +
+        (text ? '\n\n' + text.slice(0, 300) : ''));
+    }
+  } catch (err) {
+    console.error('syncRosterNow failed:', err);
+    alert('Could not reach the Roster sync — check your connection and try again.');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⟳ Sync now'; }
+  }
+}
+
+function renderRoster(){
+  const host = document.getElementById('roster-content'); if(!host) return;
+  const syncBtn = document.getElementById('roster-sync-btn');
+  if (syncBtn) syncBtn.style.display = AVAIL_READONLY ? 'none' : '';
+  const sel = document.getElementById('roster-state');
+  if(sel){
+    const states = [...new Set(rosterRows.map(r=>r.state).filter(Boolean))].sort();
+    sel.innerHTML = '<option value="all">All states</option>' +
+      states.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
+    sel.value = rosterState;
+  }
+  let rows = rosterRows.filter(r => rosterState === 'all' || r.state === rosterState);
+  if (rosterSearch) rows = rows.filter(r => [r.state,r.location,r.local_staff,r.facility_manager].some(x => String(x||'').toLowerCase().includes(rosterSearch)));
+  rows = rows.slice().sort((a,b)=> String(a.state||'').localeCompare(String(b.state||'')) || String(a.location||'').localeCompare(String(b.location||'')));
+
+  const meta = document.getElementById('roster-meta');
+  if (meta) meta.textContent = rosterRows.length
+    ? `${rows.length} location${rows.length!==1?'s':''} · synced ${rosterUpdatedAt ? new Date(rosterUpdatedAt).toLocaleString([], {month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}) : '—'}`
+    : 'Not synced yet';
+  if (!rosterRows.length){ host.innerHTML = `<div class="empty">No Roster data yet${AVAIL_READONLY ? '' : ' — hit ⟳ Sync now once workflow 19 is imported and active'}.</div>`; return; }
+  if (!rows.length){ host.innerHTML = '<div class="empty">No locations match.</div>'; return; }
+
+  const groups = {}; rows.forEach(r => { (groups[r.state||'Other'] = groups[r.state||'Other'] || []).push(r); });
+  host.innerHTML = Object.keys(groups).sort().map(st => {
+    const body = groups[st].map(r => {
+      const statusBadge = r.status ? `<span title="${esc(r.status)}" style="font-size:10px;font-weight:600;background:${/unis/i.test(r.status)?'#e0e7ff':/for sale|moved out/i.test(r.status)?'#f1f5f9':'#fef3c7'};color:${/unis/i.test(r.status)?'#3730a3':/for sale|moved out/i.test(r.status)?'#64748b':'#92400e'};border-radius:10px;padding:1px 7px;white-space:nowrap;">${esc(r.status)}</span>` : '';
+      return `<tr style="border-top:1px solid var(--border);">
+          <td style="padding:6px 8px;font-weight:600;white-space:nowrap;">${esc(r.location)} ${statusBadge}</td>
+          <td style="padding:6px 8px;">${esc(r.local_staff)}</td>
+          <td style="padding:6px 8px;">${esc(r.facility_manager)}</td>
+        </tr>`;
+    }).join('');
+    return `<div style="margin-bottom:18px;">
+        <div style="font-weight:700;font-size:13px;margin:0 0 6px;">${esc(st)} <span style="color:var(--text2);font-weight:400;">(${groups[st].length})</span></div>
+        <div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead><tr style="color:var(--text2);font-size:11px;text-transform:uppercase;letter-spacing:.04em;text-align:left;">
+            <th style="padding:4px 8px;">Location</th><th style="padding:4px 8px;">Local Staff</th><th style="padding:4px 8px;">Facility Manager</th>
+          </tr></thead><tbody>${body}</tbody></table></div>
+      </div>`;
+  }).join('');
+}
+
+// Live from Firestore (written by the n8n Roster Sync). No snapshot fallback —
+// this doesn't change often and is pulled fresh via the manual sync button.
+try {
+  liveSnapshot(doc(db,'roster','current'), snap => {
+    const d = snap.exists() ? snap.data() : null;
+    if (d && Array.isArray(d.rows)) { rosterRows = d.rows; rosterUpdatedAt = d.updatedAt || ''; renderRoster(); }
+  }, err => console.warn('roster listener', err));
+} catch(e){ console.warn('roster listener init', e); }
+
+// ═══════════════════════════════════════════════════════════════
 //  OUTREACH — Apollo-sourced prospect working list (📧 Outreach tab).
 //  Seeded from outreach-seed.js (all target companies show immediately);
 //  live contact/email data overlays from Firestore `outreach` collection
@@ -5681,6 +5790,9 @@ window.setRateBandsState   = setRateBandsState;
 window.setRateBandsScope   = setRateBandsScope;
 window.toggleBandCard      = toggleBandCard;
 window.syncRateBandsNow    = syncRateBandsNow;
+window.onRosterSearch      = onRosterSearch;
+window.setRosterState      = setRosterState;
+window.syncRosterNow       = syncRosterNow;
 window.onPlaybookSearch    = onPlaybookSearch;
 window.togglePbCard        = togglePbCard;
 window.cycleFollowupTpl    = cycleFollowupTpl;

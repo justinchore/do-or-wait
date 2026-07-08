@@ -1,0 +1,101 @@
+{
+  "name": "CW — 19. Roster Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "roster-sync",
+        "responseMode": "responseNode",
+        "options": { "allowedOrigins": "*" }
+      },
+      "id": "cw-r-001",
+      "name": "Manual sync webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "roster-sync"
+    },
+    {
+      "parameters": {
+        "url": "https://graph.microsoft.com/v1.0/drives/b!NqOhqfgNDEy9VSk-AuJqlB28H4LACSBCj5XJoInGBLtTDZlSzxqLQouZ3cpmVAnp/items/01MTLWTOZ2CEBXD3HRIFDIP7P3OHKI6QKN/workbook/worksheets('Locations')/usedRange(valuesOnly=true)?$select=values",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {}
+      },
+      "id": "cw-r-002",
+      "name": "Read Locations tab",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "credentials": {
+        "microsoftOAuth2Api": { "id": "A3ZyY4XtVcBv1yU3", "name": "Microsoft account 3" },
+        "oAuth2Api": { "id": "yA4MMh3TXmKCSDGY", "name": "n8n-cubework" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the Locations tab into per-location roster records. This sheet is a\n// plain flat table (unlike the pricing_bd card dashboard) — verified against a\n// real usedRange() pull 2026-07-07, fixture kept at n8n/roster_raw_grid.json.\n// Layout: title row, a subtitle row, then a header row (\"Code\"/\"State\"/\n// \"Location\"/\"Status\"/\"Sales\"/\"Local Staff (Support Tours)\"/\"National Facility\n// Manager\"), then one data row per location. Find the header by content (not a\n// fixed row index) so an extra title/subtitle line added later doesn't break it.\n// Only pa/manager-per-location is surfaced in the app per Justin's ask\n// (2026-07-07) — code/status/sales are still captured since they're free, in\n// case they're wanted later, but the Roster tab itself leads with Local Staff\n// and National Facility Manager.\n\nconst grid = ($json.values) || [];\nfunction clean(v) { return (v === null || v === undefined) ? '' : String(v).trim(); }\n\nlet headerIdx = -1;\nfor (let i = 0; i < grid.length; i++) {\n  const row = grid[i] || [];\n  if (clean(row[0]) === 'Code' && clean(row[2]) === 'Location') { headerIdx = i; break; }\n}\nif (headerIdx === -1) throw new Error('Could not find the Code/Location header row — sheet layout may have changed.');\n\nconst rows = [];\nfor (let i = headerIdx + 1; i < grid.length; i++) {\n  const row = grid[i] || [];\n  const code = clean(row[0]);\n  if (!code) continue; // blank spacer row\n  rows.push({\n    _id: 'r' + code,\n    code, state: clean(row[1]), location: clean(row[2]), status: clean(row[3]), sales: clean(row[4]),\n    local_staff: clean(row[5]) || '—', facility_manager: clean(row[6]) || '—'\n  });\n}\nif (!rows.length) throw new Error('Roster parse produced 0 rows — check the sheet layout.');\n\nreturn [{ json: { rows, count: rows.length } }];"
+      },
+      "id": "cw-r-003",
+      "name": "Parse roster",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "function fv(v) {\n  if (v === null || v === undefined) return { nullValue: null };\n  if (typeof v === 'number') return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };\n  if (typeof v === 'boolean') return { booleanValue: v };\n  if (Array.isArray(v)) return { arrayValue: { values: v.map(fv) } };\n  if (typeof v === 'object') { const fields = {}; for (const k in v) fields[k] = fv(v[k]); return { mapValue: { fields } }; }\n  return { stringValue: String(v) };\n}\n\nconst rows = $json.rows || [];\nconst arr = rows.map(r => fv(r));\nconst patchBody = { fields: {\n  rows: { arrayValue: { values: arr } },\n  updatedAt: { stringValue: new Date().toISOString() },\n  source: { stringValue: 'n8n roster sync (workflow 19)' },\n  count: { integerValue: String(rows.length) }\n} };\n\nreturn [{ json: { patchBody, count: rows.length } }];"
+      },
+      "id": "cw-r-004",
+      "name": "Build Firestore patch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/roster/current?updateMask.fieldPaths=rows&updateMask.fieldPaths=updatedAt&updateMask.fieldPaths=source&updateMask.fieldPaths=count",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.patchBody) }}",
+        "options": {}
+      },
+      "id": "cw-r-005",
+      "name": "Write roster to Firestore",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 300],
+      "credentials": {
+        "googleApi": { "id": "REPLACE_WITH_CREDENTIAL_ID", "name": "Firebase_SDK_do_or_wait" }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": { "entries": [{ "name": "Access-Control-Allow-Origin", "value": "*" }] }
+        },
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, count: $('Build Firestore patch').item.json.count }) }}"
+      },
+      "id": "cw-r-006",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1340, 300]
+    }
+  ],
+  "connections": {
+    "Manual sync webhook": { "main": [[{ "node": "Read Locations tab", "type": "main", "index": 0 }]] },
+    "Read Locations tab": { "main": [[{ "node": "Parse roster", "type": "main", "index": 0 }]] },
+    "Parse roster": { "main": [[{ "node": "Build Firestore patch", "type": "main", "index": 0 }]] },
+    "Build Firestore patch": { "main": [[{ "node": "Write roster to Firestore", "type": "main", "index": 0 }]] },
+    "Write roster to Firestore": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "cw-workflow-019"
+}
