@@ -1024,6 +1024,10 @@
           <option value="do_not_call">Do not call</option>
           <option value="promoted">Promoted</option>
         </select>
+        <input id="po-sf-min" type="number" min="0" placeholder="Min SF" oninput="setPOSfMin(this.value)"
+               style="width:90px;padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:13px;" />
+        <input id="po-sf-max" type="number" min="0" placeholder="Max SF" oninput="setPOSfMax(this.value)"
+               style="width:90px;padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:13px;" />
         <span id="po-meta" style="font-size:12px;color:var(--text2);"></span>
       </div>
       <div id="po-content"></div>
@@ -5639,6 +5643,11 @@ let poLocation = 'all';
 let poWave     = 'all';
 let poStatus   = 'all';
 let poModalId  = null;
+let poSfMin    = null;   // Filter by square footage — leads with no sqft on file
+let poSfMax    = null;   // (mostly Wave 5, unqualified) don't match when either is set.
+
+function setPOSfMin(v){ poSfMin = v==='' ? null : Number(v); renderPropertyOutreach(); }
+function setPOSfMax(v){ poSfMax = v==='' ? null : Number(v); renderPropertyOutreach(); }
 
 // Per-property "what's true right now" — new availability, a live discount, or
 // any other current talking point Justin wants cold drafts to mention. Deliberately
@@ -5720,6 +5729,8 @@ function renderPropertyOutreach(){
   if(poLocation!=='all') rows = rows.filter(r=>r.location===poLocation);
   if(poWave!=='all') rows = rows.filter(r=>String(r.wave)===poWave);
   if(poStatus!=='all') rows = rows.filter(r=>(r.status||'not_contacted')===poStatus);
+  if(poSfMin!=null) rows = rows.filter(r=> r.sqft!=null && Number(r.sqft)>=poSfMin);
+  if(poSfMax!=null) rows = rows.filter(r=> r.sqft!=null && Number(r.sqft)<=poSfMax);
   if(poSearch) rows = rows.filter(r => [r.company,r.contact,r.source_notes,r.status].some(x=>String(x||'').toLowerCase().includes(poSearch)));
 
   const meta = document.getElementById('po-meta');
@@ -5817,6 +5828,8 @@ function openPOModal(id){
           style="width:130px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px;" />
         <input value="${esc(r.email||'')}" placeholder="Email" onchange="savePOContact('${id}','email',this.value)"
           style="flex:1;min-width:160px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px;" />
+        <input type="number" min="0" value="${r.sqft!=null?r.sqft:''}" placeholder="Sq ft (after qualifying)" onchange="savePOSqft('${id}',this.value)"
+          style="width:170px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px;" />
       </div>
       ${(r.phone || r.email) ? `<div style="display:flex;gap:6px;flex-wrap:wrap;">
         ${r.phone?`<a href="tel:${esc((r.phone||'').replace(/[^0-9+]/g,''))}" style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);text-decoration:none;">📞 Call</a>
@@ -5885,6 +5898,17 @@ async function savePOStatus(id, val){
 async function savePOContact(id, field, val){
   if(!id || !['contact','phone','email'].includes(field)) return;
   try { await setDoc(doc(db,'property_outreach',id), { [field]: val, updatedAt: new Date().toISOString() }, { merge:true }); } catch(e){ console.warn('savePOContact', e); }
+}
+
+// Editable after a qualifying call — Wave 5 especially has no sqft on file until
+// you've actually talked to them. A manual entry here is treated as confirmed,
+// not estimated (clears sqft_est), since it's coming straight from the lead.
+async function savePOSqft(id, val){
+  if(!id) return;
+  const n = (val===''||val==null) ? null : Number(val);
+  if(n!=null && (isNaN(n) || n<0)) return;
+  try { await setDoc(doc(db,'property_outreach',id), { sqft: n, sqft_est: false, updatedAt: new Date().toISOString() }, { merge:true }); }
+  catch(e){ console.warn('savePOSqft', e); }
 }
 
 async function logPOAttempt(id, outcome, e){
@@ -6229,6 +6253,9 @@ window.closePOModal        = closePOModal;
 window.poModalBgClick      = poModalBgClick;
 window.savePOStatus        = savePOStatus;
 window.savePOContact       = savePOContact;
+window.savePOSqft          = savePOSqft;
+window.setPOSfMin          = setPOSfMin;
+window.setPOSfMax          = setPOSfMax;
 window.logPOAttempt        = logPOAttempt;
 window.promotePOToLead     = promotePOToLead;
 window.savePOContextField  = savePOContextField;
