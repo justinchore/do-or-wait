@@ -5647,13 +5647,16 @@ let poModalId  = null;
 let poSfMin    = null;   // Filter by square footage — leads with no sqft on file
 let poSfMax    = null;   // (mostly Wave 5, unqualified) don't match when either is set.
 
-// Which property groups are collapsed to a summary line. Added 2026-07-09 when a
-// 2nd property (Pellissier) joined Ontario Airport on this tab — a Set of location
-// ids that are COLLAPSED (empty by default = everything expanded, same as it always
-// rendered before this existed, so nothing changes visually until you click a header).
-const poCollapsedProps = new Set();
+// Which property groups are expanded. Added 2026-07-09 when a 2nd property
+// (Pellissier) joined Ontario Airport on this tab. Updated same day — with real
+// data volume (289 + 75 leads across two properties) showing everything expanded
+// by default was overwhelming, so this now defaults to COLLAPSED (a Set of
+// EXPANDED location ids, empty by default), matching the Avail tab's location-card
+// convention (`expandedAvailProps` — "none open by default"). Click a property's
+// header to expand just that one.
+const poExpandedProps = new Set();
 function togglePOProp(loc){
-  if(poCollapsedProps.has(loc)) poCollapsedProps.delete(loc); else poCollapsedProps.add(loc);
+  if(poExpandedProps.has(loc)) poExpandedProps.delete(loc); else poExpandedProps.add(loc);
   renderPropertyOutreach();
 }
 
@@ -5814,7 +5817,7 @@ function renderPropertyOutreach(){
             style="flex:1;min-width:180px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:12px;" />
         </div>
       </div>`;
-    const isOpen = !poCollapsedProps.has(loc);
+    const isOpen = poExpandedProps.has(loc);
     // Collapsed summary line — one badge per wave present, so priority still reads
     // at a glance without the full tables. Same "click header to expand" pattern as
     // the Avail tab's location cards.
