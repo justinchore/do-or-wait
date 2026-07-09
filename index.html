@@ -4048,6 +4048,7 @@ const ADD_LOCATION_WEBHOOK = `${PROXY}/webhook/add-location`;
 const RESOLVE_THREAD_WEBHOOK = `${PROXY}/webhook/resolve-thread`; // subject+contact → real Outlook webLink (n8n workflow 11)
 const RESEARCH_WEBHOOK     = `${PROXY}/webhook/research-prospect`; // company → web research + personalized draft (n8n workflow 13)
 const FOLLOWUP_GEN_WEBHOOK = `${PROXY}/webhook/generate-followup`; // lead + thread/notes context → value-add follow-up draft (n8n workflow 17)
+const PO_DRAFT_WEBHOOK     = `${PROXY}/webhook/property-outreach-draft`; // property outreach lead + current talking points → cold outreach draft (n8n workflow 22)
 const PRICING_BD_SYNC_WEBHOOK = `${PROXY}/webhook/pricing-bd-sync`; // manual "Sync now" for the Rate Bands tab (n8n workflow 18)
 const ROSTER_SYNC_WEBHOOK = `${PROXY}/webhook/roster-sync`; // manual "Sync now" for the Roster tab (n8n workflow 19)
 
@@ -5639,6 +5640,20 @@ let poWave     = 'all';
 let poStatus   = 'all';
 let poModalId  = null;
 
+// Per-property "what's true right now" — new availability, a live discount, or
+// any other current talking point Justin wants cold drafts to mention. Deliberately
+// NOT auto-populated from anything (Avail tab, pricing, etc.) — Justin sets this
+// by hand so it's always something he's actually chosen to say, not a guess.
+// Pre-fills the per-lead draft inputs in the modal (which can still be edited
+// just for that one draft without changing this shared default).
+let poContextMap = {};             // location id → { available_space, discount, other, updatedAt }
+let unsubPOContext = null;
+async function savePOContextField(locId, field, val){
+  if(!locId || !['available_space','discount','other'].includes(field)) return;
+  try { await setDoc(doc(db,'property_outreach_context',locId), { [field]: val, updatedAt: new Date().toISOString() }, { merge:true }); }
+  catch(e){ console.warn('savePOContextField', e); }
+}
+
 function onPOSearch(v){ poSearch = (v||'').trim().toLowerCase(); renderPropertyOutreach(); }
 function setPOLocation(v){ poLocation = v; renderPropertyOutreach(); }
 function setPOWave(v){ poWave = v; renderPropertyOutreach(); }
@@ -5656,6 +5671,21 @@ const PO_STATUS_COLOR = {
   not_interested:'background:#f3f4f6;color:#6b7280;', bad_number:'background:#fee2e2;color:#991b1b;',
   do_not_call:'background:#fee2e2;color:#991b1b;', promoted:'background:#e0e7ff;color:#3730a3;'
 };
+// Wave = call-priority tier, one-time classified when the Ontario call sheet was
+// built (see Sales/Ontario_Airport_Project/Ontario Airport - Outreach Game Plan.md).
+// It's a fixed field on each record, not computed live — priority order is by wave
+// NUMBER (deal stage / reactivation reasoning), not by square footage. Wave 2's
+// leads are all 5,000+ SF by definition, so their totals will often outsize Wave 1's
+// smaller active-pipeline deals — that's expected, and exactly why wave order (not
+// SF order) drives what's shown "hottest" first in the tab.
+const PO_WAVE_INFO = {
+  '1': { label:'Active pipeline', sub:'Proposal / Tour', heat:'background:#fee2e2;color:#991b1b;', tag:'🔥 Hottest — call these first' },
+  '2': { label:'Warm lead', sub:'5,000+ SF — best fit for the 50k warehouse', heat:'background:#ffedd5;color:#9a3412;', tag:'' },
+  '3': { label:'Warm lead', sub:'under 5,000 SF', heat:'background:#fef3c7;color:#92400e;', tag:'' },
+  '4': { label:'Reactivation', sub:'past dead deals — Space Not Available first', heat:'background:#dbeafe;color:#1e40af;', tag:'' },
+  '5': { label:'Warm lead', sub:'size unknown — needs a qualifying call', heat:'background:#f3f4f6;color:#6b7280;', tag:'' },
+};
+
 const PO_OUTCOMES = [
   {key:'no_answer',           label:'📵 No answer'},
   {key:'voicemail',           label:'📞 Voicemail'},
@@ -5701,28 +5731,65 @@ function renderPropertyOutreach(){
   rows.forEach(r => { const k = r.location || '—'; (groups[k] = groups[k] || []).push(r); });
 
   host.innerHTML = Object.keys(groups).sort((a,b)=>poLocationName(a).localeCompare(poLocationName(b))).map(loc => {
-    const grp = groups[loc].slice().sort((a,b)=> (Number(a.wave)||99)-(Number(b.wave)||99) || String(a.company||'').localeCompare(String(b.company||'')));
-    const waveCounts = {};
-    grp.forEach(r=>{ const w = (r.wave!=null) ? r.wave : '—'; waveCounts[w]=(waveCounts[w]||0)+1; });
-    const waveSummary = Object.keys(waveCounts).sort((a,b)=>Number(a)-Number(b)).map(w=>`W${w}: ${waveCounts[w]}`).join(' · ');
-    const body = grp.map(r=>{
-      const status = r.status || 'not_contacted';
-      const badge = `<span style="font-size:10px;font-weight:600;border-radius:10px;padding:2px 8px;white-space:nowrap;${PO_STATUS_COLOR[status]||''}">${esc(PO_STATUS_LABEL[status]||status)}</span>`;
-      const attempts = Array.isArray(r.attempts) ? r.attempts.length : 0;
-      return `<tr onclick="openPOModal('${esc(r.id)}')" style="cursor:pointer;border-top:1px solid var(--border);">
-          <td style="padding:6px 8px;font-weight:600;">${esc(r.company||'')}</td>
-          <td style="padding:6px 8px;text-align:center;">${r.wave!=null?esc(String(r.wave)):'—'}</td>
-          <td style="padding:6px 8px;text-align:right;">${r.sqft?Number(r.sqft).toLocaleString()+(r.sqft_est?'~':''):'—'}</td>
-          <td style="padding:6px 8px;">${badge}</td>
-          <td style="padding:6px 8px;text-align:center;color:var(--text2);">${attempts||''}</td>
-        </tr>`;
+    const grp = groups[loc];
+    const byWave = {};
+    grp.forEach(r => { const w = (r.wave!=null) ? String(r.wave) : 'none'; (byWave[w] = byWave[w] || []).push(r); });
+    // Wave NUMBER is the priority signal, not raw square footage — Wave 1 (active
+    // pipeline) is always shown first and tagged hottest, even when a later wave's
+    // leads happen to sum to more SF (e.g. Wave 2 is "5,000+ SF" by definition, so
+    // its total will usually dwarf Wave 1's — that's expected, not a bug).
+    const waveKeys = Object.keys(byWave).sort((a,b)=> a==='none' ? 1 : b==='none' ? -1 : Number(a)-Number(b));
+    const waveBlocks = waveKeys.map(w => {
+      // Within a wave, biggest SF first — the ranking that actually matters is
+      // wave-then-size, not size alone across the whole property.
+      const rows2 = byWave[w].slice().sort((a,b)=> (Number(b.sqft)||0)-(Number(a.sqft)||0) || String(a.company||'').localeCompare(String(b.company||'')));
+      const totalSf = rows2.reduce((s,r)=> s + (Number(r.sqft)||0), 0);
+      const anyEst = rows2.some(r=>r.sqft_est);
+      const info = PO_WAVE_INFO[w] || { label:'Unspecified wave', sub:'', heat:'background:#f3f4f6;color:#6b7280;', tag:'' };
+      const body = rows2.map(r=>{
+        const status = r.status || 'not_contacted';
+        const badge = `<span style="font-size:10px;font-weight:600;border-radius:10px;padding:2px 8px;white-space:nowrap;${PO_STATUS_COLOR[status]||''}">${esc(PO_STATUS_LABEL[status]||status)}</span>`;
+        const attempts = Array.isArray(r.attempts) ? r.attempts.length : 0;
+        const contactCell = r.contact || r.phone || r.email
+          ? `${esc(r.contact||'')}${r.contact&&(r.phone||r.email)?' · ':''}${r.phone?'📞':''}${r.email?'✉️':''}`
+          : '<span style="color:var(--text2);">— pull from Yardi</span>';
+        return `<tr onclick="openPOModal('${esc(r.id)}')" style="cursor:pointer;border-top:1px solid var(--border);">
+            <td style="padding:6px 8px;font-weight:600;">${esc(r.company||'')}</td>
+            <td style="padding:6px 8px;font-size:12px;">${contactCell}</td>
+            <td style="padding:6px 8px;text-align:right;">${r.sqft?Number(r.sqft).toLocaleString()+(r.sqft_est?'~':''):'—'}</td>
+            <td style="padding:6px 8px;">${badge}</td>
+            <td style="padding:6px 8px;text-align:center;color:var(--text2);">${attempts||''}</td>
+          </tr>`;
+      }).join('');
+      return `<div style="margin:12px 0 18px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;">
+            <span style="font-size:11px;font-weight:700;border-radius:8px;padding:3px 9px;white-space:nowrap;${info.heat}">Wave ${w==='none'?'—':esc(w)}</span>
+            <span style="font-size:12.5px;font-weight:600;">${esc(info.label)}${info.sub?' · '+esc(info.sub):''}</span>
+            ${info.tag?`<span style="font-size:11px;font-weight:700;color:#b91c1c;">${esc(info.tag)}</span>`:''}
+            <span style="font-size:12px;color:var(--text2);">${rows2.length} lead${rows2.length!==1?'s':''}${totalSf?' · '+totalSf.toLocaleString()+(anyEst?'~':'')+' SF':''}</span>
+          </div>
+          <div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead><tr style="color:var(--text2);font-size:11px;text-transform:uppercase;letter-spacing:.04em;text-align:left;">
+              <th style="padding:4px 8px;">Company</th><th style="padding:4px 8px;">Contact</th><th style="padding:4px 8px;text-align:right;">SF</th><th style="padding:4px 8px;">Status</th><th style="padding:4px 8px;text-align:center;">Attempts</th>
+            </tr></thead><tbody>${body}</tbody></table></div>
+        </div>`;
     }).join('');
-    return `<div style="margin-bottom:20px;">
-        <div style="font-weight:700;font-size:13px;margin:0 0 6px;">${esc(poLocationName(loc))} <span style="color:var(--text2);font-weight:400;">(${grp.length}${waveSummary?' · '+esc(waveSummary):''})</span></div>
-        <div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;">
-          <thead><tr style="color:var(--text2);font-size:11px;text-transform:uppercase;letter-spacing:.04em;text-align:left;">
-            <th style="padding:4px 8px;">Company</th><th style="padding:4px 8px;text-align:center;">Wave</th><th style="padding:4px 8px;text-align:right;">SF</th><th style="padding:4px 8px;">Status</th><th style="padding:4px 8px;text-align:center;">Attempts</th>
-          </tr></thead><tbody>${body}</tbody></table></div>
+    const ctx = poContextMap[loc] || {};
+    const talkingPoints = `<div style="background:var(--bg);border-radius:10px;padding:10px 12px;margin:6px 0 12px;">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);margin-bottom:6px;">📢 Current talking points for this property <span style="font-weight:400;text-transform:none;">— feeds every cold draft here until you change it</span></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <input value="${esc(ctx.available_space||'')}" placeholder="Available space (e.g. 12,000 SF now open)" onchange="savePOContextField('${esc(loc)}','available_space',this.value)"
+            style="flex:1;min-width:180px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:12px;" />
+          <input value="${esc(ctx.discount||'')}" placeholder="Pricing / discount (e.g. 10% off 6mo)" onchange="savePOContextField('${esc(loc)}','discount',this.value)"
+            style="flex:1;min-width:180px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:12px;" />
+          <input value="${esc(ctx.other||'')}" placeholder="Other (anything else current)" onchange="savePOContextField('${esc(loc)}','other',this.value)"
+            style="flex:1;min-width:180px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:12px;" />
+        </div>
+      </div>`;
+    return `<div style="margin-bottom:22px;">
+        <div style="font-weight:700;font-size:14px;margin:0 0 2px;">${esc(poLocationName(loc))} <span style="color:var(--text2);font-weight:400;">(${grp.length})</span></div>
+        ${talkingPoints}
+        ${waveBlocks}
       </div>`;
   }).join('');
 }
@@ -5740,6 +5807,48 @@ function openPOModal(id){
       <div><div style="font-size:18px;font-weight:800;">${esc(r.company||'')}</div>
         <div style="font-size:12px;color:var(--text2);">${esc(poLocationName(r.location))}${r.wave!=null?' · Wave '+esc(String(r.wave)):''}${r.sqft?' · '+Number(r.sqft).toLocaleString()+(r.sqft_est?'~':'')+' SF':''}</div></div>
       <button onclick="closePOModal()" style="border:none;background:var(--bg);border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:16px;">✕</button>
+    </div>
+    <div style="margin-top:14px;">
+      <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);margin-bottom:6px;">Contact <span style="font-weight:400;color:var(--text2);text-transform:none;">— not in the Yardi export; pull it up and enter it here</span></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+        <input value="${esc(r.contact||'')}" placeholder="Contact name" onchange="savePOContact('${id}','contact',this.value)"
+          style="flex:1;min-width:130px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px;" />
+        <input value="${esc(r.phone||'')}" placeholder="Phone" onchange="savePOContact('${id}','phone',this.value)"
+          style="width:130px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px;" />
+        <input value="${esc(r.email||'')}" placeholder="Email" onchange="savePOContact('${id}','email',this.value)"
+          style="flex:1;min-width:160px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px;" />
+      </div>
+      ${(r.phone || r.email) ? `<div style="display:flex;gap:6px;flex-wrap:wrap;">
+        ${r.phone?`<a href="tel:${esc((r.phone||'').replace(/[^0-9+]/g,''))}" style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);text-decoration:none;">📞 Call</a>
+        <a href="sms:${esc((r.phone||'').replace(/[^0-9+]/g,''))}" style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);text-decoration:none;">💬 Text</a>`:''}
+        ${r.email?`<a href="mailto:${esc(r.email)}" style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);text-decoration:none;">✉️ Email</a>`:''}
+      </div>` : ''}
+    </div>
+    <div style="margin-top:14px;">
+      <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);margin-bottom:6px;">Cold outreach draft</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+        <input id="po-draft-avail-${id}" value="${esc((poContextMap[r.location]||{}).available_space||'')}" placeholder="Available space"
+          style="flex:1;min-width:150px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:12px;" />
+        <input id="po-draft-discount-${id}" value="${esc((poContextMap[r.location]||{}).discount||'')}" placeholder="Discount / pricing"
+          style="flex:1;min-width:150px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:12px;" />
+        <input id="po-draft-other-${id}" value="${esc((poContextMap[r.location]||{}).other||'')}" placeholder="Other"
+          style="flex:1;min-width:150px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:12px;" />
+      </div>
+      <div style="font-size:11px;color:var(--text2);margin-bottom:8px;">Pre-filled from this property's talking points above — edit here just for this one email if you want, without changing the shared default.</div>
+      <button onclick="generatePODraft('${id}',event)" style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);cursor:pointer;">${r.cold_draft ? '✨ Regenerate draft' : '✨ Generate draft'}</button>
+      ${r.cold_draft ? `
+        <div style="margin-top:10px;font-size:13px;">
+          <div style="color:var(--text2);">Subject</div>
+          <div style="font-weight:600;margin-bottom:6px;">${esc(r.cold_draft.subject||'')}</div>
+          <div style="white-space:pre-wrap;line-height:1.55;border-left:3px solid #38D430;padding-left:12px;">${esc(r.cold_draft.body||'')}</div>
+          <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            ${r.email
+              ? `<a href="mailto:${esc(r.email)}?subject=${encodeURIComponent(r.cold_draft.subject||'')}&body=${encodeURIComponent(r.cold_draft.body||'')}" style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;color:#0969da;text-decoration:none;">✉️ Open in email</a>`
+              : `<span style="font-size:12px;color:var(--text2);">Add an email above to send</span>`}
+            <button onclick="copyPODraftMsg('${id}',event)" style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);cursor:pointer;">📋 Copy</button>
+            <button onclick="dismissPODraft('${id}',event)" style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text2);cursor:pointer;">✕ Dismiss</button>
+          </div>
+        </div>` : ''}
     </div>
     <div style="margin-top:14px;">
       <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);margin-bottom:6px;">Status</div>
@@ -5771,6 +5880,13 @@ async function savePOStatus(id, val){
   try { await setDoc(doc(db,'property_outreach',id), { status: val, updatedAt: new Date().toISOString() }, { merge:true }); } catch(e){ console.warn('savePOStatus', e); }
 }
 
+// Contact info isn't in the Yardi export (Justin pulls it up separately) — this is
+// where it gets typed in once found, one field at a time (onchange, not a save button).
+async function savePOContact(id, field, val){
+  if(!id || !['contact','phone','email'].includes(field)) return;
+  try { await setDoc(doc(db,'property_outreach',id), { [field]: val, updatedAt: new Date().toISOString() }, { merge:true }); } catch(e){ console.warn('savePOContact', e); }
+}
+
 async function logPOAttempt(id, outcome, e){
   if(e) e.stopPropagation();
   const r = propertyOutreachMap[id]; if(!r) return;
@@ -5782,6 +5898,58 @@ async function logPOAttempt(id, outcome, e){
     await setDoc(doc(db,'property_outreach',id), { attempts, status, last_contacted_at: new Date().toISOString(), updatedAt: new Date().toISOString() }, { merge:true });
   } catch(err){ console.warn('logPOAttempt', err); alert('Could not save — try again.'); return; }
   openPOModal(id); // refresh with the new attempt
+}
+
+// Cold outreach draft — manual, per-lead, never auto-triggered (separate from the
+// automatic 3-day-cold Follow-up Scanner on Leads, which this deliberately is NOT).
+// Talking points come from the per-property defaults above, editable inline for
+// just this one draft. n8n workflow 22 (property-outreach-draft) does the writing.
+async function generatePODraft(id, e){
+  if(e) e.stopPropagation();
+  const r = propertyOutreachMap[id]; if(!r) return;
+  const val = elId => { const el = document.getElementById(elId); return el ? el.value : ''; };
+  const available_space = val('po-draft-avail-'+id);
+  const discount = val('po-draft-discount-'+id);
+  const other = val('po-draft-other-'+id);
+  const btn = e && e.target;
+  const reset = () => { if(btn){ btn.disabled=false; btn.textContent = r.cold_draft ? '✨ Regenerate draft' : '✨ Generate draft'; } };
+  if(btn){ btn.disabled=true; btn.textContent='✨ Generating…'; }
+  try {
+    const res = await fetch(PO_DRAFT_WEBHOOK, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        id, company: r.company||'', location: r.location||'', locationName: poLocationName(r.location),
+        wave: (r.wave!=null?r.wave:null), sqft: (r.sqft!=null?r.sqft:null), sqft_est: !!r.sqft_est,
+        source_notes: r.source_notes||'', available_space, discount, other
+      })
+    });
+    const text = await res.text().catch(()=>'');
+    if(!res.ok){
+      console.error('[property-outreach-draft]', res.status, text);
+      reset();
+      alert('Draft generation failed (HTTP ' + res.status + ').\n' +
+        (res.status === 404
+          ? 'The property-outreach-draft webhook isn’t reachable — is n8n workflow 22 imported and Active?'
+          : 'Workflow 22 errored (often the Claude node). Check its Executions log in n8n.') +
+        (text ? '\n\n' + text.slice(0, 300) : ''));
+      return;
+    }
+    reset(); // the property_outreach listener re-opens this modal once cold_draft lands
+  } catch(err){
+    console.error('generatePODraft failed:', err);
+    reset();
+    alert('Could not reach the draft service — check your connection and try again.');
+  }
+}
+function copyPODraftMsg(id, e){
+  if(e) e.stopPropagation();
+  const r = propertyOutreachMap[id]; if(!r || !r.cold_draft) return;
+  const txt = (r.cold_draft.subject ? ('Subject: '+r.cold_draft.subject+'\n\n') : '') + (r.cold_draft.body||'');
+  if(navigator.clipboard) navigator.clipboard.writeText(txt);
+}
+async function dismissPODraft(id, e){
+  if(e) e.stopPropagation();
+  try { await setDoc(doc(db,'property_outreach',id), { cold_draft: null }, { merge:true }); } catch(err){ console.warn('dismissPODraft', err); }
 }
 
 async function promotePOToLead(id, e){
@@ -5817,6 +5985,15 @@ try {
     if (poModalId && propertyOutreachMap[poModalId] && ov && ov.style.display !== 'none') openPOModal(poModalId);
   }, err => console.warn('property_outreach listener', err));
 } catch(e){ console.warn('property_outreach listener init', e); }
+
+try {
+  unsubPOContext = liveSnapshot(collection(db,'property_outreach_context'), snap => {
+    poContextMap = {};
+    snap.forEach(d => { poContextMap[d.id] = d.data(); });
+    const v = document.getElementById('propoutreach-view');
+    if (v && v.style.display !== 'none') renderPropertyOutreach();
+  }, err => console.warn('property_outreach_context listener', err));
+} catch(e){ console.warn('property_outreach_context listener init', e); }
 
 // Renewals — per-tenant lease expiration / renewal status (written by the n8n Renewals
 // Sync, workflow 10). Surfaced on occupied unit rows in the Avail tab. No snapshot fallback.
@@ -6051,8 +6228,13 @@ window.openPOModal         = openPOModal;
 window.closePOModal        = closePOModal;
 window.poModalBgClick      = poModalBgClick;
 window.savePOStatus        = savePOStatus;
+window.savePOContact       = savePOContact;
 window.logPOAttempt        = logPOAttempt;
 window.promotePOToLead     = promotePOToLead;
+window.savePOContextField  = savePOContextField;
+window.generatePODraft     = generatePODraft;
+window.copyPODraftMsg      = copyPODraftMsg;
+window.dismissPODraft      = dismissPODraft;
 window.copySpaceMatchMsg   = copySpaceMatchMsg;
 window.snoozeSpaceMatch    = snoozeSpaceMatch;
 window.generateFollowup    = generateFollowup;

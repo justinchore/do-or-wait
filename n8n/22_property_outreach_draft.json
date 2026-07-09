@@ -1,0 +1,136 @@
+{
+  "name": "CW - 22. Property Outreach Cold Draft",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "property-outreach-draft",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "c2a10001-0000-4000-8000-000000000001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [1520, 304],
+      "webhookId": "property-outreach-draft"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the Claude request. COLD, first-touch outreach to a property-tied\n// call-sheet lead (Property Outreach tab, property_outreach/{id}) — NOT a\n// follow-up to an existing conversation (that's workflow 17, for Leads).\n// No web research (unlike workflow 13) — most of these \"company\" values are\n// actually a person's name straight from Yardi's Tenant/Company column, so\n// there's usually no real business/domain to research.\nconst b = $json.body || {};\nconst waveLabels = {\n  1: 'Active pipeline (already at proposal/tour before)',\n  2: 'Warm lead, 5,000+ sf requested',\n  3: 'Warm lead, under 5,000 sf requested',\n  4: 'Reactivation — inquired before, went dead for some reason',\n  5: 'Warm lead, size unknown — never qualified'\n};\nconst waveLabel = waveLabels[Number(b.wave)] || 'unknown';\n\nconst sizeLine = b.sqft ? (Number(b.sqft).toLocaleString() + ' sf' + (b.sqft_est ? ' (estimated)' : '')) : 'not on file — ask what they need';\n\nconst sys = 'You are drafting a short, first-touch COLD outreach email from Justin Cho at Cubework to a lead pulled from a property call sheet (Yardi). This is cold outreach, not a follow-up to an existing conversation. Cubework offers flexible month-to-month warehouse, office, and dock space with simple license agreements (never a lease), all-inclusive pricing (one flat monthly rate, no NNN, no CAM, no surprise utility bills), and fast move-in (24-48 hours).\\n\\nYou will be given basic lead details from the call sheet, and CURRENT TALKING POINTS Justin is typing in right now.\\n\\nIMPORTANT ABOUT THE COMPANY FIELD: it comes straight from a Yardi tenant/inquiry list and is very often a person\\'s own name (for example Jessie Chen) rather than a real business name (for example Acme Logistics Inc). If it reads like a person\\'s name, greet them by first name. If it clearly reads like a business name, do not invent a contact name, greet them generically or reference the business itself.\\n\\nIMPORTANT ABOUT CALL SHEET NOTES: the source notes field is historical Yardi and CRM data, deal stage, past call outcomes, dead-deal reasons. It reflects what was true when it was recorded, not necessarily now. Treat it as background only. Do not state or imply current availability, current pricing, or a live status unless the CURRENT TALKING POINTS section below confirms it. If you reference something from the source notes, frame it as already on file, for example we spoke with you before about space here, never as a current fact.\\n\\nCURRENT TALKING POINTS ARE DIFFERENT: those ARE current and verified as of today. State them plainly and confidently when given, for example a specific available size range or a live discount. If none are given, do not invent one, just lead with the core value pitch instead.\\n\\nWrite ONE cold outreach email that: 1) Opens with a brief, honest reason for reaching out. If the call wave says this is a reactivation, it is fine to acknowledge they looked into space here before, without inventing the specific reason it went dead. 2) States the current talking points naturally if given, this is the main hook. If none are given, lead with the core value pitch instead, month-to-month, all-inclusive, fast move-in. 3) Ends with ONE short, low-friction question, for example offering a quick call or a tour, or if the size on file is unknown, simply asking what space they need. 4) Signs off on its own line, exactly: Best,\\nJustin Cho\\nBusiness Development, Cubework\\n\\nVOICE: plain, warm, direct, like a real person, never like a template or a marketing email. Short sentences, most under 12 words, one idea each. Write at a 5th-grade reading level. Use the simplest word that works. No jargon. Never use any of these: I hope this email finds you well, I wanted to reach out, my name is, I came across your, to whom it may concern, per my last email, just checking in, circling back, leverage, synergy, streamline, elevate, solutions, ideal for, I would be happy to discuss. Do not use any dash character to join clauses, no em dash, no en dash, no double hyphen, use a period or comma instead. No bulleted or numbered lists. No hype, no exclamation points. NEVER use the word lease in any form, say no long-term commitment instead. Keep the email body under 90 words, not counting the sign-off.\\n\\nSUBJECT: 3 to 6 words, lowercase or sentence case, references the property or the current talking point when possible, for example space now open at ontario airport. Never generic like warehouse space available.\\n\\nReturn ONLY minified JSON, no prose, no code fences: {\"subject\":\"...\",\"body\":\"...\"}';\n\nconst userMsg = 'LEAD DETAILS (from a Yardi call sheet)\\n' +\n  'Company / contact name (see note above about this sometimes being a person): ' + (b.company || '(unknown)') + '\\n' +\n  'Property: ' + (b.locationName || b.location || '(unknown)') + '\\n' +\n  'Call wave: ' + (b.wave != null ? b.wave : '(none)') + ' — ' + waveLabel + '\\n' +\n  'Requested size on file: ' + sizeLine + '\\n\\n' +\n  'CALL SHEET BACKGROUND (historical, not necessarily current — see honesty rule above):\\n' + (b.source_notes || '(none on file)') + '\\n\\n' +\n  'CURRENT TALKING POINTS (fresh, verified as of today):\\n' +\n  'Available space: ' + (b.available_space || '(none given)') + '\\n' +\n  'Pricing / discount: ' + (b.discount || '(none given)') + '\\n' +\n  'Other: ' + (b.other || '(none given)');\n\nconst requestBody = {\n  model: 'claude-sonnet-4-6',\n  max_tokens: 700,\n  system: sys,\n  messages: [ { role: 'user', content: userMsg } ]\n};\nreturn [{ json: { id: b.id, available_space: b.available_space || '', discount: b.discount || '', other: b.other || '', requestBody } }];"
+      },
+      "id": "c2a10001-0000-4000-8000-000000000002",
+      "name": "Build Claude request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1744, 304]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "anthropic-version", "value": "2023-06-01" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": {}
+      },
+      "id": "c2a10001-0000-4000-8000-000000000003",
+      "name": "Generate draft (Claude)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1968, 304],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "anthropicApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Build Claude request').item.json;\nlet parsed = {};\ntry {\n  const blocks = $json.content || [];\n  const raw = Array.isArray(blocks) ? blocks.filter(x => x && x.type === 'text').map(x => x.text).join('\\n') : '';\n  const m = raw.match(/\\{[\\s\\S]*\\}/);\n  parsed = JSON.parse(m ? m[0] : raw);\n} catch (e) { parsed = {}; }\nconst dedash = s => String(s == null ? '' : s).replace(/\\s*[\\u2014\\u2013]\\s*/g, ', ').replace(/\\s--\\s/g, ', ');\nconst now = new Date().toISOString();\nconst S = v => ({ stringValue: (v == null ? '' : String(v)) });\nconst subject = dedash(parsed.subject || '');\nconst body = dedash(parsed.body || '');\nconst fields = {\n  cold_draft: { mapValue: { fields: {\n    subject: S(subject),\n    body: S(body),\n    generated_at: S(now)\n  } } },\n  draft_context: { mapValue: { fields: {\n    available_space: S(ctx.available_space),\n    discount: S(ctx.discount),\n    other: S(ctx.other)\n  } } }\n};\nreturn [{ json: { id: ctx.id, fsBody: { fields } } }];"
+      },
+      "id": "c2a10001-0000-4000-8000-000000000004",
+      "name": "Build Firestore patch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2192, 304]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/property_outreach/{{ $json.id }}?updateMask.fieldPaths=cold_draft&updateMask.fieldPaths=draft_context",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.fsBody) }}",
+        "options": {}
+      },
+      "id": "c2a10001-0000-4000-8000-000000000005",
+      "name": "Write to Firestore",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2416, 304],
+      "credentials": {
+        "googleApi": {
+          "id": "7IVvQuErxEJPoaMY",
+          "name": "Firebase_SDK_do_or_wait"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, id: $('Build Firestore patch').item.json.id }) }}",
+        "options": {}
+      },
+      "id": "c2a10001-0000-4000-8000-000000000006",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2640, 304]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Build Claude request", "type": "main", "index": 0 }]]
+    },
+    "Build Claude request": {
+      "main": [[{ "node": "Generate draft (Claude)", "type": "main", "index": 0 }]]
+    },
+    "Generate draft (Claude)": {
+      "main": [[{ "node": "Build Firestore patch", "type": "main", "index": 0 }]]
+    },
+    "Build Firestore patch": {
+      "main": [[{ "node": "Write to Firestore", "type": "main", "index": 0 }]]
+    },
+    "Write to Firestore": {
+      "main": [[{ "node": "Respond", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "a1b2c3d4-0000-4000-8000-000000000022",
+  "meta": {
+    "instanceId": "576f1552f658e6ccbe293a5c310c12c03fc3f516211957ae27ecb76646f5be19"
+  },
+  "id": "cwPropertyOutreachDraft22",
+  "tags": []
+}
