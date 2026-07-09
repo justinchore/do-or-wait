@@ -5846,12 +5846,56 @@ function setPOSfMax(v){ poSfMax = v==='' ? null : Number(v); renderPropertyOutre
 // by hand so it's always something he's actually chosen to say, not a guess.
 // Pre-fills the per-lead draft inputs in the modal (which can still be edited
 // just for that one draft without changing this shared default).
-let poContextMap = {};             // location id → { available_space, discount, other, cubework_url, updatedAt }
+let poContextMap = {};             // location id → { available_space, discount, other, cubework_url, prompt_name, system_prompt, updatedAt }
 let unsubPOContext = null;
 async function savePOContextField(locId, field, val){
-  if(!locId || !['available_space','discount','other','cubework_url'].includes(field)) return;
+  if(!locId || !['available_space','discount','other','cubework_url','prompt_name','system_prompt'].includes(field)) return;
   try { await setDoc(doc(db,'property_outreach_context',locId), { [field]: val, updatedAt: new Date().toISOString() }, { merge:true }); }
   catch(e){ console.warn('savePOContextField', e); }
+}
+
+// Prompt A/B testing (added 2026-07-09). Each property can optionally run its own
+// cold-draft system prompt (name + full text) instead of the shared default baked
+// into n8n workflow 22 — e.g. Pellissier keeps the current friendly-tone prompt
+// (named and saved so it's tracked), while Ontario Airport gets a differently-toned
+// one to compare against over time. Leaving both blank keeps using the workflow's
+// own default, unchanged. Whichever prompt actually generates a draft is recorded
+// on that draft's `cold_draft.prompt_name`/`system_prompt_used` (see generatePODraft
+// and workflow 22) so results can be compared by prompt later, even if the property's
+// live prompt is edited or renamed afterward.
+let poPromptEditOpen = new Set();  // location ids with the prompt editor expanded
+function togglePOPromptEditor(loc){
+  if(poPromptEditOpen.has(loc)) poPromptEditOpen.delete(loc); else poPromptEditOpen.add(loc);
+  renderPropertyOutreach();
+}
+// Mirrors workflow 22's own DEFAULT_SYS (n8n/22_property_outreach_draft.json, "Build
+// Claude request" node) — kept here only as a convenient starting template for
+// writing a new per-property variant, not read by the workflow itself. If the two
+// ever drift, it just means "Load current default" prefills stale text — no
+// functional harm, but keep them in sync by hand when the baked-in default changes.
+const DEFAULT_PO_SYSTEM_PROMPT = `You are drafting a short, first-touch COLD outreach email from Justin Cho at Cubework to a lead pulled from a property call sheet (Yardi). This is cold outreach, not a follow-up to an existing conversation. Cubework offers flexible month-to-month warehouse, office, and dock space with simple license agreements (never a lease), all-inclusive pricing (one flat monthly rate, no NNN, no CAM, no surprise utility bills), and fast move-in (24-48 hours).
+
+You will be given basic lead details from the call sheet, and CURRENT TALKING POINTS Justin is typing in right now.
+
+IMPORTANT ABOUT THE COMPANY FIELD: it comes straight from a Yardi tenant/inquiry list and is very often a person's own name (for example Jessie Chen) rather than a real business name (for example Acme Logistics Inc). If it reads like a person's name, greet them by first name. If it clearly reads like a business name, do not invent a contact name, greet them generically or reference the business itself.
+
+IMPORTANT ABOUT CALL SHEET NOTES: the source notes field is historical Yardi and CRM data, deal stage, past call outcomes, dead-deal reasons. It reflects what was true when it was recorded, not necessarily now. Treat it as background only. Do not state or imply current availability, current pricing, or a live status unless the CURRENT TALKING POINTS section below confirms it. If you reference something from the source notes, frame it as already on file, for example we spoke with you before about space here, never as a current fact.
+
+CURRENT TALKING POINTS ARE DIFFERENT: those ARE current and verified as of today. State them plainly and confidently when given, for example a specific available size range or a live discount. If none are given, do not invent one, just lead with the core value pitch instead.
+
+Write ONE cold outreach email that: 1) Opens with a brief, warm, honest reason for reaching out, something that reads like a real person glad to check back in, not a stiff opener. If the call wave says this is a reactivation, it is fine to acknowledge they looked into space here before, without inventing the specific reason it went dead. 2) States the current talking points naturally if given, this is the main hook. If none are given, lead with the core value pitch instead, month-to-month, all-inclusive, fast move-in. 3) If a CUBEWORK LINK is given below, work that exact link into the body once, naturally, so they can see photos and details, for example something like you can see it here colon then the link. Never shorten, alter, or invent a link. If no link is given, do not mention one or make one up. 4) Ends with ONE short, friendly, low-friction question asking whether they are still looking for space or still in the market, NOT an invitation to tour or take a look at a unit. If the size on file is unknown, fold that into the same question, for example still looking, and if so what size space do you need. 5) Signs off on its own line, exactly: Best,
+Justin Cho
+Business Development, Cubework
+
+VOICE: friendly, warm, plain, direct, like a real person glad to reach out, never like a template or a marketing email. A little genuine warmth in the opening or closing line is good, as long as it stays short and natural. Short sentences, most under 12 words, one idea each. Write at a 5th-grade reading level. Use the simplest word that works. No jargon. Never use any of these: I hope this email finds you well, I wanted to reach out, my name is, I came across your, to whom it may concern, per my last email, just checking in, circling back, leverage, synergy, streamline, elevate, solutions, ideal for, I would be happy to discuss. Do not use any dash character to join clauses, no em dash, no en dash, no double hyphen, use a period or comma instead. No bulleted or numbered lists. No hype, no exclamation points. NEVER use the word lease in any form, say no long-term commitment instead. Keep the email body under 90 words, not counting the sign-off or the link if one is included.
+
+SUBJECT: 3 to 6 words, lowercase or sentence case, references the property or the current talking point when possible, for example space now open at ontario airport. Never generic like warehouse space available.
+
+Return ONLY minified JSON, no prose, no code fences: {"subject":"...","body":"..."}`;
+function loadDefaultPOPrompt(loc){
+  const el = document.getElementById('po-prompt-text-'+loc);
+  if(el) el.value = DEFAULT_PO_SYSTEM_PROMPT;
+  savePOContextField(loc,'system_prompt',DEFAULT_PO_SYSTEM_PROMPT);
 }
 
 function onPOSearch(v){ poSearch = (v||'').trim().toLowerCase(); renderPropertyOutreach(); }
@@ -5996,6 +6040,23 @@ function renderPropertyOutreach(){
             style="flex:1;min-width:220px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:12px;" />
         </div>
         <div style="font-size:11px;color:var(--text2);margin-top:6px;">Set once per property — every cold draft here includes this link if it's filled in.</div>
+        <div style="margin-top:10px;">
+          <button onclick="togglePOPromptEditor('${esc(loc)}')" style="font-size:11px;padding:4px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text2);cursor:pointer;">
+            ✏️ ${ctx.prompt_name ? 'Prompt: ' + esc(ctx.prompt_name) : 'Draft prompt (using shared default)'}
+          </button>
+          ${poPromptEditOpen.has(loc) ? `
+            <div style="margin-top:8px;padding:10px;border:1px dashed var(--border);border-radius:8px;">
+              <div style="font-size:11px;color:var(--text2);margin-bottom:6px;">Give this property its own cold-draft tone/voice — for comparing which one actually works better. Leave both blank to keep using the shared default. Whichever prompt generates a draft is recorded on that draft by name, so results can be compared later even if you edit this afterward.</div>
+              <input value="${esc(ctx.prompt_name||'')}" placeholder="Prompt name (e.g. Friendly reconnect v1)" onchange="savePOContextField('${esc(loc)}','prompt_name',this.value)"
+                style="width:100%;padding:6px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:12px;margin-bottom:6px;box-sizing:border-box;" />
+              <textarea id="po-prompt-text-${esc(loc)}" rows="7" placeholder="Full draft prompt — leave blank for the shared default" onchange="savePOContextField('${esc(loc)}','system_prompt',this.value)"
+                style="width:100%;padding:8px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:11.5px;font-family:inherit;line-height:1.5;box-sizing:border-box;">${esc(ctx.system_prompt||'')}</textarea>
+              <div style="margin-top:6px;">
+                <button onclick="loadDefaultPOPrompt('${esc(loc)}')" style="font-size:11px;padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);cursor:pointer;">📋 Load current default as a starting point</button>
+              </div>
+            </div>
+          ` : ''}
+        </div>
       </div>`;
     const isOpen = poExpandedProps.has(loc);
     // Collapsed summary line — one badge per wave present, so priority still reads
@@ -6169,10 +6230,14 @@ async function generatePODraft(id, e){
   const available_space = val('po-draft-avail-'+id);
   const discount = val('po-draft-discount-'+id);
   const other = val('po-draft-other-'+id);
-  // Not a per-lead override input (unlike the three above) — the property link is
-  // always the same page for every lead at this property, so it's pulled straight
-  // from the shared talking-points doc rather than duplicated into another modal field.
-  const cubework_url = (poContextMap[r.location]||{}).cubework_url || '';
+  // Not per-lead override inputs (unlike the three above) — the property link and
+  // the property's prompt choice are both always the same for every lead at this
+  // property, so they're pulled straight from the shared talking-points doc rather
+  // than duplicated into another modal field.
+  const propCtx = poContextMap[r.location] || {};
+  const cubework_url = propCtx.cubework_url || '';
+  const prompt_name = propCtx.prompt_name || '';
+  const system_prompt = propCtx.system_prompt || '';
   const btn = e && e.target;
   const reset = () => { if(btn){ btn.disabled=false; btn.textContent = r.cold_draft ? '✨ Regenerate draft' : '✨ Generate draft'; } };
   if(btn){ btn.disabled=true; btn.textContent='✨ Generating…'; }
@@ -6182,7 +6247,8 @@ async function generatePODraft(id, e){
       body: JSON.stringify({
         id, company: r.company||'', location: r.location||'', locationName: poLocationName(r.location),
         wave: (r.wave!=null?r.wave:null), sqft: (r.sqft!=null?r.sqft:null), sqft_est: !!r.sqft_est,
-        source_notes: r.source_notes||'', available_space, discount, other, cubework_url
+        source_notes: r.source_notes||'', available_space, discount, other, cubework_url,
+        prompt_name, system_prompt
       })
     });
     const text = await res.text().catch(()=>'');
@@ -6503,6 +6569,8 @@ window.logPOAttempt        = logPOAttempt;
 window.setPOArchived       = setPOArchived;
 window.promotePOToLead     = promotePOToLead;
 window.savePOContextField  = savePOContextField;
+window.togglePOPromptEditor = togglePOPromptEditor;
+window.loadDefaultPOPrompt  = loadDefaultPOPrompt;
 window.generatePODraft     = generatePODraft;
 window.copyPODraftMsg      = copyPODraftMsg;
 window.dismissPODraft      = dismissPODraft;
