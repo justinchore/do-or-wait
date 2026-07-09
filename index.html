@@ -1167,6 +1167,29 @@
   </div>
 </div>
 
+<!-- Future Plan modal (upload a PDF of planned/upcoming units for a location) -->
+<div class="overlay" id="fplan-overlay" onclick="if(event.target===this)closeFuturePlanModal()">
+  <div class="modal">
+    <h3>Future Plan</h3>
+    <div class="modal-sub">A site plan or drawing showing units that aren't built/available yet — planned future capacity, not current availability.</div>
+    <input type="hidden" id="fplan-prop-id">
+    <div class="field">
+      <label>PDF</label>
+      <input id="fplan-file" type="file" accept="application/pdf" />
+      <div id="fplan-current" style="font-size:12px;color:var(--text2);margin-top:4px;"></div>
+    </div>
+    <div class="field">
+      <label>Note</label>
+      <textarea id="fplan-note" rows="3" placeholder="e.g. 5 additional units planned (~8,000 SF), submitted by Luis, expected Q4 2026"></textarea>
+    </div>
+    <div id="fplan-status" style="font-size:13px;color:var(--text2);margin-top:4px;min-height:18px;"></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeFuturePlanModal()">Cancel</button>
+      <button class="btn dark" id="fplan-save-btn" onclick="saveFuturePlan()">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- Availability export modal (pick locations → fresh snapshot → JSON) -->
 <div class="overlay" id="availexp-overlay" onclick="if(event.target===this)closeAvailExport()">
   <div class="modal">
@@ -4448,6 +4471,9 @@ function renderLocBody(propId, d) {
     <!-- Floorplan injected here -->
     <div id="fp-section-${propId}"></div>
 
+    <!-- Future Plan (planned/upcoming units) injected here -->
+    <div id="future-plan-section-${propId}"></div>
+
     ${AVAIL_READONLY ? '' : `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);text-align:right;">
       <button onclick="removeLocation('${propId}',event)" style="font-size:12px;color:#b91c1c;background:transparent;border:1px solid #fecaca;border-radius:8px;padding:5px 11px;cursor:pointer;">Remove location</button>
     </div>`}`;
@@ -4460,6 +4486,7 @@ function setAvailFilter(propId, f, ev) {
   if (body) {
     body.innerHTML = renderLocBody(propId, availMap[propId] || {});
     setTimeout(() => renderFloorplans(propId), 0);
+    setTimeout(() => renderFuturePlan(propId), 0);
   }
 }
 
@@ -4513,6 +4540,7 @@ function toggleAvailCard(propId) {
     if (card) card.classList.add('open');
     if (body) body.innerHTML = renderLocBody(propId, availMap[propId] || {});
     setTimeout(() => renderFloorplans(propId), 0);
+    setTimeout(() => renderFuturePlan(propId), 0);
   }
 }
 
@@ -4561,6 +4589,148 @@ function renderFloorplans(propId) {
         : 'No SharePoint link on file for this location.'}
     </div>
   </div>`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  FUTURE PLAN (uploaded PDF of planned/upcoming units — added 2026-07-09)
+// ═══════════════════════════════════════════════════════════════
+// A location's Future Plan is a manually-uploaded site-plan PDF showing units
+// that AREN'T built/available yet (planned capacity), plus a free-text note.
+// Distinct from the abandoned in-app floorplan feature above — this is a
+// simple one-off manual upload per location, not a recurring sync. Fields
+// live on `availability/{propId}` (future_plan_url, future_plan_storage_path,
+// future_plan_note, future_plan_updated_at), written via the same REST-PATCH
+// + updateMask.fieldPaths pattern as `pa`/`ownership` so it's excluded from
+// the SharePoint sync's own scoped write and survives re-syncs untouched.
+function renderFuturePlan(propId) {
+  const el = document.getElementById(`future-plan-section-${propId}`);
+  if (!el) return;
+  const d = availMap[propId] || {};
+  const url  = d.future_plan_url || '';
+  const note = d.future_plan_note || '';
+  const updated = d.future_plan_updated_at
+    ? new Date(d.future_plan_updated_at).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })
+    : '';
+
+  const editBtn = AVAIL_READONLY ? '' : `<button class="btn sm" onclick="openFuturePlanModal('${propId}',event)" style="margin-right:6px;">${url ? '✏️ Edit' : '＋ Add future plan'}</button>`;
+  const removeBtn = (AVAIL_READONLY || !url) ? '' : `<button class="btn sm" onclick="removeFuturePlan('${propId}',event)" style="color:#b91c1c;">🗑 Remove</button>`;
+
+  el.innerHTML = `<div class="fp-section">
+    <div class="fp-hd"><div class="fp-title">🔮 Future Plan</div></div>
+    <div style="padding:10px 2px;font-size:13px;color:var(--text2);">
+      ${url ? `
+        ${note ? `<div style="color:var(--text);margin-bottom:8px;white-space:pre-wrap;">${esc(note)}</div>` : ''}
+        ${updated ? `<div style="font-size:11px;color:var(--text2);margin-bottom:8px;">Updated ${updated}</div>` : ''}
+        <iframe src="${esc(url)}" style="width:100%;height:480px;border:1px solid var(--border);border-radius:8px;" onclick="event.stopPropagation()"></iframe>
+        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <a href="${esc(url)}" target="_blank" rel="noopener" class="btn sm dark" style="text-decoration:none;" onclick="event.stopPropagation()">Open in new tab ↗</a>
+          ${editBtn}${removeBtn}
+        </div>
+      ` : `
+        <div style="margin-bottom:8px;">No future plan on file yet — a site plan/drawing showing planned but not-yet-built units.</div>
+        ${editBtn}
+      `}
+    </div>
+  </div>`;
+}
+
+function openFuturePlanModal(propId, e) {
+  if (AVAIL_READONLY) return;
+  if (e) e.stopPropagation();
+  const d = availMap[propId] || {};
+  document.getElementById('fplan-prop-id').value = propId;
+  document.getElementById('fplan-note').value = d.future_plan_note || '';
+  document.getElementById('fplan-file').value = '';
+  document.getElementById('fplan-status').textContent = '';
+  document.getElementById('fplan-current').textContent = d.future_plan_url
+    ? 'A PDF is already on file — choosing a new one replaces it. Leave blank to keep the current PDF and just update the note.'
+    : '';
+  document.getElementById('fplan-overlay').classList.add('open');
+}
+function closeFuturePlanModal() {
+  document.getElementById('fplan-overlay').classList.remove('open');
+}
+
+async function saveFuturePlan() {
+  if (AVAIL_READONLY) return;
+  const propId = document.getElementById('fplan-prop-id').value;
+  const note   = document.getElementById('fplan-note').value.trim();
+  const file   = document.getElementById('fplan-file').files[0];
+  const statusEl = document.getElementById('fplan-status');
+  const btn = document.getElementById('fplan-save-btn');
+  const d = availMap[propId] || {};
+
+  if (file && file.type !== 'application/pdf') {
+    statusEl.textContent = 'Please choose a PDF file.';
+    return;
+  }
+
+  btn.disabled = true;
+  statusEl.textContent = file ? 'Uploading…' : 'Saving…';
+  setSyncing(true);
+  try {
+    let url = d.future_plan_url || '';
+    let storagePath = d.future_plan_storage_path || '';
+    if (file) {
+      storagePath = `future_plans/${propId}-${Date.now()}.pdf`;
+      const r = ref(storage, storagePath);
+      await uploadBytes(r, file, { contentType: 'application/pdf' });
+      url = await getDownloadURL(r);
+    }
+
+    const patchBody = { fields: {
+      future_plan_url:          { stringValue: url },
+      future_plan_storage_path: { stringValue: storagePath },
+      future_plan_note:         { stringValue: note },
+      future_plan_updated_at:   { stringValue: new Date().toISOString() }
+    }};
+    const _tok = await authToken();
+    await fetch(
+      `https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/availability/${propId}?updateMask.fieldPaths=future_plan_url&updateMask.fieldPaths=future_plan_storage_path&updateMask.fieldPaths=future_plan_note&updateMask.fieldPaths=future_plan_updated_at`,
+      { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(_tok ? { Authorization: 'Bearer ' + _tok } : {}) }, body: JSON.stringify(patchBody) }
+    );
+    // onSnapshot updates availMap and re-renders the card; also refresh this section directly in case it's already open
+    setTimeout(() => renderFuturePlan(propId), 300);
+  } catch (e) {
+    console.error('Save future plan failed:', e);
+    statusEl.textContent = 'Save failed: ' + e.message;
+    btn.disabled = false;
+    setSyncing(false);
+    return;
+  }
+  finally { setSyncing(false); }
+  btn.disabled = false;
+  closeFuturePlanModal();
+}
+
+async function removeFuturePlan(propId, e) {
+  if (AVAIL_READONLY) return;
+  if (e) e.stopPropagation();
+  const d = availMap[propId] || {};
+  if (!confirm('Remove the future plan PDF and note for this location?')) return;
+  setSyncing(true);
+  try {
+    if (d.future_plan_storage_path) {
+      try { await deleteObject(ref(storage, d.future_plan_storage_path)); } catch (err) { console.warn('Storage delete failed (continuing):', err); }
+    }
+    const patchBody = { fields: {
+      future_plan_url:          { stringValue: '' },
+      future_plan_storage_path: { stringValue: '' },
+      future_plan_note:         { stringValue: '' },
+      future_plan_updated_at:   { stringValue: '' }
+    }};
+    const _tok = await authToken();
+    await fetch(
+      `https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/availability/${propId}?updateMask.fieldPaths=future_plan_url&updateMask.fieldPaths=future_plan_storage_path&updateMask.fieldPaths=future_plan_note&updateMask.fieldPaths=future_plan_updated_at`,
+      { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(_tok ? { Authorization: 'Bearer ' + _tok } : {}) }, body: JSON.stringify(patchBody) }
+    );
+    setTimeout(() => renderFuturePlan(propId), 300);
+  } catch (e) {
+    console.error('Remove future plan failed:', e);
+    alert('Remove failed: ' + e.message);
+  } finally {
+    setSyncing(false);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -6219,6 +6389,10 @@ window.openEditOwnership   = openEditOwnership;
 window.closeOwnModal       = closeOwnModal;
 window.ownToggleExp        = ownToggleExp;
 window.saveOwnership       = saveOwnership;
+window.openFuturePlanModal  = openFuturePlanModal;
+window.closeFuturePlanModal = closeFuturePlanModal;
+window.saveFuturePlan       = saveFuturePlan;
+window.removeFuturePlan     = removeFuturePlan;
 window.openNewLead         = openNewLead;
 window.openEditLeadDetails = openEditLeadDetails;
 window.openAddLeadEntry    = openAddLeadEntry;
