@@ -658,6 +658,7 @@
     <button class="tab-btn" data-tab="tasks" onclick="switchTab('tasks')">📋 Tasks</button>
     <button class="tab-btn" data-tab="leads" onclick="switchTab('leads')">🎯 Leads</button>
     <button class="tab-btn" data-tab="outreach" onclick="switchTab('outreach')">📧 Outreach</button>
+    <button class="tab-btn" data-tab="propoutreach" onclick="switchTab('propoutreach')">🏢 Prop Outreach</button>
     <button class="tab-btn" data-tab="playbook" onclick="switchTab('playbook')">📞 Playbook</button>
     <button class="tab-btn active" data-tab="avail" onclick="switchTab('avail')">🏭 Avail</button>
     <button class="tab-btn" data-tab="roster" onclick="switchTab('roster')">🗂️ Roster</button>
@@ -992,6 +993,47 @@
   <div id="outreach-modal-overlay" onclick="outreachModalBgClick(event)" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;align-items:flex-start;justify-content:center;overflow:auto;padding:32px 16px;">
     <div onclick="event.stopPropagation()" style="background:var(--surface);border-radius:16px;max-width:720px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3);">
       <div id="outreach-modal-body" style="padding:22px 24px 28px;"></div>
+    </div>
+  </div>
+
+  <!-- Property Outreach view (property-tied call-sheet backlogs — 3950 Ontario Airport
+       and future Yardi/LoopNet/CoStar lists. Separate collection from Outreach (Apollo
+       prospecting) — see property_outreach/{id} in the project's CLAUDE.md. -->
+  <div id="propoutreach-view" style="display:none">
+    <div style="max-width:1100px;margin:0 auto;padding:16px;width:100%;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+        <input id="po-search" oninput="onPOSearch(this.value)" placeholder="Search company or call notes…"
+               style="flex:1;min-width:200px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:14px;" />
+        <select id="po-location" onchange="setPOLocation(this.value)"
+               style="padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:13px;"><option value="all">All properties</option></select>
+        <select id="po-wave" onchange="setPOWave(this.value)"
+               style="padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:13px;">
+          <option value="all">All waves</option>
+          <option value="1">Wave 1</option><option value="2">Wave 2</option><option value="3">Wave 3</option>
+          <option value="4">Wave 4</option><option value="5">Wave 5</option>
+        </select>
+        <select id="po-status" onchange="setPOStatus(this.value)"
+               style="padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:13px;">
+          <option value="all">All statuses</option>
+          <option value="not_contacted">Not contacted</option>
+          <option value="attempted">Attempted</option>
+          <option value="reached">Reached</option>
+          <option value="interested">Interested</option>
+          <option value="not_interested">Not interested</option>
+          <option value="bad_number">Bad number</option>
+          <option value="do_not_call">Do not call</option>
+          <option value="promoted">Promoted</option>
+        </select>
+        <span id="po-meta" style="font-size:12px;color:var(--text2);"></span>
+      </div>
+      <div id="po-content"></div>
+    </div>
+  </div>
+
+  <!-- Property outreach detail modal -->
+  <div id="po-modal-overlay" onclick="poModalBgClick(event)" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;align-items:flex-start;justify-content:center;overflow:auto;padding:32px 16px;">
+    <div onclick="event.stopPropagation()" style="background:var(--surface);border-radius:16px;max-width:600px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3);">
+      <div id="po-modal-body" style="padding:22px 24px 28px;"></div>
     </div>
   </div>
 
@@ -3911,6 +3953,7 @@ function switchTab(tab) {
   document.getElementById('ratebands-view').style.display = tab === 'ratebands' ? '' : 'none';
   document.getElementById('notes-view').style.display    = tab === 'notes'    ? '' : 'none';
   document.getElementById('outreach-view').style.display = tab === 'outreach' ? '' : 'none';
+  document.getElementById('propoutreach-view').style.display = tab === 'propoutreach' ? '' : 'none';
   document.querySelectorAll('.tab-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.tab === tab);
   });
@@ -3919,6 +3962,7 @@ function switchTab(tab) {
   if (tab === 'pricing') renderPricing();
   if (tab === 'ratebands') renderRateBands();
   if (tab === 'outreach') renderOutreach();
+  if (tab === 'propoutreach') renderPropertyOutreach();
   if (tab === 'playbook') renderPlaybookCards();
   if (tab === 'leads') refreshAllLeadEmailLinks();
   if (tab === 'tasks') refreshAllTaskEmailLinks();
@@ -5577,6 +5621,203 @@ try {
   }, err => console.warn('outreach listener', err));
 } catch(e){ console.warn('outreach listener init', e); }
 
+// ═══════════════════════════════════════════════════════════════
+//  PROPERTY OUTREACH — property-tied call-sheet backlogs (🏢 Prop Outreach
+//  tab). Separate collection (`property_outreach`) from Outreach (Apollo/
+//  industry prospecting, unattached to a specific building) — this is for
+//  inbound, per-property leads: Yardi call sheets, LoopNet/CoStar inquiries
+//  against a named listing. `location` is a hard property id (matches
+//  list_locations / availMap keys). First dataset: the Ontario Airport
+//  (3950-airport-ontario) 289-record call sheet, migrated 2026-07-09.
+//  No bundled seed — live Firestore only, same as Roster/Rate Bands.
+// ═══════════════════════════════════════════════════════════════
+let propertyOutreachMap = {};      // firestore doc id → record
+let unsubPropertyOutreach = null;
+let poSearch   = '';
+let poLocation = 'all';
+let poWave     = 'all';
+let poStatus   = 'all';
+let poModalId  = null;
+
+function onPOSearch(v){ poSearch = (v||'').trim().toLowerCase(); renderPropertyOutreach(); }
+function setPOLocation(v){ poLocation = v; renderPropertyOutreach(); }
+function setPOWave(v){ poWave = v; renderPropertyOutreach(); }
+function setPOStatus(v){ poStatus = v; renderPropertyOutreach(); }
+function poLocationName(id){ const d = availMap[id]; return (d && d.property) ? d.property : (id || '—'); }
+
+const PO_STATUS_LABEL = {
+  not_contacted:'Not contacted', attempted:'Attempted', reached:'Reached',
+  interested:'Interested', not_interested:'Not interested', bad_number:'Bad number',
+  do_not_call:'Do not call', promoted:'Promoted'
+};
+const PO_STATUS_COLOR = {
+  not_contacted:'background:#f3f4f6;color:#6b7280;', attempted:'background:#fef3c7;color:#92400e;',
+  reached:'background:#dbeafe;color:#1e40af;', interested:'background:#dcfce7;color:#166534;',
+  not_interested:'background:#f3f4f6;color:#6b7280;', bad_number:'background:#fee2e2;color:#991b1b;',
+  do_not_call:'background:#fee2e2;color:#991b1b;', promoted:'background:#e0e7ff;color:#3730a3;'
+};
+const PO_OUTCOMES = [
+  {key:'no_answer',           label:'📵 No answer'},
+  {key:'voicemail',           label:'📞 Voicemail'},
+  {key:'callback_requested',  label:'↩️ Callback requested'},
+  {key:'interested',          label:'✅ Interested'},
+  {key:'not_interested',      label:'❌ Not interested'},
+  {key:'bad_number',          label:'⚠️ Bad number'},
+  {key:'do_not_call',         label:'🚫 Do not call'}
+];
+const PO_OUTCOME_LABEL  = Object.fromEntries(PO_OUTCOMES.map(o=>[o.key,o.label]));
+const PO_OUTCOME_STATUS = {
+  no_answer:'attempted', voicemail:'attempted', bad_number:'bad_number',
+  not_interested:'not_interested', do_not_call:'do_not_call',
+  callback_requested:'reached', interested:'interested'
+};
+
+function poRows(){ return Object.values(propertyOutreachMap).filter(r => !r.archived); }
+
+function renderPropertyOutreach(){
+  const host = document.getElementById('po-content'); if(!host) return;
+  const all = poRows();
+
+  const locSel = document.getElementById('po-location');
+  if(locSel){
+    const locs = [...new Set(all.map(r=>r.location).filter(Boolean))].sort((a,b)=>poLocationName(a).localeCompare(poLocationName(b)));
+    locSel.innerHTML = '<option value="all">All properties</option>' +
+      locs.map(l=>`<option value="${esc(l)}">${esc(poLocationName(l))}</option>`).join('');
+    locSel.value = poLocation;
+  }
+
+  let rows = all;
+  if(poLocation!=='all') rows = rows.filter(r=>r.location===poLocation);
+  if(poWave!=='all') rows = rows.filter(r=>String(r.wave)===poWave);
+  if(poStatus!=='all') rows = rows.filter(r=>(r.status||'not_contacted')===poStatus);
+  if(poSearch) rows = rows.filter(r => [r.company,r.contact,r.source_notes,r.status].some(x=>String(x||'').toLowerCase().includes(poSearch)));
+
+  const meta = document.getElementById('po-meta');
+  if(meta) meta.textContent = all.length ? `${rows.length} of ${all.length}` : '';
+  if(!all.length){ host.innerHTML = '<div class="empty">No Property Outreach records yet.</div>'; return; }
+  if(!rows.length){ host.innerHTML = '<div class="empty">No records match.</div>'; return; }
+
+  const groups = {};
+  rows.forEach(r => { const k = r.location || '—'; (groups[k] = groups[k] || []).push(r); });
+
+  host.innerHTML = Object.keys(groups).sort((a,b)=>poLocationName(a).localeCompare(poLocationName(b))).map(loc => {
+    const grp = groups[loc].slice().sort((a,b)=> (Number(a.wave)||99)-(Number(b.wave)||99) || String(a.company||'').localeCompare(String(b.company||'')));
+    const waveCounts = {};
+    grp.forEach(r=>{ const w = (r.wave!=null) ? r.wave : '—'; waveCounts[w]=(waveCounts[w]||0)+1; });
+    const waveSummary = Object.keys(waveCounts).sort((a,b)=>Number(a)-Number(b)).map(w=>`W${w}: ${waveCounts[w]}`).join(' · ');
+    const body = grp.map(r=>{
+      const status = r.status || 'not_contacted';
+      const badge = `<span style="font-size:10px;font-weight:600;border-radius:10px;padding:2px 8px;white-space:nowrap;${PO_STATUS_COLOR[status]||''}">${esc(PO_STATUS_LABEL[status]||status)}</span>`;
+      const attempts = Array.isArray(r.attempts) ? r.attempts.length : 0;
+      return `<tr onclick="openPOModal('${esc(r.id)}')" style="cursor:pointer;border-top:1px solid var(--border);">
+          <td style="padding:6px 8px;font-weight:600;">${esc(r.company||'')}</td>
+          <td style="padding:6px 8px;text-align:center;">${r.wave!=null?esc(String(r.wave)):'—'}</td>
+          <td style="padding:6px 8px;text-align:right;">${r.sqft?Number(r.sqft).toLocaleString()+(r.sqft_est?'~':''):'—'}</td>
+          <td style="padding:6px 8px;">${badge}</td>
+          <td style="padding:6px 8px;text-align:center;color:var(--text2);">${attempts||''}</td>
+        </tr>`;
+    }).join('');
+    return `<div style="margin-bottom:20px;">
+        <div style="font-weight:700;font-size:13px;margin:0 0 6px;">${esc(poLocationName(loc))} <span style="color:var(--text2);font-weight:400;">(${grp.length}${waveSummary?' · '+esc(waveSummary):''})</span></div>
+        <div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead><tr style="color:var(--text2);font-size:11px;text-transform:uppercase;letter-spacing:.04em;text-align:left;">
+            <th style="padding:4px 8px;">Company</th><th style="padding:4px 8px;text-align:center;">Wave</th><th style="padding:4px 8px;text-align:right;">SF</th><th style="padding:4px 8px;">Status</th><th style="padding:4px 8px;text-align:center;">Attempts</th>
+          </tr></thead><tbody>${body}</tbody></table></div>
+      </div>`;
+  }).join('');
+}
+
+function openPOModal(id){
+  poModalId = id;
+  const r = propertyOutreachMap[id]; if(!r) return;
+  const status = r.status || 'not_contacted';
+  const attempts = Array.isArray(r.attempts) ? r.attempts.slice().sort((a,b)=> new Date(b.at||0)-new Date(a.at||0)) : [];
+  const outcomeBtns = PO_OUTCOMES.map(o => `<button onclick="logPOAttempt('${id}','${o.key}',event)" style="font-size:12px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);cursor:pointer;">${o.label}</button>`).join('');
+  const attemptsList = attempts.length ? attempts.map(a=>`<div style="padding:6px 0;border-top:1px solid var(--border);font-size:12px;"><b>${esc(PO_OUTCOME_LABEL[a.outcome]||a.outcome||'')}</b> <span style="color:var(--text2);">${a.at?new Date(a.at).toLocaleString([], {month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):''}</span>${a.note?`<div style="color:var(--text2);margin-top:2px;">${esc(a.note)}</div>`:''}</div>`).join('') : '<div style="color:var(--text2);font-size:13px;">No calls logged yet.</div>';
+  const promoted = r.promoted_lead_id;
+  document.getElementById('po-modal-body').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+      <div><div style="font-size:18px;font-weight:800;">${esc(r.company||'')}</div>
+        <div style="font-size:12px;color:var(--text2);">${esc(poLocationName(r.location))}${r.wave!=null?' · Wave '+esc(String(r.wave)):''}${r.sqft?' · '+Number(r.sqft).toLocaleString()+(r.sqft_est?'~':'')+' SF':''}</div></div>
+      <button onclick="closePOModal()" style="border:none;background:var(--bg);border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:16px;">✕</button>
+    </div>
+    <div style="margin-top:14px;">
+      <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);margin-bottom:6px;">Status</div>
+      <select onchange="savePOStatus('${id}',this.value)" style="padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px;">
+        ${Object.keys(PO_STATUS_LABEL).map(k=>`<option value="${k}" ${k===status?'selected':''}>${esc(PO_STATUS_LABEL[k])}</option>`).join('')}
+      </select>
+    </div>
+    <div style="margin-top:14px;">
+      <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);margin-bottom:6px;">Log a call</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">${outcomeBtns}</div>
+    </div>
+    ${r.source_notes ? `<div style="margin-top:14px;"><div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);margin-bottom:4px;">Call sheet notes</div><div style="font-size:13px;color:var(--text2);line-height:1.5;">${esc(r.source_notes)}</div></div>` : ''}
+    <div style="margin-top:14px;">
+      <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);margin-bottom:4px;">Call history</div>
+      ${attemptsList}
+    </div>
+    <div style="margin-top:16px;display:flex;gap:8px;align-items:center;">
+      ${promoted
+        ? `<span style="font-size:12px;color:#166534;">✓ Promoted to lead</span>`
+        : `<button onclick="promotePOToLead('${id}',event)" style="font-size:12px;padding:7px 12px;border:1px solid #38D430;border-radius:8px;background:#38D430;color:#fff;cursor:pointer;">🎯 Promote to lead</button>`}
+    </div>`;
+  document.getElementById('po-modal-overlay').style.display='flex';
+}
+function closePOModal(){ const o=document.getElementById('po-modal-overlay'); if(o) o.style.display='none'; poModalId=null; }
+function poModalBgClick(e){ if(e.target && e.target.id==='po-modal-overlay') closePOModal(); }
+
+async function savePOStatus(id, val){
+  if(!id) return;
+  try { await setDoc(doc(db,'property_outreach',id), { status: val, updatedAt: new Date().toISOString() }, { merge:true }); } catch(e){ console.warn('savePOStatus', e); }
+}
+
+async function logPOAttempt(id, outcome, e){
+  if(e) e.stopPropagation();
+  const r = propertyOutreachMap[id]; if(!r) return;
+  const note = prompt('Note (optional):', '') || '';
+  const attempts = Array.isArray(r.attempts) ? r.attempts.slice() : [];
+  attempts.push({ id: 'att'+Date.now(), at: new Date().toISOString(), outcome, note });
+  const status = PO_OUTCOME_STATUS[outcome] || 'attempted';
+  try {
+    await setDoc(doc(db,'property_outreach',id), { attempts, status, last_contacted_at: new Date().toISOString(), updatedAt: new Date().toISOString() }, { merge:true });
+  } catch(err){ console.warn('logPOAttempt', err); alert('Could not save — try again.'); return; }
+  openPOModal(id); // refresh with the new attempt
+}
+
+async function promotePOToLead(id, e){
+  if(e) e.stopPropagation();
+  const r = propertyOutreachMap[id]; if(!r) return;
+  if(r.promoted_lead_id){ alert('Already promoted.'); return; }
+  if(!confirm(`Create a lead from "${r.company||'this record'}"?`)) return;
+  const leadId = 'l'+Date.now()+Math.floor(Math.random()*100000);
+  const summary = `Promoted from Property Outreach (source: ${r.source||'yardi'}, ${poLocationName(r.location)}, wave ${r.wave!=null?r.wave:'—'}, ${(r.attempts||[]).length} call attempt(s)).${r.source_notes?' '+r.source_notes:''}`;
+  const lead = {
+    archived: false, createdAt: new Date().toISOString(), seq_status: 'active',
+    company: r.company||'', contact: r.contact||null, location: r.location||null,
+    sqft: (r.sqft!=null ? r.sqft : null), stage: 'contacted',
+    entries: [{ id:'e'+Date.now(), type:'wait', text: summary, done:false, notes:[], createdAt:new Date().toISOString(), kind:'note', dir:'out' }]
+  };
+  try {
+    await setDoc(doc(db,'leads',leadId), lead);
+    await setDoc(doc(db,'property_outreach',id), { status:'promoted', promoted_lead_id: leadId, updatedAt: new Date().toISOString() }, { merge:true });
+  } catch(err){ console.warn('promotePOToLead', err); alert('Could not promote — try again.'); return; }
+  closePOModal();
+  alert('Promoted — check the Leads tab.');
+}
+
+// Live from Firestore only — no bundled seed (same reasoning as Roster/Rate Bands:
+// this is internal call-sheet data, not something to ship in the public repo).
+try {
+  unsubPropertyOutreach = liveSnapshot(collection(db,'property_outreach'), snap => {
+    propertyOutreachMap = {};
+    snap.forEach(d => { propertyOutreachMap[d.id] = { id:d.id, ...d.data() }; });
+    const v = document.getElementById('propoutreach-view');
+    if (v && v.style.display !== 'none') renderPropertyOutreach();
+    const ov = document.getElementById('po-modal-overlay');
+    if (poModalId && propertyOutreachMap[poModalId] && ov && ov.style.display !== 'none') openPOModal(poModalId);
+  }, err => console.warn('property_outreach listener', err));
+} catch(e){ console.warn('property_outreach listener init', e); }
+
 // Renewals — per-tenant lease expiration / renewal status (written by the n8n Renewals
 // Sync, workflow 10). Surfaced on occupied unit rows in the Avail tab. No snapshot fallback.
 try {
@@ -5802,6 +6043,16 @@ window.snoozeFollowup      = snoozeFollowup;
 window.moveToWaitlist      = moveToWaitlist;
 window.toggleSpaceMatches  = toggleSpaceMatches;
 window.openSpaceMatchEmail = openSpaceMatchEmail;
+window.onPOSearch          = onPOSearch;
+window.setPOLocation       = setPOLocation;
+window.setPOWave           = setPOWave;
+window.setPOStatus         = setPOStatus;
+window.openPOModal         = openPOModal;
+window.closePOModal        = closePOModal;
+window.poModalBgClick      = poModalBgClick;
+window.savePOStatus        = savePOStatus;
+window.logPOAttempt        = logPOAttempt;
+window.promotePOToLead     = promotePOToLead;
 window.copySpaceMatchMsg   = copySpaceMatchMsg;
 window.snoozeSpaceMatch    = snoozeSpaceMatch;
 window.generateFollowup    = generateFollowup;

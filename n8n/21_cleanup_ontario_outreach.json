@@ -1,0 +1,178 @@
+{
+  "name": "CW — 21. Cleanup Ontario Outreach (one-off)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cleanup-ontario-outreach",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "c1e1a001-0000-4a1a-9a1a-000000000001",
+      "name": "Cleanup webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "cleanup-ontario-outreach"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents:runQuery",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ structuredQuery: { from: [{ collectionId: 'outreach' }], where: { compositeFilter: { op: 'AND', filters: [ { fieldFilter: { field: { fieldPath: 'location' }, op: 'EQUAL', value: { stringValue: 'ontario-airport' } } }, { fieldFilter: { field: { fieldPath: 'source' }, op: 'EQUAL', value: { stringValue: 'yardi' } } } ] } }, limit: 500 } }) }}",
+        "options": {}
+      },
+      "id": "c1e1a001-0000-4a1a-9a1a-000000000002",
+      "name": "Find stray Ontario records",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [224, 0],
+      "credentials": {
+        "googleApi": {
+          "id": "7IVvQuErxEJPoaMY",
+          "name": "Firebase_SDK_do_or_wait"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// runQuery streams a JSON array; n8n splits it into one item per array\n// element. Each element is either { document: {...}, readTime } or a bare\n// { readTime } heartbeat with no document — filter those out.\nconst items = $input.all();\nconst matches = [];\nfor (const item of items) {\n  const doc = item.json && item.json.document;\n  if (doc && doc.name) {\n    matches.push({ name: doc.name, id: doc.name.split('/').pop() });\n  }\n}\nreturn [{ json: { matches, count: matches.length } }];"
+      },
+      "id": "c1e1a001-0000-4a1a-9a1a-000000000003",
+      "name": "Parse matches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [448, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond1",
+              "leftValue": "={{ String($('Cleanup webhook').first().json.body.confirmDelete) }}",
+              "rightValue": "true",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c1e1a001-0000-4a1a-9a1a-000000000004",
+      "name": "Confirm delete?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [672, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const matches = $('Parse matches').first().json.matches;\nconst writes = matches.map(m => ({ delete: m.name }));\nreturn [{ json: { requestBody: { writes }, count: writes.length, ids: matches.map(m => m.id) } }];"
+      },
+      "id": "c1e1a001-0000-4a1a-9a1a-000000000005",
+      "name": "Build delete batch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [896, -80]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents:batchWrite",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": {}
+      },
+      "id": "c1e1a001-0000-4a1a-9a1a-000000000006",
+      "name": "Delete batch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, -80],
+      "credentials": {
+        "googleApi": {
+          "id": "7IVvQuErxEJPoaMY",
+          "name": "Firebase_SDK_do_or_wait"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, action: 'deleted', count: $('Build delete batch').first().json.count, ids: $('Build delete batch').first().json.ids }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": { "entries": [ { "name": "Access-Control-Allow-Origin", "value": "*" } ] }
+        }
+      },
+      "id": "c1e1a001-0000-4a1a-9a1a-000000000007",
+      "name": "Respond (deleted)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1344, -80]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, action: 'dry_run', matched: $('Parse matches').first().json.count, sample: $('Parse matches').first().json.matches.slice(0, 5) }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": { "entries": [ { "name": "Access-Control-Allow-Origin", "value": "*" } ] }
+        }
+      },
+      "id": "c1e1a001-0000-4a1a-9a1a-000000000008",
+      "name": "Respond (dry run)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [896, 120]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Cleanup webhook": {
+      "main": [[{ "node": "Find stray Ontario records", "type": "main", "index": 0 }]]
+    },
+    "Find stray Ontario records": {
+      "main": [[{ "node": "Parse matches", "type": "main", "index": 0 }]]
+    },
+    "Parse matches": {
+      "main": [[{ "node": "Confirm delete?", "type": "main", "index": 0 }]]
+    },
+    "Confirm delete?": {
+      "main": [
+        [{ "node": "Build delete batch", "type": "main", "index": 0 }],
+        [{ "node": "Respond (dry run)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build delete batch": {
+      "main": [[{ "node": "Delete batch", "type": "main", "index": 0 }]]
+    },
+    "Delete batch": {
+      "main": [[{ "node": "Respond (deleted)", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "0d4c1f9e-2c31-4a1a-9c3a-000000000002",
+  "meta": {
+    "instanceId": "576f1552f658e6ccbe293a5c310c12c03fc3f516211957ae27ecb76646f5be19"
+  },
+  "id": "",
+  "tags": []
+}
