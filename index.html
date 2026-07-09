@@ -4672,7 +4672,14 @@ async function saveFuturePlan() {
     let url = d.future_plan_url || '';
     let storagePath = d.future_plan_storage_path || '';
     if (file) {
-      storagePath = `future_plans/${propId}-${Date.now()}.pdf`;
+      // Reuses the existing `files/` path prefix (same one handleFileUpload already
+      // writes to for topic/lead attachments) rather than a new `future_plans/` prefix —
+      // the Storage security rules are scoped per top-level path, and a brand-new
+      // prefix isn't covered by them (hit as a live storage/unauthorized error
+      // 2026-07-09, since Storage rules aren't in this repo/deployed from the app —
+      // they're edited by hand in the Firebase console, same as firestore.rules was
+      // before it got checked in). Staying inside `files/` needs no console change.
+      storagePath = `files/future-plan-${propId}-${Date.now()}.pdf`;
       const r = ref(storage, storagePath);
       await uploadBytes(r, file, { contentType: 'application/pdf' });
       url = await getDownloadURL(r);
@@ -5839,10 +5846,10 @@ function setPOSfMax(v){ poSfMax = v==='' ? null : Number(v); renderPropertyOutre
 // by hand so it's always something he's actually chosen to say, not a guess.
 // Pre-fills the per-lead draft inputs in the modal (which can still be edited
 // just for that one draft without changing this shared default).
-let poContextMap = {};             // location id → { available_space, discount, other, updatedAt }
+let poContextMap = {};             // location id → { available_space, discount, other, cubework_url, updatedAt }
 let unsubPOContext = null;
 async function savePOContextField(locId, field, val){
-  if(!locId || !['available_space','discount','other'].includes(field)) return;
+  if(!locId || !['available_space','discount','other','cubework_url'].includes(field)) return;
   try { await setDoc(doc(db,'property_outreach_context',locId), { [field]: val, updatedAt: new Date().toISOString() }, { merge:true }); }
   catch(e){ console.warn('savePOContextField', e); }
 }
@@ -5985,7 +5992,10 @@ function renderPropertyOutreach(){
             style="flex:1;min-width:180px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:12px;" />
           <input value="${esc(ctx.other||'')}" placeholder="Other (anything else current)" onchange="savePOContextField('${esc(loc)}','other',this.value)"
             style="flex:1;min-width:180px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:12px;" />
+          <input value="${esc(ctx.cubework_url||'')}" placeholder="Cubework link (e.g. https://cubework.com/locations/...)" onchange="savePOContextField('${esc(loc)}','cubework_url',this.value)"
+            style="flex:1;min-width:220px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:12px;" />
         </div>
+        <div style="font-size:11px;color:var(--text2);margin-top:6px;">Set once per property — every cold draft here includes this link if it's filled in.</div>
       </div>`;
     const isOpen = poExpandedProps.has(loc);
     // Collapsed summary line — one badge per wave present, so priority still reads
@@ -6159,6 +6169,10 @@ async function generatePODraft(id, e){
   const available_space = val('po-draft-avail-'+id);
   const discount = val('po-draft-discount-'+id);
   const other = val('po-draft-other-'+id);
+  // Not a per-lead override input (unlike the three above) — the property link is
+  // always the same page for every lead at this property, so it's pulled straight
+  // from the shared talking-points doc rather than duplicated into another modal field.
+  const cubework_url = (poContextMap[r.location]||{}).cubework_url || '';
   const btn = e && e.target;
   const reset = () => { if(btn){ btn.disabled=false; btn.textContent = r.cold_draft ? '✨ Regenerate draft' : '✨ Generate draft'; } };
   if(btn){ btn.disabled=true; btn.textContent='✨ Generating…'; }
@@ -6168,7 +6182,7 @@ async function generatePODraft(id, e){
       body: JSON.stringify({
         id, company: r.company||'', location: r.location||'', locationName: poLocationName(r.location),
         wave: (r.wave!=null?r.wave:null), sqft: (r.sqft!=null?r.sqft:null), sqft_est: !!r.sqft_est,
-        source_notes: r.source_notes||'', available_space, discount, other
+        source_notes: r.source_notes||'', available_space, discount, other, cubework_url
       })
     });
     const text = await res.text().catch(()=>'');
