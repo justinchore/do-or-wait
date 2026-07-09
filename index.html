@@ -1023,6 +1023,7 @@
           <option value="bad_number">Bad number</option>
           <option value="do_not_call">Do not call</option>
           <option value="promoted">Promoted</option>
+          <option value="archived">Archived</option>
         </select>
         <input id="po-sf-min" type="number" min="0" placeholder="Min SF" oninput="setPOSfMin(this.value)"
                style="width:90px;padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:13px;" />
@@ -5646,6 +5647,16 @@ let poModalId  = null;
 let poSfMin    = null;   // Filter by square footage — leads with no sqft on file
 let poSfMax    = null;   // (mostly Wave 5, unqualified) don't match when either is set.
 
+// Which property groups are collapsed to a summary line. Added 2026-07-09 when a
+// 2nd property (Pellissier) joined Ontario Airport on this tab — a Set of location
+// ids that are COLLAPSED (empty by default = everything expanded, same as it always
+// rendered before this existed, so nothing changes visually until you click a header).
+const poCollapsedProps = new Set();
+function togglePOProp(loc){
+  if(poCollapsedProps.has(loc)) poCollapsedProps.delete(loc); else poCollapsedProps.add(loc);
+  renderPropertyOutreach();
+}
+
 function setPOSfMin(v){ poSfMin = v==='' ? null : Number(v); renderPropertyOutreach(); }
 function setPOSfMax(v){ poSfMax = v==='' ? null : Number(v); renderPropertyOutreach(); }
 
@@ -5711,11 +5722,16 @@ const PO_OUTCOME_STATUS = {
   callback_requested:'reached', interested:'interested'
 };
 
-function poRows(){ return Object.values(propertyOutreachMap).filter(r => !r.archived); }
+// Returns every record; archived vs active is decided by the caller (the "Archived"
+// status-filter option is the one place that wants archived-only — see below).
+function notInterestedTwice(r){ return Array.isArray(r.attempts) && r.attempts.filter(a=>a.outcome==='not_interested').length >= 2; }
+
+function poRows(){ return Object.values(propertyOutreachMap); }
 
 function renderPropertyOutreach(){
   const host = document.getElementById('po-content'); if(!host) return;
-  const all = poRows();
+  const showingArchived = poStatus === 'archived';
+  const all = poRows().filter(r => showingArchived ? !!r.archived : !r.archived);
 
   const locSel = document.getElementById('po-location');
   if(locSel){
@@ -5728,7 +5744,7 @@ function renderPropertyOutreach(){
   let rows = all;
   if(poLocation!=='all') rows = rows.filter(r=>r.location===poLocation);
   if(poWave!=='all') rows = rows.filter(r=>String(r.wave)===poWave);
-  if(poStatus!=='all') rows = rows.filter(r=>(r.status||'not_contacted')===poStatus);
+  if(!showingArchived && poStatus!=='all') rows = rows.filter(r=>(r.status||'not_contacted')===poStatus);
   if(poSfMin!=null) rows = rows.filter(r=> r.sqft!=null && Number(r.sqft)>=poSfMin);
   if(poSfMax!=null) rows = rows.filter(r=> r.sqft!=null && Number(r.sqft)<=poSfMax);
   if(poSearch) rows = rows.filter(r => [r.company,r.contact,r.source_notes,r.status].some(x=>String(x||'').toLowerCase().includes(poSearch)));
@@ -5759,7 +5775,8 @@ function renderPropertyOutreach(){
       const info = PO_WAVE_INFO[w] || { label:'Unspecified wave', sub:'', heat:'background:#f3f4f6;color:#6b7280;', tag:'' };
       const body = rows2.map(r=>{
         const status = r.status || 'not_contacted';
-        const badge = `<span style="font-size:10px;font-weight:600;border-radius:10px;padding:2px 8px;white-space:nowrap;${PO_STATUS_COLOR[status]||''}">${esc(PO_STATUS_LABEL[status]||status)}</span>`;
+        const badge = `<span style="font-size:10px;font-weight:600;border-radius:10px;padding:2px 8px;white-space:nowrap;${PO_STATUS_COLOR[status]||''}">${esc(PO_STATUS_LABEL[status]||status)}</span>` +
+          (r.archived ? ` <span style="font-size:10px;font-weight:600;border-radius:10px;padding:2px 8px;white-space:nowrap;background:#f3f4f6;color:#6b7280;">🗄 Archived</span>` : '');
         const attempts = Array.isArray(r.attempts) ? r.attempts.length : 0;
         const contactCell = r.contact || r.phone || r.email
           ? `${esc(r.contact||'')}${r.contact&&(r.phone||r.email)?' · ':''}${r.phone?'📞':''}${r.email?'✉️':''}`
@@ -5797,10 +5814,24 @@ function renderPropertyOutreach(){
             style="flex:1;min-width:180px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:12px;" />
         </div>
       </div>`;
-    return `<div style="margin-bottom:22px;">
-        <div style="font-weight:700;font-size:14px;margin:0 0 2px;">${esc(poLocationName(loc))} <span style="color:var(--text2);font-weight:400;">(${grp.length})</span></div>
-        ${talkingPoints}
-        ${waveBlocks}
+    const isOpen = !poCollapsedProps.has(loc);
+    // Collapsed summary line — one badge per wave present, so priority still reads
+    // at a glance without the full tables. Same "click header to expand" pattern as
+    // the Avail tab's location cards.
+    const waveChips = waveKeys.map(w=>{
+      const info = PO_WAVE_INFO[w] || { label:'Unspecified', heat:'background:#f3f4f6;color:#6b7280;' };
+      return `<span style="font-size:10.5px;font-weight:700;border-radius:8px;padding:2px 8px;white-space:nowrap;${info.heat}">W${w==='none'?'—':esc(w)} · ${byWave[w].length}</span>`;
+    }).join(' ');
+    return `<div style="margin-bottom:22px;border:1px solid var(--border);border-radius:12px;overflow:hidden;">
+        <div onclick="togglePOProp('${esc(loc)}')" style="cursor:pointer;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;background:var(--bg);">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <span style="font-size:12px;color:var(--text2);">${isOpen?'▾':'▸'}</span>
+            <span style="font-weight:700;font-size:14px;">${esc(poLocationName(loc))}</span>
+            <span style="color:var(--text2);font-weight:400;font-size:13px;">(${grp.length})</span>
+          </div>
+          ${!isOpen ? `<div style="display:flex;gap:6px;flex-wrap:wrap;">${waveChips}</div>` : ''}
+        </div>
+        ${isOpen ? `<div style="padding:0 14px 14px;">${talkingPoints}${waveBlocks}</div>` : ''}
       </div>`;
   }).join('');
 }
@@ -5819,6 +5850,10 @@ function openPOModal(id){
         <div style="font-size:12px;color:var(--text2);">${esc(poLocationName(r.location))}${r.wave!=null?' · Wave '+esc(String(r.wave)):''}${r.sqft?' · '+Number(r.sqft).toLocaleString()+(r.sqft_est?'~':'')+' SF':''}</div></div>
       <button onclick="closePOModal()" style="border:none;background:var(--bg);border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:16px;">✕</button>
     </div>
+    ${r.archived ? `<div style="margin-top:10px;background:#f3f4f6;border-radius:8px;padding:8px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+      <span style="font-size:12px;color:#6b7280;">🗄 Archived${notInterestedTwice(r)?' — declined twice':''}</span>
+      <button onclick="setPOArchived('${id}',false,event)" style="font-size:12px;padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);cursor:pointer;">↩ Restore</button>
+    </div>` : ''}
     <div style="margin-top:14px;">
       <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);margin-bottom:6px;">Contact <span style="font-weight:400;color:var(--text2);text-transform:none;">— not in the Yardi export; pull it up and enter it here</span></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
@@ -5878,10 +5913,11 @@ function openPOModal(id){
       <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);margin-bottom:4px;">Call history</div>
       ${attemptsList}
     </div>
-    <div style="margin-top:16px;display:flex;gap:8px;align-items:center;">
+    <div style="margin-top:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
       ${promoted
         ? `<span style="font-size:12px;color:#166534;">✓ Promoted to lead</span>`
         : `<button onclick="promotePOToLead('${id}',event)" style="font-size:12px;padding:7px 12px;border:1px solid #38D430;border-radius:8px;background:#38D430;color:#fff;cursor:pointer;">🎯 Promote to lead</button>`}
+      ${!r.archived ? `<button onclick="setPOArchived('${id}',true,event)" style="font-size:12px;padding:7px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text2);cursor:pointer;">🗄 Archive</button>` : ''}
     </div>`;
   document.getElementById('po-modal-overlay').style.display='flex';
 }
@@ -5918,10 +5954,25 @@ async function logPOAttempt(id, outcome, e){
   const attempts = Array.isArray(r.attempts) ? r.attempts.slice() : [];
   attempts.push({ id: 'att'+Date.now(), at: new Date().toISOString(), outcome, note });
   const status = PO_OUTCOME_STATUS[outcome] || 'attempted';
+  // Auto-archive on the 2nd "Not interested" — the 1st just records the outcome
+  // normally (they may be worth a reactivation attempt later, per Wave 4). A repeat
+  // decline means stop calling; archive it (soft-hide, recoverable via the
+  // "Archived" status filter + a ↩ Restore button in the modal) rather than delete.
+  const notInterestedCount = attempts.filter(a=>a.outcome==='not_interested').length;
+  const archived = (outcome === 'not_interested' && notInterestedCount >= 2) ? true : !!r.archived;
   try {
-    await setDoc(doc(db,'property_outreach',id), { attempts, status, last_contacted_at: new Date().toISOString(), updatedAt: new Date().toISOString() }, { merge:true });
+    await setDoc(doc(db,'property_outreach',id), { attempts, status, archived, last_contacted_at: new Date().toISOString(), updatedAt: new Date().toISOString() }, { merge:true });
   } catch(err){ console.warn('logPOAttempt', err); alert('Could not save — try again.'); return; }
+  if(archived && !r.archived) alert(`${r.company||'This lead'} said not interested twice — archived. Find it again anytime under Status → Archived.`);
   openPOModal(id); // refresh with the new attempt
+}
+
+async function setPOArchived(id, val, e){
+  if(e) e.stopPropagation();
+  if(!id) return;
+  try { await setDoc(doc(db,'property_outreach',id), { archived: !!val, updatedAt: new Date().toISOString() }, { merge:true }); }
+  catch(err){ console.warn('setPOArchived', err); alert('Could not save — try again.'); return; }
+  openPOModal(id);
 }
 
 // Cold outreach draft — manual, per-lead, never auto-triggered (separate from the
@@ -6245,6 +6296,7 @@ window.moveToWaitlist      = moveToWaitlist;
 window.toggleSpaceMatches  = toggleSpaceMatches;
 window.openSpaceMatchEmail = openSpaceMatchEmail;
 window.onPOSearch          = onPOSearch;
+window.togglePOProp        = togglePOProp;
 window.setPOLocation       = setPOLocation;
 window.setPOWave           = setPOWave;
 window.setPOStatus         = setPOStatus;
@@ -6257,6 +6309,7 @@ window.savePOSqft          = savePOSqft;
 window.setPOSfMin          = setPOSfMin;
 window.setPOSfMax          = setPOSfMax;
 window.logPOAttempt        = logPOAttempt;
+window.setPOArchived       = setPOArchived;
 window.promotePOToLead     = promotePOToLead;
 window.savePOContextField  = savePOContextField;
 window.generatePODraft     = generatePODraft;
