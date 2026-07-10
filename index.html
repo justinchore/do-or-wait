@@ -665,6 +665,7 @@
     <button class="tab-btn" data-tab="pricing" onclick="switchTab('pricing')">💲 Pricing</button>
     <button class="tab-btn" data-tab="ratebands" onclick="switchTab('ratebands')">📊 Rate Bands</button>
     <button class="tab-btn" data-tab="notes" onclick="switchTab('notes')">💡 Notes</button>
+    <button class="tab-btn" data-tab="assistant" onclick="switchTab('assistant')">🤖 Assistant</button>
   </div>
 
   <!-- Tasks view -->
@@ -910,6 +911,27 @@
     </div>
   </div>
 
+  <!-- Assistant view — in-app Claude chat, powered by the do-or-wait MCP connector.
+       Deliberately built as our own chat panel (not Claude Desktop/claude.ai
+       conversation mode) so ONLY the final reply renders — no step-by-step
+       tool-call narration. Added 2026-07-10. -->
+  <div id="assistant-view" style="display:none">
+    <div style="max-width:760px;margin:0 auto;padding:16px;display:flex;flex-direction:column;height:calc(100vh - 210px);min-height:420px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+        <div style="flex:1;font-size:12px;color:var(--text2);">Talks to your Leads, Tasks, Notes, Outreach, and Avail data live. Not a record of what it did, just the answer.</div>
+        <button class="btn sm" onclick="newAssistantThread()">＋ New thread</button>
+      </div>
+      <div id="assistant-messages" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:4px 2px 12px;"></div>
+      <div id="assistant-error" style="display:none;color:#b42318;font-size:13px;margin-bottom:8px;"></div>
+      <div style="display:flex;gap:8px;">
+        <textarea id="assistant-input" rows="1" placeholder="Ask about a lead, log a call, check availability…"
+          style="flex:1;resize:none;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:14px;font-family:inherit;"
+          onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendAssistantMessage();}"></textarea>
+        <button class="btn dark" id="assistant-send-btn" onclick="sendAssistantMessage()">Send</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Roster view (staff contact directory — visible to Avail-only role too) -->
   <div id="roster-view" style="display:none">
     <div style="max-width:1000px;margin:0 auto;padding:16px;width:100%;">
@@ -973,6 +995,7 @@
           <option value="all">All</option>
           <option value="enriched">Has email</option>
           <option value="pending">Not pulled yet</option>
+          <option value="replied">Replied</option>
           <option value="invalid">Invalid</option>
         </select>
         <select id="outreach-industry" onchange="setOutreachIndustry(this.value)"
@@ -985,6 +1008,11 @@
         </select>
         <span id="outreach-meta" style="font-size:12px;color:var(--text2);"></span>
       </div>
+
+      <!-- Reply reminder banner (prospects the mailbox scanner detected an inbound
+           reply from — see n8n workflow 23, Outreach Reply Scanner) -->
+      <div id="outreach-reply-banner" style="display:none; margin-bottom:14px;"></div>
+
       <div id="outreach-content"></div>
     </div>
   </div>
@@ -1023,6 +1051,7 @@
           <option value="bad_number">Bad number</option>
           <option value="do_not_call">Do not call</option>
           <option value="promoted">Promoted</option>
+          <option value="replied">Replied</option>
           <option value="archived">Archived</option>
         </select>
         <input id="po-sf-min" type="number" min="0" placeholder="Min SF" oninput="setPOSfMin(this.value)"
@@ -1031,6 +1060,12 @@
                style="width:90px;padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:13px;" />
         <span id="po-meta" style="font-size:12px;color:var(--text2);"></span>
       </div>
+
+      <!-- Reply reminder banner (property_outreach leads the mailbox scanner
+           detected an inbound reply from — see n8n workflow 23, Outreach Reply
+           Scanner, which watches this collection alongside plain Outreach) -->
+      <div id="po-reply-banner" style="display:none; margin-bottom:14px;"></div>
+
       <div id="po-content"></div>
     </div>
   </div>
@@ -1471,6 +1506,10 @@ onAuthStateChanged(auth, user => {
 // ═══════════════════════════════════════════════════════════════
 //  STATE
 // ═══════════════════════════════════════════════════════════════
+let assistantMessages = []; // [{role:'user'|'assistant', text, at, toolsUsed?}] — persisted, see ASSISTANT below
+let unsubAssistant    = null;
+let assistantSending  = false;
+let assistantErr      = '';
 let topics       = [];
 let unsubTopics  = null;
 let expandedIds  = new Set();
@@ -3982,6 +4021,7 @@ function switchTab(tab) {
   document.getElementById('notes-view').style.display    = tab === 'notes'    ? '' : 'none';
   document.getElementById('outreach-view').style.display = tab === 'outreach' ? '' : 'none';
   document.getElementById('propoutreach-view').style.display = tab === 'propoutreach' ? '' : 'none';
+  document.getElementById('assistant-view').style.display = tab === 'assistant' ? '' : 'none';
   document.querySelectorAll('.tab-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.tab === tab);
   });
@@ -3994,6 +4034,7 @@ function switchTab(tab) {
   if (tab === 'playbook') renderPlaybookCards();
   if (tab === 'leads') refreshAllLeadEmailLinks();
   if (tab === 'tasks') refreshAllTaskEmailLinks();
+  if (tab === 'assistant') renderAssistant();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -4079,6 +4120,7 @@ const FOLLOWUP_GEN_WEBHOOK = `${PROXY}/webhook/generate-followup`; // lead + thr
 const PO_DRAFT_WEBHOOK     = `${PROXY}/webhook/property-outreach-draft`; // property outreach lead + current talking points → cold outreach draft (n8n workflow 22)
 const PRICING_BD_SYNC_WEBHOOK = `${PROXY}/webhook/pricing-bd-sync`; // manual "Sync now" for the Rate Bands tab (n8n workflow 18)
 const ROSTER_SYNC_WEBHOOK = `${PROXY}/webhook/roster-sync`; // manual "Sync now" for the Roster tab (n8n workflow 19)
+const ASSISTANT_CHAT_WEBHOOK = `${PROXY}/webhook/assistant-chat`; // 🤖 Assistant tab: {messages} → Claude (native MCP connector against the do-or-wait Cloud Run server) → {ok,reply,toolsUsed} (n8n workflow 24)
 
 // Listen to ALL availability docs (scales to multiple locations)
 unsubAvail = liveSnapshot(collection(db, 'availability'), snap => {
@@ -4993,6 +5035,100 @@ async function saveOwnership() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  ASSISTANT — in-app Claude chat, powered by the do-or-wait MCP connector.
+//  ONE persisted thread (assistant_threads/main) so it survives reloads and
+//  works the same on any signed-in device, same live-sync pattern as every
+//  other collection here. The point of building this as our own panel: only
+//  {role,text} ever renders — no tool_use/tool_result narration, unlike
+//  Claude Desktop/claude.ai conversation mode.
+// ═══════════════════════════════════════════════════════════════
+unsubAssistant = liveSnapshot(doc(db, 'assistant_threads', 'main'), snap => {
+  const d = snap.exists() ? snap.data() : null;
+  assistantMessages = (d && Array.isArray(d.messages)) ? d.messages : [];
+  renderAssistant();
+}, err => console.warn('assistant thread listener', err));
+
+function renderAssistant() {
+  const wrap = document.getElementById('assistant-messages');
+  if (!wrap) return; // not on this tab / not mounted yet
+  const errEl = document.getElementById('assistant-error');
+  if (errEl) { errEl.style.display = assistantErr ? '' : 'none'; errEl.textContent = assistantErr; }
+  const sendBtn = document.getElementById('assistant-send-btn');
+  if (sendBtn) { sendBtn.disabled = assistantSending; sendBtn.textContent = assistantSending ? 'Thinking…' : 'Send'; }
+
+  if (!assistantMessages.length) {
+    wrap.innerHTML = '<div style="color:var(--text2);font-size:13px;padding:24px 4px;">Ask it about a lead, have it log a call, or check what\'s open at a location. It can read and update Leads, Tasks, Notes, Outreach, and Availability.</div>';
+  } else {
+    wrap.innerHTML = assistantMessages.map((m, i) => {
+      const mine = m.role === 'user';
+      const toolsChip = (!mine && m.toolsUsed && m.toolsUsed.length)
+        ? `<div style="margin-top:4px;"><span style="cursor:pointer;font-size:11px;color:var(--text2);" onclick="toggleAssistantToolsChip(${i},event)">🔧 used ${m.toolsUsed.length} tool${m.toolsUsed.length === 1 ? '' : 's'}</span><span id="assistant-tools-${i}" style="display:none;font-size:11px;color:var(--text2);"> — ${esc(m.toolsUsed.join(', '))}</span></div>`
+        : '';
+      return `<div style="align-self:${mine ? 'flex-end' : 'flex-start'};max-width:82%;">
+        <div style="background:${mine ? 'var(--wait)' : 'var(--surface)'};color:${mine ? '#fff' : 'var(--text)'};border:${mine ? 'none' : '1px solid var(--border)'};border-radius:14px;padding:10px 14px;font-size:14px;line-height:1.5;white-space:pre-wrap;">${esc(m.text || '')}</div>
+        ${toolsChip}
+      </div>`;
+    }).join('');
+  }
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+function toggleAssistantToolsChip(i, e) {
+  if (e) e.stopPropagation();
+  const el = document.getElementById('assistant-tools-' + i);
+  if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
+}
+
+async function persistAssistantThread() {
+  try { await setDoc(doc(db, 'assistant_threads', 'main'), { messages: assistantMessages, updatedAt: new Date().toISOString() }); }
+  catch (e) { console.error('Save assistant thread failed:', e); }
+}
+
+async function sendAssistantMessage() {
+  if (assistantSending) return;
+  const input = document.getElementById('assistant-input');
+  const text = (input ? input.value : '').trim();
+  if (!text) return;
+  assistantErr = '';
+  assistantMessages = [...assistantMessages, { role: 'user', text, at: new Date().toISOString() }];
+  if (input) input.value = '';
+  assistantSending = true;
+  renderAssistant();
+  await persistAssistantThread();
+  try {
+    const res = await fetch(ASSISTANT_CHAT_WEBHOOK, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: assistantMessages.map(m => ({ role: m.role, text: m.text })) })
+    });
+    let data = null;
+    try { data = await res.json(); } catch (e) {}
+    if (!res.ok || !data || data.ok === false) {
+      const msg = (data && data.error) || `Request failed (${res.status})`;
+      assistantErr = msg.includes('404') || res.status === 404
+        ? 'Assistant workflow not found — check it\'s imported and active in n8n (workflow 24).'
+        : msg;
+    } else {
+      assistantMessages = [...assistantMessages, { role: 'assistant', text: data.reply || '(no reply)', at: new Date().toISOString(), toolsUsed: data.toolsUsed || [] }];
+      await persistAssistantThread();
+    }
+  } catch (e) {
+    assistantErr = 'Could not reach the assistant — check your connection and try again.';
+  } finally {
+    assistantSending = false;
+    renderAssistant();
+  }
+}
+
+async function newAssistantThread() {
+  if (assistantMessages.length && !confirm('Start a new thread? This clears the current conversation.')) return;
+  assistantMessages = [];
+  assistantErr = '';
+  await persistAssistantThread();
+  renderAssistant();
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  NOTES / IDEAS
 // ═══════════════════════════════════════════════════════════════
 let ideaNotes  = [];
@@ -5478,7 +5614,13 @@ function outreachRows(){
       tier: d.prospect_tier || d.tier || '',
       score: (d.prospect_score!=null ? d.prospect_score : (d.score!=null ? d.score : '')),
       why: d.why_now || '', subject: d.email_subject || '', body: d.email_body || '',
-      status: d.status || '', invalid: !!d.invalid, enriched: !!email
+      status: d.status || '', invalid: !!d.invalid, enriched: !!email,
+      // Reply-detection fields written by n8n workflow 23 (Outreach Reply Scanner) —
+      // see that collection's doc in CLAUDE.md. reply_seen tracks whether Justin has
+      // already reviewed this one (mirrors the Leads email-thread "mark seen" pattern).
+      replied: !!d.reply_detected, replySeen: !!d.reply_seen,
+      replySubject: d.reply_subject || '', replySnippet: d.reply_snippet || '',
+      replyReceivedAt: d.reply_received_at || '', replyWebLink: d.reply_web_link || ''
     };
   };
   const seedDomains = new Set(seed.map(s=>(s.domain||'').toLowerCase()).filter(Boolean));
@@ -5508,12 +5650,48 @@ function renderOutreach(){
       Object.keys(counts).sort().map(i=>`<option value="${esc(i)}">${esc(indLabel(i))} (${counts[i]})</option>`).join('');
     indSel.value = outreachIndustry;
   }
+  const filtSel = document.getElementById('outreach-filter');
+  if(filtSel) filtSel.value = outreachFilter;
+
+  // Reply banner + tab badge — counts prospects the scanner flagged as replied
+  // that Justin hasn't reviewed yet (reply_seen false). Flag-only per design:
+  // this never auto-promotes, it just surfaces "go look" (promote manually via
+  // the Do or Wait — Firestore MCP's promote_outreach_to_lead tool once ready).
+  const notInvalid = all.filter(r=>!r.invalid);
+  const repliedUnseen = notInvalid.filter(r=>r.replied && !r.replySeen);
+  const outreachTab = document.querySelector('.tab-btn[data-tab="outreach"]');
+  if (outreachTab) {
+    outreachTab.innerHTML = repliedUnseen.length
+      ? `📧 Outreach <span class="tab-badge">${repliedUnseen.length}</span>`
+      : '📧 Outreach';
+  }
+  const rBanner = document.getElementById('outreach-reply-banner');
+  if (rBanner) {
+    if (repliedUnseen.length && outreachFilter !== 'replied') {
+      const names = repliedUnseen.slice(0, 3).map(r => esc(r.company || 'a prospect')).join(', ');
+      const more  = repliedUnseen.length > 3 ? ` +${repliedUnseen.length - 3} more` : '';
+      rBanner.style.display = 'block';
+      rBanner.innerHTML = `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;border:1.5px dashed #2563eb;background:rgba(37,99,235,.07);border-radius:12px;padding:11px 15px;">
+          <span style="font-size:20px;line-height:1;">📩</span>
+          <div style="flex:1;min-width:180px;font-size:13px;color:var(--text);">
+            <b>${repliedUnseen.length} prospect${repliedUnseen.length !== 1 ? 's' : ''}</b> replied
+            <span style="color:var(--text2);"> — ${names}${more}</span>
+          </div>
+          <button onclick="setOutreachFilter('replied')" style="font-size:12px;font-weight:700;border:none;background:#2563eb;color:#fff;border-radius:8px;padding:6px 13px;cursor:pointer;">Review replies →</button>
+        </div>`;
+    } else {
+      rBanner.style.display = 'none';
+      rBanner.innerHTML = '';
+    }
+  }
+
   let rows = all;
   if(outreachFilter==='invalid') rows = rows.filter(r=>r.invalid);
   else {
     rows = rows.filter(r=>!r.invalid);   // hide flagged prospects from every normal view
     if(outreachFilter==='enriched') rows = rows.filter(r=>r.enriched);
     else if(outreachFilter==='pending') rows = rows.filter(r=>!r.enriched);
+    else if(outreachFilter==='replied') rows = rows.filter(r=>r.replied);
   }
   if(outreachIndustry!=='all') rows = rows.filter(r=>r.industry===outreachIndustry);
   if(outreachSearch) rows = rows.filter(r => [r.company,r.domain,r.contact,r.email,r.title,r.industry,indLabel(r.industry)].some(x=>String(x||'').toLowerCase().includes(outreachSearch)));
@@ -5533,6 +5711,9 @@ function renderOutreach(){
     const emailCell = r.email
       ? `<a href="mailto:${esc(r.email)}" onclick="event.stopPropagation()" style="${LINK}">${esc(r.email)}</a>`
       : '<span style="color:var(--text2)">—</span>';
+    const replyBadge = r.replied
+      ? `<span title="${r.replySnippet ? esc(r.replySnippet) : 'Replied'}" style="font-size:10px;border-radius:10px;padding:1px 7px;margin-right:5px;background:${r.replySeen?'#e0e7ff':'#dbeafe'};color:${r.replySeen?'#3730a3':'#1e40af'};">📩 ${r.replySeen?'Replied':'Replied · new'}</span>`
+      : '';
     return `<tr onclick="openOutreachModal('${esc(r.domain)}')" style="cursor:pointer;border-top:1px solid var(--border);">
         <td style="font-weight:600;padding:6px 8px;">${esc(r.company)} <span style="color:var(--text2);font-weight:400;">›</span><div style="font-size:11px;color:var(--text2);font-weight:400;">${esc(r.domain)}</div></td>
         <td style="padding:6px 8px;">${esc(r.contact||'')||'<span style="color:var(--text2)">—</span>'}<div style="font-size:11px;color:var(--text2);">${esc(r.title||'')}</div></td>
@@ -5543,7 +5724,7 @@ function renderOutreach(){
         <td style="padding:6px 8px;text-align:right;font-size:12px;">${r.teu? Number(r.teu).toLocaleString():''}</td>
         <td style="padding:6px 8px;text-align:center;">${tier}</td>
         <td style="padding:6px 8px;text-align:right;font-size:12px;">${r.score!==''?esc(String(r.score)):''}</td>
-        <td style="padding:6px 8px;font-size:12px;">${esc(r.status||'')}</td>
+        <td style="padding:6px 8px;font-size:12px;">${replyBadge}${esc(r.status||'')}</td>
       </tr>`;
   }).join('');
   host.innerHTML = `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;">
@@ -5697,6 +5878,19 @@ function openOutreachModal(domain){
       <span style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);">Status</span>
       <input value="${esc(d.status||'')}" placeholder="emailed / replied / called…" onchange="saveOutreachStatus('${esc(d.id)}',this.value)"
         style="flex:1;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px;" /></div>` : '';
+  // Reply detected by n8n workflow 23 (Outreach Reply Scanner) — flag + info only,
+  // never auto-promotes. Promote via the Do or Wait — Firestore MCP's
+  // promote_outreach_to_lead tool once you've reviewed it.
+  const replyDate = d.reply_received_at ? new Date(d.reply_received_at) : null;
+  const replyBlock = d.reply_detected ? `<div style="margin-top:16px;border:1.5px solid #2563eb;background:rgba(37,99,235,.06);border-radius:10px;padding:12px 14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#1e40af;">📩 Replied${replyDate && !isNaN(replyDate.getTime()) ? ' · ' + replyDate.toLocaleString() : ''}</div>
+        ${d.reply_seen ? '<span style="font-size:11px;color:var(--text2);">✓ Reviewed</span>' : `<button onclick="markOutreachReplySeen('${esc(d.id)}',event)" style="font-size:11px;font-weight:700;border:none;background:#2563eb;color:#fff;border-radius:7px;padding:4px 10px;cursor:pointer;">Mark reviewed</button>`}
+      </div>
+      ${d.reply_subject ? `<div style="font-size:13px;font-weight:600;margin-top:6px;">${esc(d.reply_subject)}</div>` : ''}
+      ${d.reply_snippet ? `<div style="font-size:13px;color:var(--text2);margin-top:2px;">${esc(d.reply_snippet)}</div>` : ''}
+      ${d.reply_web_link ? `<a href="${esc(fixThreadUrl(d.reply_web_link))}" target="_blank" rel="noopener" style="font-size:12px;${LINK}display:inline-block;margin-top:8px;">Open thread ↗</a>` : ''}
+    </div>` : '';
   const researched = !!d.research_brief;
   const researchBlock = `<div style="margin-top:16px;">
       <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -5717,6 +5911,7 @@ function openOutreachModal(domain){
         <button onclick="closeOutreachModal()" style="border:none;background:var(--bg);border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:16px;">✕</button></div>
     </div>
     ${d.why_now?`<div style="margin-top:10px;font-size:13px;background:var(--bg);border-radius:10px;padding:10px 12px;"><b>Why now:</b> ${esc(d.why_now)}</div>`:''}
+    ${replyBlock}
     ${researchBlock}
     ${sec('Draft email', draft)}
     ${statusBlock}
@@ -5778,6 +5973,14 @@ function outreachModalBgClick(e){ if(e.target && e.target.id==='outreach-modal-o
 async function saveOutreachStatus(id, val){
   if(!id) return;
   try { await setDoc(doc(db,'outreach',id), { status: val }, { merge:true }); } catch(e){ console.warn('save status', e); }
+}
+// Acknowledge a detected reply (clears the tab badge / banner count for this
+// prospect without losing the historical reply_detected flag) — same "mark
+// seen, keep the record" pattern as markThreadSeen for Leads' email links.
+async function markOutreachReplySeen(id, e){
+  if(e) e.stopPropagation();
+  if(!id) return;
+  try { await setDoc(doc(db,'outreach',id), { reply_seen: true }, { merge:true }); } catch(err){ console.warn('mark reply seen', err); }
 }
 // Flag a prospect invalid (bad fit / wrong contact) so it drops out of the working list.
 async function markOutreachInvalid(domain, val, e){
@@ -5955,7 +6158,11 @@ function poRows(){ return Object.values(propertyOutreachMap); }
 function renderPropertyOutreach(){
   const host = document.getElementById('po-content'); if(!host) return;
   const showingArchived = poStatus === 'archived';
+  const showingReplied  = poStatus === 'replied';
   const all = poRows().filter(r => showingArchived ? !!r.archived : !r.archived);
+
+  const statusSel = document.getElementById('po-status');
+  if(statusSel) statusSel.value = poStatus;
 
   const locSel = document.getElementById('po-location');
   if(locSel){
@@ -5965,10 +6172,41 @@ function renderPropertyOutreach(){
     locSel.value = poLocation;
   }
 
+  // Reply banner + tab badge — same flag-only pattern as the Outreach tab
+  // (see n8n workflow 23, Outreach Reply Scanner, which watches BOTH
+  // collections in one scan). Never auto-promotes; just surfaces "go look".
+  const repliedUnseen = poRows().filter(r => !r.archived && r.reply_detected && !r.reply_seen);
+  const poTab = document.querySelector('.tab-btn[data-tab="propoutreach"]');
+  if (poTab) {
+    poTab.innerHTML = repliedUnseen.length
+      ? `🏢 Prop Outreach <span class="tab-badge">${repliedUnseen.length}</span>`
+      : '🏢 Prop Outreach';
+  }
+  const poRBanner = document.getElementById('po-reply-banner');
+  if (poRBanner) {
+    if (repliedUnseen.length && poStatus !== 'replied') {
+      const names = repliedUnseen.slice(0, 3).map(r => esc(r.company || 'a lead')).join(', ');
+      const more  = repliedUnseen.length > 3 ? ` +${repliedUnseen.length - 3} more` : '';
+      poRBanner.style.display = 'block';
+      poRBanner.innerHTML = `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;border:1.5px dashed #2563eb;background:rgba(37,99,235,.07);border-radius:12px;padding:11px 15px;">
+          <span style="font-size:20px;line-height:1;">📩</span>
+          <div style="flex:1;min-width:180px;font-size:13px;color:var(--text);">
+            <b>${repliedUnseen.length} lead${repliedUnseen.length !== 1 ? 's' : ''}</b> replied
+            <span style="color:var(--text2);"> — ${names}${more}</span>
+          </div>
+          <button onclick="setPOStatus('replied')" style="font-size:12px;font-weight:700;border:none;background:#2563eb;color:#fff;border-radius:8px;padding:6px 13px;cursor:pointer;">Review replies →</button>
+        </div>`;
+    } else {
+      poRBanner.style.display = 'none';
+      poRBanner.innerHTML = '';
+    }
+  }
+
   let rows = all;
   if(poLocation!=='all') rows = rows.filter(r=>r.location===poLocation);
   if(poWave!=='all') rows = rows.filter(r=>String(r.wave)===poWave);
-  if(!showingArchived && poStatus!=='all') rows = rows.filter(r=>(r.status||'not_contacted')===poStatus);
+  if(!showingArchived && !showingReplied && poStatus!=='all') rows = rows.filter(r=>(r.status||'not_contacted')===poStatus);
+  if(showingReplied) rows = rows.filter(r=>r.reply_detected);
   if(poSfMin!=null) rows = rows.filter(r=> r.sqft!=null && Number(r.sqft)>=poSfMin);
   if(poSfMax!=null) rows = rows.filter(r=> r.sqft!=null && Number(r.sqft)<=poSfMax);
   if(poSearch) rows = rows.filter(r => [r.company,r.contact,r.source_notes,r.status].some(x=>String(x||'').toLowerCase().includes(poSearch)));
@@ -6000,7 +6238,8 @@ function renderPropertyOutreach(){
       const body = rows2.map(r=>{
         const status = r.status || 'not_contacted';
         const badge = `<span style="font-size:10px;font-weight:600;border-radius:10px;padding:2px 8px;white-space:nowrap;${PO_STATUS_COLOR[status]||''}">${esc(PO_STATUS_LABEL[status]||status)}</span>` +
-          (r.archived ? ` <span style="font-size:10px;font-weight:600;border-radius:10px;padding:2px 8px;white-space:nowrap;background:#f3f4f6;color:#6b7280;">🗄 Archived</span>` : '');
+          (r.archived ? ` <span style="font-size:10px;font-weight:600;border-radius:10px;padding:2px 8px;white-space:nowrap;background:#f3f4f6;color:#6b7280;">🗄 Archived</span>` : '') +
+          (r.reply_detected ? ` <span title="${r.reply_snippet ? esc(r.reply_snippet) : 'Replied'}" style="font-size:10px;font-weight:600;border-radius:10px;padding:2px 8px;white-space:nowrap;background:${r.reply_seen?'#e0e7ff':'#dbeafe'};color:${r.reply_seen?'#3730a3':'#1e40af'};">📩 ${r.reply_seen?'Replied':'Replied · new'}</span>` : '');
         const attempts = Array.isArray(r.attempts) ? r.attempts.length : 0;
         const contactCell = r.contact || r.phone || r.email
           ? `${esc(r.contact||'')}${r.contact&&(r.phone||r.email)?' · ':''}${r.phone?'📞':''}${r.email?'✉️':''}`
@@ -6098,6 +6337,18 @@ function openPOModal(id){
       <span style="font-size:12px;color:#6b7280;">🗄 Archived${notInterestedTwice(r)?' — declined twice':''}</span>
       <button onclick="setPOArchived('${id}',false,event)" style="font-size:12px;padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);cursor:pointer;">↩ Restore</button>
     </div>` : ''}
+    ${r.reply_detected ? (() => {
+      const replyDate = r.reply_received_at ? new Date(r.reply_received_at) : null;
+      return `<div style="margin-top:10px;border:1.5px solid #2563eb;background:rgba(37,99,235,.06);border-radius:10px;padding:12px 14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#1e40af;">📩 Replied${replyDate && !isNaN(replyDate.getTime()) ? ' · ' + replyDate.toLocaleString() : ''}</div>
+          ${r.reply_seen ? '<span style="font-size:11px;color:var(--text2);">✓ Reviewed</span>' : `<button onclick="markPOReplySeen('${id}',event)" style="font-size:11px;font-weight:700;border:none;background:#2563eb;color:#fff;border-radius:7px;padding:4px 10px;cursor:pointer;">Mark reviewed</button>`}
+        </div>
+        ${r.reply_subject ? `<div style="font-size:13px;font-weight:600;margin-top:6px;">${esc(r.reply_subject)}</div>` : ''}
+        ${r.reply_snippet ? `<div style="font-size:13px;color:var(--text2);margin-top:2px;">${esc(r.reply_snippet)}</div>` : ''}
+        ${r.reply_web_link ? `<a href="${esc(fixThreadUrl(r.reply_web_link))}" target="_blank" rel="noopener" style="font-size:12px;color:#0969da;text-decoration:none;display:inline-block;margin-top:8px;">Open thread ↗</a>` : ''}
+      </div>`;
+    })() : ''}
     <div style="margin-top:14px;">
       <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);margin-bottom:6px;">Contact <span style="font-weight:400;color:var(--text2);text-transform:none;">— not in the Yardi export; pull it up and enter it here</span></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
@@ -6171,6 +6422,14 @@ function poModalBgClick(e){ if(e.target && e.target.id==='po-modal-overlay') clo
 async function savePOStatus(id, val){
   if(!id) return;
   try { await setDoc(doc(db,'property_outreach',id), { status: val, updatedAt: new Date().toISOString() }, { merge:true }); } catch(e){ console.warn('savePOStatus', e); }
+}
+// Acknowledge a detected reply (n8n workflow 23, Outreach Reply Scanner) —
+// clears the tab badge / banner count for this lead without losing the
+// historical reply_detected flag. Same pattern as markOutreachReplySeen.
+async function markPOReplySeen(id, e){
+  if(e) e.stopPropagation();
+  if(!id) return;
+  try { await setDoc(doc(db,'property_outreach',id), { reply_seen: true }, { merge:true }); } catch(err){ console.warn('markPOReplySeen', err); }
 }
 
 // Contact info isn't in the Yardi export (Justin pulls it up separately) — this is
@@ -6438,6 +6697,9 @@ window.saveModal       = saveModal;
 window.overlayClick    = overlayClick;
 window.pickType        = pickType;
 window.switchTab           = switchTab;
+window.sendAssistantMessage      = sendAssistantMessage;
+window.newAssistantThread        = newAssistantThread;
+window.toggleAssistantToolsChip  = toggleAssistantToolsChip;
 window.newIdeaNote         = newIdeaNote;
 window.editNote            = editNote;
 window.cancelNote          = cancelNote;
@@ -6526,6 +6788,7 @@ window.openOutreachModal   = openOutreachModal;
 window.closeOutreachModal  = closeOutreachModal;
 window.outreachModalBgClick= outreachModalBgClick;
 window.saveOutreachStatus  = saveOutreachStatus;
+window.markOutreachReplySeen = markOutreachReplySeen;
 window.setOutreachVariant  = setOutreachVariant;
 window.useOutreachVariant  = useOutreachVariant;
 window.researchProspect    = researchProspect;
@@ -6561,6 +6824,7 @@ window.openPOModal         = openPOModal;
 window.closePOModal        = closePOModal;
 window.poModalBgClick      = poModalBgClick;
 window.savePOStatus        = savePOStatus;
+window.markPOReplySeen     = markPOReplySeen;
 window.savePOContact       = savePOContact;
 window.savePOSqft          = savePOSqft;
 window.setPOSfMin          = setPOSfMin;
