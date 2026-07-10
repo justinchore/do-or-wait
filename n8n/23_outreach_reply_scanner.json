@@ -1,0 +1,507 @@
+{
+  "name": "CW — 23. Outreach Reply Scanner",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 */2 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cw-23-001",
+      "name": "Reply Scan - Cron",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "outreach-reply-scan",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "cw-23-015",
+      "name": "Manual check webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        120
+      ],
+      "webhookId": "outreach-reply-scan"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Bounded cold-start: the very first run only looks back 24h (not the whole\n// mailbox history) so this workflow never has to wade through years of old\n// mail. Every run after that resumes exactly where the last one left off,\n// persisted in this workflow's own static data — same mechanism workflow 18\n// uses for its tab accumulator. Fed by BOTH the cron trigger and the manual\n// \"Check now\" webhook — either path starts from here identically.\nconst sd = $getWorkflowStaticData('global');\nconst now = new Date();\nlet sinceIso = sd.last_scan_iso;\nif (!sinceIso) {\n  sinceIso = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();\n}\nreturn [{ json: { sinceIso, nowIso: now.toISOString() } }];"
+      },
+      "id": "cw-23-002",
+      "name": "Get scan window",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://graph.microsoft.com/v1.0/me/mailFolders('inbox')/childFolders?$filter=displayName eq 'me'&$select=id,displayName",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "continueOnFail": true
+        }
+      },
+      "id": "cw-23-014",
+      "name": "Resolve 'me' folder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        420,
+        0
+      ],
+      "continueOnFail": true,
+      "credentials": {
+        "oAuth2Api": {
+          "id": "yA4MMh3TXmKCSDGY",
+          "name": "n8n-cubework"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.microsoft.com/v1.0/me/mailFolders/{{ $json.value && $json.value[0] && $json.value[0].id }}/messages?$filter=receivedDateTime ge {{ $('Get scan window').first().json.sinceIso }}&$select=from,receivedDateTime,subject,bodyPreview,webLink,conversationId&$top=250",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "continueOnFail": true
+        }
+      },
+      "id": "cw-23-003",
+      "name": "Fetch inbox messages since window",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        640,
+        0
+      ],
+      "continueOnFail": true,
+      "credentials": {
+        "oAuth2Api": {
+          "id": "yA4MMh3TXmKCSDGY",
+          "name": "n8n-cubework"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the small set of distinct sender addresses seen in this scan window.\n// Deliberately NOT listing the outreach/property_outreach collections at all.\n// property_outreach alone is already 360+ docs (crossed the practical ~300-doc\n// single-page boundary once Pellissier joined Ontario Airport 2026-07-09), so\n// \"list every prospect and match against new mail in code\" doesn't hold up -\n// it would need real pageToken pagination just to enumerate the prospect list\n// every single scan, which is wasted work. Instead: pull the handful of new\n// inbox senders from this window, then ask Firestore directly \"do either of\n// you know these addresses\" via a targeted IN-filter query (next nodes). Cost\n// now scales with new-mail volume per scan, not with how large either\n// prospect list grows - strictly better than a listing-based design, and\n// property_outreach's scale is what surfaced the need to find it.\nconst resp = $json || {};\nconst msgs = Array.isArray(resp.value) ? resp.value : [];\nconst byAddr = {};\nfor (const m of msgs) {\n  const raw = ((m.from && m.from.emailAddress && m.from.emailAddress.address) || '').trim();\n  if (!raw) continue;\n  const lower = raw.toLowerCase();\n  const receivedAt = m.receivedDateTime || '';\n  if (!byAddr[lower] || new Date(receivedAt) > new Date(byAddr[lower].receivedAt)) {\n    byAddr[lower] = { subject: m.subject || '', bodyPreview: (m.bodyPreview || '').slice(0, 220), receivedAt, webLink: m.webLink || '', raw };\n  }\n}\nconst addrs = Object.keys(byAddr);\n// Firestore's IN filter allows up to 30 comparison values. Query both the\n// raw-cased and lowercased form of each address (Apollo-sourced Outreach\n// emails are stored lowercase; Property Outreach contacts are typed in by\n// hand via savePOContact and may not be), capped at 15 distinct senders per\n// scan - comfortably covers normal reply volume in a 2-hour window. Not\n// currently a known problem; revisit (chunked queries) if inbox volume ever\n// exceeds it.\nconst capped = addrs.slice(0, 15);\nconst values = new Set();\ncapped.forEach(a => { values.add(a); values.add(byAddr[a].raw); });\nreturn [{ json: {\n  senderMap: byAddr,\n  values: Array.from(values),\n  nowIso: $('Get scan window').first().json.nowIso\n} }];"
+      },
+      "id": "cw-23-004",
+      "name": "Extract distinct senders",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Advance the scan cursor whether or not anything matched this run, so the\n// next run resumes right after this window instead of re-scanning it. A\n// small overlap is subtracted so a message landing mid-scan (or minor clock\n// skew between this box and Graph) is never silently skipped between runs.\n// Runs unconditionally (fed directly off \"Extract distinct senders\", in\n// parallel with the match-query branch AND the manual-check response) so the\n// cursor advances even on a scan with zero new mail, cron or manual alike.\nconst sd = $getWorkflowStaticData('global');\nconst nowIso = $json.nowIso;\nconst OVERLAP_MIN = 20;\nsd.last_scan_iso = new Date(new Date(nowIso).getTime() - OVERLAP_MIN * 60 * 1000).toISOString();\nreturn [{ json: { saved: true, next_scan_from: sd.last_scan_iso } }];"
+      },
+      "id": "cw-23-005",
+      "name": "Save scan window",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond1",
+              "leftValue": "={{ $json.values.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cw-23-006",
+      "name": "Has any new mail?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, checked: true, newSendersSeen: $json.values.length }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "id": "cw-23-016",
+      "name": "Respond to check",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1080,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents:runQuery",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ structuredQuery: { from: [{ collectionId: 'outreach' }], where: { fieldFilter: { field: { fieldPath: 'email' }, op: 'IN', value: { arrayValue: { values: $json.values.map(v => ({ stringValue: v })) } } } }, limit: 50 } }) }}",
+        "options": {}
+      },
+      "id": "cw-23-007",
+      "name": "Query outreach by sender",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1300,
+        40
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "7IVvQuErxEJPoaMY",
+          "name": "Firebase_SDK_do_or_wait"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents:runQuery",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ structuredQuery: { from: [{ collectionId: 'property_outreach' }], where: { fieldFilter: { field: { fieldPath: 'email' }, op: 'IN', value: { arrayValue: { values: $json.values.map(v => ({ stringValue: v })) } } } }, limit: 50 } }) }}",
+        "options": {}
+      },
+      "id": "cw-23-008",
+      "name": "Query property_outreach by sender",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1300,
+        240
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "7IVvQuErxEJPoaMY",
+          "name": "Firebase_SDK_do_or_wait"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Both runQuery calls above may come back as either ONE item whose json is\n// the raw response array, or (n8n's usual auto-behavior for a top-level JSON\n// array response) one item PER array element - collectAll() below handles\n// either shape so this doesn't silently drop rows depending on which one\n// n8n chose. Firestore's runQuery response is a stream of RunQueryResponse\n// objects; entries with no actual match just don't carry a document field.\nfunction collectAll(nodeName) {\n  const items = $(nodeName).all();\n  const out = [];\n  for (const it of items) {\n    const j = it.json;\n    if (Array.isArray(j)) out.push(...j); else out.push(j);\n  }\n  return out;\n}\nfunction decode(v) {\n  if (v == null) return null;\n  if ('stringValue' in v) return v.stringValue;\n  if ('integerValue' in v) return parseInt(v.integerValue, 10);\n  if ('doubleValue' in v) return v.doubleValue;\n  if ('booleanValue' in v) return v.booleanValue;\n  if ('nullValue' in v) return null;\n  if ('arrayValue' in v) return (v.arrayValue.values || []).map(decode);\n  if ('mapValue' in v) { const o = {}; for (const k in (v.mapValue.fields || {})) o[k] = decode(v.mapValue.fields[k]); return o; }\n  return null;\n}\nfunction extractMatches(rows) {\n  const out = [];\n  for (const row of (rows || [])) {\n    const d = row && row.document; if (!d) continue;\n    const f = d.fields || {};\n    const email = decode(f.email); if (!email) continue;\n    const id = (d.name || '').split('/').pop();\n    out.push({ id, email: String(email).toLowerCase() });\n  }\n  return out;\n}\nconst senderMap = $('Extract distinct senders').first().json.senderMap || {};\nconst outreachRows = collectAll('Query outreach by sender');\nconst poRows = collectAll('Query property_outreach by sender');\nconst outreachMatches = extractMatches(outreachRows);\nconst poMatches = extractMatches(poRows);\nconst nowIso = new Date().toISOString();\nfunction toItems(matches) {\n  return matches.map(m => {\n    const info = senderMap[m.email] || {};\n    return { id: m.id, fields: {\n      reply_detected: true,\n      reply_detected_at: nowIso,\n      reply_received_at: info.receivedAt || '',\n      reply_subject: info.subject || '',\n      reply_snippet: info.bodyPreview || '',\n      reply_web_link: info.webLink || '',\n      reply_seen: false\n    } };\n  });\n}\nconst outreachItems = toItems(outreachMatches);\nconst propertyOutreachItems = toItems(poMatches);\nreturn [{ json: {\n  outreachItems, propertyOutreachItems,\n  outreachCount: outreachItems.length, propertyOutreachCount: propertyOutreachItems.length\n} }];"
+      },
+      "id": "cw-23-009",
+      "name": "Match + build items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond1",
+              "leftValue": "={{ $json.outreachCount }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cw-23-010",
+      "name": "Has outreach items?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1740,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond1",
+              "leftValue": "={{ $json.propertyOutreachCount }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cw-23-011",
+      "name": "Has property_outreach items?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1740,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ailinker.item.com/webhook/firestore-write",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ collection: 'outreach', action: 'bulk_update', items: $json.outreachItems }) }}",
+        "options": {}
+      },
+      "id": "cw-23-012",
+      "name": "POST outreach writer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1960,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ailinker.item.com/webhook/firestore-write",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ collection: 'property_outreach', action: 'bulk_update', items: $json.propertyOutreachItems }) }}",
+        "options": {}
+      },
+      "id": "cw-23-013",
+      "name": "POST property_outreach writer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1960,
+        160
+      ]
+    }
+  ],
+  "connections": {
+    "Reply Scan - Cron": {
+      "main": [
+        [
+          {
+            "node": "Get scan window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual check webhook": {
+      "main": [
+        [
+          {
+            "node": "Get scan window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get scan window": {
+      "main": [
+        [
+          {
+            "node": "Resolve 'me' folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve 'me' folder": {
+      "main": [
+        [
+          {
+            "node": "Fetch inbox messages since window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch inbox messages since window": {
+      "main": [
+        [
+          {
+            "node": "Extract distinct senders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract distinct senders": {
+      "main": [
+        [
+          {
+            "node": "Save scan window",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Has any new mail?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Respond to check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has any new mail?": {
+      "main": [
+        [
+          {
+            "node": "Query outreach by sender",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Query property_outreach by sender",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Query outreach by sender": {
+      "main": [
+        [
+          {
+            "node": "Match + build items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Match + build items": {
+      "main": [
+        [
+          {
+            "node": "Has outreach items?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Has property_outreach items?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has outreach items?": {
+      "main": [
+        [
+          {
+            "node": "POST outreach writer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Has property_outreach items?": {
+      "main": [
+        [
+          {
+            "node": "POST property_outreach writer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Los_Angeles"
+  },
+  "versionId": "cw-workflow-023"
+}

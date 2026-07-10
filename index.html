@@ -830,17 +830,6 @@
       <button class="lf-btn" id="hide-wl-btn" style="margin-left:auto" onclick="toggleHideWaitlist()">Hide ⏳</button>
     </div>
 
-    <!-- Follow-up reminder banner (shown when leads have gone cold 3+ days) -->
-    <div id="followup-banner" style="display:none; max-width:1100px; margin:12px auto 0; padding:0 16px; width:100%;"></div>
-
-    <!-- Space-match reminder banner (archived/dead/waitlist leads whose old ask now
-         matches live availability) -->
-    <div id="space-match-banner" style="display:none; max-width:1100px; margin:12px auto 0; padding:0 16px; width:100%;"></div>
-    <div style="max-width:1100px; margin:0 auto; padding:0 16px; width:100%;">
-      <button class="archived-tog" id="space-match-toggle" onclick="toggleSpaceMatches()" style="display:none"></button>
-      <div id="space-match-list" style="display:none; margin-top:8px;"></div>
-    </div>
-
     <!-- New leads strip (compact chips) -->
     <div id="new-leads-wrap" style="display:none; max-width:1100px; margin:0 auto; padding:12px 16px 0; width:100%;">
       <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--text2); margin-bottom:8px;">New — tap ＋ to add first update</div>
@@ -916,18 +905,24 @@
        conversation mode) so ONLY the final reply renders — no step-by-step
        tool-call narration. Added 2026-07-10. -->
   <div id="assistant-view" style="display:none">
-    <div style="max-width:760px;margin:0 auto;padding:16px;display:flex;flex-direction:column;height:calc(100vh - 210px);min-height:420px;">
+    <!-- Mobile note (2026-07-10): height uses vh with a dvh override right after it —
+         dvh (dynamic viewport height) tracks the mobile browser's actual visible area
+         as the address bar/keyboard show or hide, so the panel doesn't end up taller
+         than what's actually on screen. Browsers that don't support dvh just ignore
+         that declaration and keep the vh one, so this is a safe progressive layer,
+         not a hard dependency. -->
+    <div style="max-width:760px;margin:0 auto;padding:16px;display:flex;flex-direction:column;height:calc(100vh - 210px);height:calc(100dvh - 210px);min-height:320px;">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
         <div style="flex:1;font-size:12px;color:var(--text2);">Talks to your Leads, Tasks, Notes, Outreach, and Avail data live. Not a record of what it did, just the answer.</div>
-        <button class="btn sm" onclick="newAssistantThread()">＋ New thread</button>
+        <button class="btn sm" style="min-height:36px;" onclick="newAssistantThread()">＋ New thread</button>
       </div>
-      <div id="assistant-messages" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:4px 2px 12px;"></div>
+      <div id="assistant-messages" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;display:flex;flex-direction:column;gap:10px;padding:4px 2px 12px;"></div>
       <div id="assistant-error" style="display:none;color:#b42318;font-size:13px;margin-bottom:8px;"></div>
-      <div style="display:flex;gap:8px;">
+      <div style="display:flex;gap:8px;align-items:flex-end;">
         <textarea id="assistant-input" rows="1" placeholder="Ask about a lead, log a call, check availability…"
-          style="flex:1;resize:none;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:14px;font-family:inherit;"
+          style="flex:1;resize:none;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:16px;font-family:inherit;min-height:44px;"
           onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendAssistantMessage();}"></textarea>
-        <button class="btn dark" id="assistant-send-btn" onclick="sendAssistantMessage()">Send</button>
+        <button class="btn dark" id="assistant-send-btn" style="min-height:44px;min-width:64px;justify-content:center;" onclick="sendAssistantMessage()">Send</button>
       </div>
     </div>
   </div>
@@ -1007,6 +1002,8 @@
           <option value="company">Company A–Z</option>
         </select>
         <span id="outreach-meta" style="font-size:12px;color:var(--text2);"></span>
+        <button id="outreach-reply-check-btn" onclick="checkOutreachRepliesNow('outreach-reply-check-btn', event)" title="Run the reply scanner now instead of waiting for its next 2-hour check"
+               style="font-size:12px;border:1px solid var(--border);border-radius:8px;padding:6px 10px;cursor:pointer;background:var(--surface);color:var(--text);">⟳ Check now</button>
       </div>
 
       <!-- Reply reminder banner (prospects the mailbox scanner detected an inbound
@@ -1059,6 +1056,8 @@
         <input id="po-sf-max" type="number" min="0" placeholder="Max SF" oninput="setPOSfMax(this.value)"
                style="width:90px;padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:13px;" />
         <span id="po-meta" style="font-size:12px;color:var(--text2);"></span>
+        <button id="po-reply-check-btn" onclick="checkOutreachRepliesNow('po-reply-check-btn', event)" title="Run the reply scanner now instead of waiting for its next 2-hour check"
+               style="font-size:12px;border:1px solid var(--border);border-radius:8px;padding:6px 10px;cursor:pointer;background:var(--surface);color:var(--text);">⟳ Check now</button>
       </div>
 
       <!-- Reply reminder banner (property_outreach leads the mailbox scanner
@@ -1379,6 +1378,46 @@
     <div class="modal-foot">
       <button class="btn" onclick="closeLeadModal()">Cancel</button>
       <button class="btn dark" onclick="saveLeadDetails()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Daily follow-up gate — shown once per page load (added 2026-07-10) when
+     anything needs a decision (follow-ups due + space matches). Deliberately
+     NOT a banner: banners get tuned out after the first ignore, an interrupt
+     forces an actual choice each time. "Not now" is free/instant (no field
+     written anywhere) — it just lets this page load pass; it reappears the
+     next time the app is opened if still due. -->
+<div class="overlay" id="fugate-overlay">
+  <div class="modal" style="max-width:380px;text-align:center;">
+    <div style="font-size:32px;margin-bottom:6px;">👋</div>
+    <h3 id="fugate-title">Some leads need a decision</h3>
+    <div class="modal-sub" id="fugate-sub"></div>
+    <div class="modal-foot" style="justify-content:center;">
+      <button class="btn" onclick="dismissFollowupGate()">Not now</button>
+      <button class="btn dark" onclick="openFollowupQueue()">Review now</button>
+    </div>
+  </div>
+</div>
+
+<!-- Daily follow-up queue — one lead at a time, added 2026-07-10. Combines
+     Follow-ups-due and Space-Matches into a single clearable stack instead of
+     two separate banners competing for attention. -->
+<div class="overlay" id="fuqueue-overlay">
+  <div class="modal" style="max-width:480px;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+      <h3 style="flex:1;margin-bottom:0;" id="fuq-kind-title">Follow-up</h3>
+      <div style="font-size:12px;color:var(--text2);font-weight:700;" id="fuq-progress"></div>
+    </div>
+    <div class="modal-sub" id="fuq-lead-name"></div>
+    <div id="fuq-body"></div>
+    <div class="modal-foot" style="justify-content:space-between;">
+      <button class="btn" onclick="closeFollowupQueue()">Close</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn" id="fuq-snooze-btn" onclick="fuqSnooze()">Snooze</button>
+        <button class="btn" onclick="fuqSkip()">Skip</button>
+        <button class="btn dark" onclick="fuqSend()">✉️ Send</button>
+      </div>
     </div>
   </div>
 </div>
@@ -2547,11 +2586,13 @@ function followupMsgFor(lead) {
 }
 
 // Firestore listener
+let _leadsFirstSnapshotSeen = false; // gates the one-time daily follow-up check below
 unsubLeads = liveSnapshot(collection(db, 'leads'), snap => {
   leads = snap.docs.map(d => d.data()).filter(l => !l._deleted);
   leads.forEach(l => { if (!l.entries) l.entries = []; l.entries.forEach(e => { if (!e.notes) e.notes = []; }); });
   renderLeadsSection();
   populateAudio();
+  if (!_leadsFirstSnapshotSeen) { _leadsFirstSnapshotSeen = true; checkFollowupGate(); }
 });
 
 // ── Lead renders ──────────────────────────────────────────────
@@ -2584,66 +2625,14 @@ function renderLeadsSection() {
       : '🎯 Leads';
   }
 
-  // Follow-ups — leads that have gone cold 3+ days
+  // Follow-ups — leads that have gone cold 3+ days. The banner that used to live
+  // here is gone (2026-07-10) — replaced by the daily gate/queue (checkFollowupGate,
+  // below); this filter button + badge stays, it's a browsing filter, not a banner.
   const dueLeads = active.filter(isFollowupDue);
   const fBtn = document.getElementById('followup-filter-btn');
   if (fBtn) fBtn.innerHTML = dueLeads.length
     ? `🔔 Follow-ups <span class="tab-badge">${dueLeads.length}</span>`
     : '🔔 Follow-ups';
-  const fBanner = document.getElementById('followup-banner');
-  if (fBanner) {
-    if (dueLeads.length && leadFilter !== 'followup') {
-      const names = dueLeads.slice(0, 3).map(l => esc(l.company || 'a lead')).join(', ');
-      const more  = dueLeads.length > 3 ? ` +${dueLeads.length - 3} more` : '';
-      fBanner.style.display = 'block';
-      fBanner.innerHTML = `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;border:1.5px dashed #d97706;background:rgba(217,119,6,.07);border-radius:12px;padding:11px 15px;">
-          <span style="font-size:20px;line-height:1;">🔔</span>
-          <div style="flex:1;min-width:180px;font-size:13px;color:var(--text);">
-            <b>${dueLeads.length} lead${dueLeads.length !== 1 ? 's' : ''}</b> ${dueLeads.length !== 1 ? 'have' : 'has'} gone quiet for ${FOLLOWUP_DAYS}+ days
-            <span style="color:var(--text2);"> — ${names}${more}</span>
-          </div>
-          <button onclick="setLeadFilter('followup')" style="font-size:12px;font-weight:700;border:none;background:#d97706;color:#fff;border-radius:8px;padding:6px 13px;cursor:pointer;">Review follow-ups →</button>
-        </div>`;
-    } else {
-      fBanner.style.display = 'none';
-      fBanner.innerHTML = '';
-    }
-  }
-
-  // Space matches — leads in the dead pool (archived / wl_on / stage lost) whose old
-  // ask now matches live availability. Proactive: computed on every render, not just
-  // when you happen to open that lead's card (unlike the old wlMatches-only path).
-  const deadPool = leads.filter(l => isDeadPoolLead(l) && !isSpaceMatchSnoozed(l));
-  const spaceMatchLeads = deadPool.filter(l => spaceMatches(l).length);
-  const smToggle = document.getElementById('space-match-toggle');
-  const smList = document.getElementById('space-match-list');
-  if (smToggle) {
-    smToggle.style.display = spaceMatchLeads.length ? 'block' : 'none';
-    smToggle.textContent = showSpaceMatches ? `▲ Hide space matches (${spaceMatchLeads.length})` : `▼ Show ${spaceMatchLeads.length} space match${spaceMatchLeads.length !== 1 ? 'es' : ''}`;
-  }
-  if (smList) {
-    smList.style.display = showSpaceMatches ? 'block' : 'none';
-    if (showSpaceMatches) smList.innerHTML = spaceMatchLeads.map(l => renderLeadCard(l)).join('');
-  }
-  const smBanner = document.getElementById('space-match-banner');
-  if (smBanner) {
-    if (spaceMatchLeads.length && !showSpaceMatches) {
-      const names = spaceMatchLeads.slice(0, 3).map(l => esc(l.company || 'a lead')).join(', ');
-      const more = spaceMatchLeads.length > 3 ? ` +${spaceMatchLeads.length - 3} more` : '';
-      smBanner.style.display = 'block';
-      smBanner.innerHTML = `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;border:1.5px dashed #059669;background:rgba(5,150,105,.07);border-radius:12px;padding:11px 15px;">
-          <span style="font-size:20px;line-height:1;">📦</span>
-          <div style="flex:1;min-width:180px;font-size:13px;color:var(--text);">
-            <b>${spaceMatchLeads.length} past lead${spaceMatchLeads.length !== 1 ? 's' : ''}</b> now ${spaceMatchLeads.length !== 1 ? 'have' : 'has'} matching space available
-            <span style="color:var(--text2);"> — ${names}${more}</span>
-          </div>
-          <button onclick="toggleSpaceMatches()" style="font-size:12px;font-weight:700;border:none;background:#059669;color:#fff;border-radius:8px;padding:6px 13px;cursor:pointer;">Review matches →</button>
-        </div>`;
-    } else {
-      smBanner.style.display = 'none';
-      smBanner.innerHTML = '';
-    }
-  }
 
   // stats
   const doEl   = document.getElementById('lead-do-badge');
@@ -2925,10 +2914,118 @@ async function snoozeSpaceMatch(leadId, e) {
   await persistItem(updated, 'leads');
 }
 
-let showSpaceMatches = false;
-function toggleSpaceMatches() {
-  showSpaceMatches = !showSpaceMatches;
-  renderLeadsSection();
+// ═══════════════════════════════════════════════════════════════
+//  DAILY FOLLOW-UP GATE + QUEUE (added 2026-07-10)
+//  Replaces "check two banners and remember to act on them" with an
+//  interrupt-once-per-page-load gate + a one-lead-at-a-time queue. A banner
+//  gets tuned out after the first ignore; a gate forces an actual decision
+//  ("Review now" or "Not now") every time the app is opened. Combines the
+//  existing Follow-ups-due and Space-Match lists — reuses their existing
+//  filters/draft functions rather than reimplementing anything. "Not now" is
+//  free/instant: nothing is written anywhere, it just lets this page load
+//  pass; the gate re-evaluates fresh on the next page load off whatever's
+//  actually due then.
+// ═══════════════════════════════════════════════════════════════
+let fuQueue = [];   // [{lead, kind:'followup'|'spacematch', draft:{subject,body,...}}]
+let fuqIdx  = 0;
+
+function dailyQueueItems() {
+  const active = leads.filter(l => !l.archived && !['won', 'lost'].includes(l.stage || 'cold'));
+  const followupItems = active.filter(isFollowupDue).map(lead => ({
+    lead, kind: 'followup',
+    draft: (lead.followup_draft && lead.followup_draft.body) ? lead.followup_draft : followupMsgFor(lead)
+  }));
+  const deadPool = leads.filter(l => isDeadPoolLead(l) && !isSpaceMatchSnoozed(l));
+  const spaceMatchItems = deadPool
+    .map(lead => ({ lead, kind: 'spacematch', draft: spaceMatchMsgFor(lead) }))
+    .filter(item => item.draft); // spaceMatchMsgFor returns null when there's nothing concrete to match
+  return followupItems.concat(spaceMatchItems);
+}
+
+function checkFollowupGate() {
+  fuQueue = dailyQueueItems();
+  if (!fuQueue.length) return;
+  const nFollowup = fuQueue.filter(i => i.kind === 'followup').length;
+  const nSpace = fuQueue.length - nFollowup;
+  const parts = [];
+  if (nFollowup) parts.push(nFollowup + ' follow-up' + (nFollowup === 1 ? '' : 's'));
+  if (nSpace) parts.push(nSpace + ' space match' + (nSpace === 1 ? '' : 'es'));
+  document.getElementById('fugate-title').textContent = fuQueue.length + ' lead' + (fuQueue.length === 1 ? '' : 's') + ' need' + (fuQueue.length === 1 ? 's' : '') + ' a decision';
+  document.getElementById('fugate-sub').textContent = parts.join(' · ') + ' — takes a couple minutes.';
+  document.getElementById('fugate-overlay').classList.add('open');
+}
+
+function dismissFollowupGate() {
+  document.getElementById('fugate-overlay').classList.remove('open');
+  // Deliberately writes nothing — free/instant, per design. Re-evaluates
+  // fresh from live data next time the app loads.
+}
+
+function openFollowupQueue() {
+  document.getElementById('fugate-overlay').classList.remove('open');
+  fuqIdx = 0;
+  document.getElementById('fuqueue-overlay').classList.add('open');
+  renderFuqCard();
+}
+
+function closeFollowupQueue() {
+  document.getElementById('fuqueue-overlay').classList.remove('open');
+}
+
+function fuqAdvance() {
+  fuqIdx++;
+  if (fuqIdx >= fuQueue.length) { closeFollowupQueue(); return; }
+  renderFuqCard();
+}
+
+function renderFuqCard() {
+  // Re-filter live off current `leads` each time a card renders (not just at
+  // queue-open) — if a lead was already handled elsewhere (another tab/device,
+  // or the app's own live sync), it should quietly drop out rather than show
+  // stale info you'd have to notice was wrong yourself.
+  fuQueue = fuQueue.filter(item => {
+    const fresh = leads.find(l => l.id === item.lead.id);
+    if (!fresh) return false;
+    return item.kind === 'followup' ? isFollowupDue(fresh) : (isDeadPoolLead(fresh) && !isSpaceMatchSnoozed(fresh) && spaceMatches(fresh).length);
+  });
+  if (fuqIdx >= fuQueue.length) { closeFollowupQueue(); return; }
+  const item = fuQueue[fuqIdx];
+  const lead = leads.find(l => l.id === item.lead.id) || item.lead;
+  const isFU = item.kind === 'followup';
+  const draft = isFU ? ((lead.followup_draft && lead.followup_draft.body) ? lead.followup_draft : followupMsgFor(lead)) : spaceMatchMsgFor(lead);
+  if (!draft) { fuqAdvance(); return; } // lead resolved itself between renders
+
+  document.getElementById('fuq-kind-title').textContent = isFU ? '🔔 Follow-up' : '🏢 Space match';
+  document.getElementById('fuq-progress').textContent = (fuqIdx + 1) + ' of ' + fuQueue.length;
+  document.getElementById('fuq-lead-name').textContent = (lead.company || lead.contact || 'Lead') + (lead.contact && lead.company ? ' — ' + lead.contact : '');
+  document.getElementById('fuq-snooze-btn').textContent = isFU ? 'Snooze 3d' : 'Snooze 14d';
+
+  const matchLine = (!isFU && draft.match)
+    ? `<div style="font-size:12px;color:var(--text2);margin-bottom:8px;">${esc(draft.match.property)} · ${esc(draft.match.unit)} · ${draft.match.sf} sf${draft.extra ? ` (+${draft.extra} more)` : ''}<br>${esc(availExpSyncLabel(draft.match.synced_at))}</div>`
+    : '';
+  document.getElementById('fuq-body').innerHTML = `
+    ${matchLine}
+    <div class="field"><label>Subject</label><div style="padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;">${esc(draft.subject || '')}</div></div>
+    <div class="field"><label>Body</label><div style="padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;white-space:pre-wrap;max-height:220px;overflow-y:auto;">${esc(draft.body || '')}</div></div>
+  `;
+}
+
+function fuqSend() {
+  const item = fuQueue[fuqIdx];
+  if (!item) return;
+  if (item.kind === 'followup') openFollowupEmail(item.lead.id); else openSpaceMatchEmail(item.lead.id);
+  fuqAdvance();
+}
+
+function fuqSkip() {
+  fuqAdvance(); // no state change — reappears next time it's still due
+}
+
+async function fuqSnooze() {
+  const item = fuQueue[fuqIdx];
+  if (!item) return;
+  if (item.kind === 'followup') await snoozeFollowup(item.lead.id); else await snoozeSpaceMatch(item.lead.id);
+  fuqAdvance();
 }
 
 function renderLeadCard(lead) {
@@ -4121,6 +4218,7 @@ const PO_DRAFT_WEBHOOK     = `${PROXY}/webhook/property-outreach-draft`; // prop
 const PRICING_BD_SYNC_WEBHOOK = `${PROXY}/webhook/pricing-bd-sync`; // manual "Sync now" for the Rate Bands tab (n8n workflow 18)
 const ROSTER_SYNC_WEBHOOK = `${PROXY}/webhook/roster-sync`; // manual "Sync now" for the Roster tab (n8n workflow 19)
 const ASSISTANT_CHAT_WEBHOOK = `${PROXY}/webhook/assistant-chat`; // 🤖 Assistant tab: {messages} → Claude (native MCP connector against the do-or-wait Cloud Run server) → {ok,reply,toolsUsed} (n8n workflow 24)
+const OUTREACH_REPLY_SCAN_WEBHOOK = `${PROXY}/webhook/outreach-reply-scan`; // manual "⟳ Check now" on Outreach + Prop Outreach — runs the next reply scan immediately (n8n workflow 23)
 
 // Listen to ALL availability docs (scales to multiple locations)
 unsubAvail = liveSnapshot(collection(db, 'availability'), snap => {
@@ -5982,6 +6080,32 @@ async function markOutreachReplySeen(id, e){
   if(!id) return;
   try { await setDoc(doc(db,'outreach',id), { reply_seen: true }, { merge:true }); } catch(err){ console.warn('mark reply seen', err); }
 }
+// Manual "⟳ Check now" — runs the next reply scan (n8n workflow 23) immediately
+// instead of waiting for its 2-hour cron. Shared by both the Outreach and Prop
+// Outreach tabs (each passes its own button id so they show independent
+// loading states). Doesn't wait for the scan's Firestore writes to finish —
+// the workflow acks as soon as it's counted the window's new mail, and the
+// app's live listeners pick up any actual reply flags moments later, same as
+// everywhere else in this app. Same res.ok 404/error pattern as syncRosterNow.
+async function checkOutreachRepliesNow(btnId, e){
+  if(e) e.stopPropagation();
+  const btn = btnId ? document.getElementById(btnId) : null;
+  if (btn) { btn.disabled = true; btn.textContent = '⟳ Checking…'; }
+  try {
+    const res = await fetch(OUTREACH_REPLY_SCAN_WEBHOOK, { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+    const text = await res.text().catch(()=> '');
+    if (!res.ok) {
+      alert('Reply check failed (HTTP ' + res.status + ').\n' +
+        (res.status === 404 ? 'The outreach-reply-scan webhook isn’t reachable — is n8n workflow 23 imported and Active?' : 'Workflow 23 errored — check its Executions log in n8n.') +
+        (text ? '\n\n' + text.slice(0, 300) : ''));
+    }
+  } catch(err) {
+    console.error('checkOutreachRepliesNow failed:', err);
+    alert('Could not reach the reply scanner — check your connection and try again.');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⟳ Check now'; }
+  }
+}
 // Flag a prospect invalid (bad fit / wrong contact) so it drops out of the working list.
 async function markOutreachInvalid(domain, val, e){
   if(e) e.stopPropagation();
@@ -6789,6 +6913,7 @@ window.closeOutreachModal  = closeOutreachModal;
 window.outreachModalBgClick= outreachModalBgClick;
 window.saveOutreachStatus  = saveOutreachStatus;
 window.markOutreachReplySeen = markOutreachReplySeen;
+window.checkOutreachRepliesNow = checkOutreachRepliesNow;
 window.setOutreachVariant  = setOutreachVariant;
 window.useOutreachVariant  = useOutreachVariant;
 window.researchProspect    = researchProspect;
@@ -6813,7 +6938,12 @@ window.openFollowupEmail   = openFollowupEmail;
 window.copyFollowupMsg     = copyFollowupMsg;
 window.snoozeFollowup      = snoozeFollowup;
 window.moveToWaitlist      = moveToWaitlist;
-window.toggleSpaceMatches  = toggleSpaceMatches;
+window.dismissFollowupGate = dismissFollowupGate;
+window.openFollowupQueue   = openFollowupQueue;
+window.closeFollowupQueue  = closeFollowupQueue;
+window.fuqSend             = fuqSend;
+window.fuqSkip              = fuqSkip;
+window.fuqSnooze           = fuqSnooze;
 window.openSpaceMatchEmail = openSpaceMatchEmail;
 window.onPOSearch          = onPOSearch;
 window.togglePOProp        = togglePOProp;
