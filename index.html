@@ -360,6 +360,31 @@
     #leads-view .card-meta-row { margin-top: 3px; }
     #leads-view .quick-log button { font-size: 10px !important; padding: 2px 9px !important; }
 
+    /* ── Desktop dense row (2026-07-14, >768px only) ──
+       .lead-row-line is a real single-line table row (company/location/sf/last-contact
+       lined up as columns); .lead-full-body is the stacked phone/card layout above.
+       Both are always rendered — this media query just swaps which one shows, so phone
+       gets zero change (tap-target size matters more there than density) and desktop
+       gets an actual row you can scan 30+ of at a glance. */
+    .lead-row-line { display: none; }
+    #leads-view .lr-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    #leads-view .lr-company { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #leads-view .lr-loc { color: var(--text2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #leads-view .lr-sf { color: var(--text2); font-size: 12px; white-space: nowrap; }
+    #leads-view .lr-last { font-size: 12px; text-align: right; white-space: nowrap; }
+    @media (min-width: 769px) {
+      #leads-view .lead-full-body { display: none; }
+      #leads-view .lead-row-line {
+        display: grid; grid-template-columns: 10px 92px minmax(0,1fr) 160px 80px 130px;
+        align-items: center; gap: 10px; flex: 1 1 auto; min-width: 0; width: 100%;
+      }
+      #leads-view .card-summary { padding: 8px 13px; }
+      #leads-view .topic-list { gap: 0; }
+      #leads-view .topic-card { box-shadow: none; border-radius: 0; border-bottom: 1px solid var(--border); }
+      #leads-view .topic-card:hover { box-shadow: none; background: var(--bg); }
+      #leads-view .topic-card.open { background: var(--surface); }
+    }
+
     /* ── Lead chips (new leads with no entries) ── */
     .lead-chips { display:flex; flex-wrap:wrap; gap:7px; }
     .lead-chip {
@@ -3112,10 +3137,31 @@ function renderLeadCard(lead) {
     ? `<span class="badge" style="background:${status==='do' ? 'var(--do-bg)' : 'var(--wait-bg)'};color:${status==='do' ? 'var(--do)' : 'var(--wait)'};border:1px solid ${status==='do' ? 'var(--do-mid)' : 'var(--wait-mid)'}">${status==='do' ? '⚡ Do' : '⏳ Wait'}</span>`
     : '';
 
+  // Desktop dense single-line row (>768px — see the #leads-view media query below).
+  // Real table columns (stage/company/location/sf/last-contact line up across rows),
+  // no shadow/card box, thin divider only. The full stacked card just below stays as
+  // the ONLY thing rendered on phone widths — tap-target size matters more there than
+  // density, so nothing about the phone layout changes.
+  const rowLoc = lead.location ? esc(String(lead.location)) : '—';
+  const rowSf  = lead.sqft ? esc(String(lead.sqft)) : '—';
+  const rowLast = due
+    ? `<span style="color:#b45309;font-weight:700;">🔔 ${ci.contacted ? `${ci.days}d cold` : 'no contact'}</span>`
+    : `<span style="color:var(--text2);">last ${fmtDate(last?.createdAt || lead.createdAt)}</span>`;
+  const rowLine = `
+      <div class="lead-row-line">
+        <span class="lr-dot" style="background:${status==='do' ? 'var(--do)' : 'var(--wait)'}" title="${status==='do' ? 'Do' : 'Wait'}"></span>
+        <span class="badge" style="background:#f3f4f6;color:${stage.color};border:1px solid ${stage.color}40">${lead.archived ? 'Archived' : allRes ? 'Done' : stage.label}</span>
+        <span class="lr-company" title="${esc(lead.company)}">${lead.wl_on ? '⏳ ' : ''}${esc(lead.company)}</span>
+        <span class="lr-loc" title="${rowLoc}">${rowLoc}</span>
+        <span class="lr-sf">${rowSf}</span>
+        <span class="lr-last">${rowLast}</span>
+      </div>`;
+
   return `
   <div class="topic-card ${lead.archived ? 'archived' : status}${isOpen ? ' open' : ''}${hasNewMail(lead) ? ' has-new-mail' : ''}" id="lc-${lead.id}" style="border-left-color:${stage.color}">
     <div class="card-summary" onclick="toggleLeadCard('${lead.id}')">
-      <div class="card-summary-body">
+      ${rowLine}
+      <div class="card-summary-body lead-full-body">
         <div class="card-title">
           <span class="badge" style="background:#f3f4f6;color:${stage.color};border:1px solid ${stage.color}40">
             ${lead.archived ? 'Archived' : allRes ? 'Done' : stage.label}
