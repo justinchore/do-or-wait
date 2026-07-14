@@ -6770,7 +6770,7 @@ async function promotePOToLead(id, e){
   const leadId = 'l'+Date.now()+Math.floor(Math.random()*100000);
   const summary = `Promoted from Property Outreach (source: ${r.source||'yardi'}, ${poLocationName(r.location)}, wave ${r.wave!=null?r.wave:'—'}, ${(r.attempts||[]).length} call attempt(s)).${r.source_notes?' '+r.source_notes:''}`;
   const lead = {
-    archived: false, createdAt: new Date().toISOString(), seq_status: 'active',
+    id: leadId, archived: false, createdAt: new Date().toISOString(), seq_status: 'active',
     company: r.company||'', contact: r.contact||null, location: r.location||null,
     sqft: (r.sqft!=null ? r.sqft : null), stage: 'contacted',
     entries: [{ id:'e'+Date.now(), type:'wait', text: summary, done:false, notes:[], createdAt:new Date().toISOString(), kind:'note', dir:'out' }]
