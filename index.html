@@ -350,6 +350,16 @@
     .lf-btn:hover { border-color:#9ca3af; color:var(--text); }
     .lf-btn.active { background:var(--text); color:#fff; border-color:transparent; }
 
+    /* ── Flat lead-list rows (2026-07-14) ──────
+       Denser than the shared .topic-card summary used by Tasks — scoped to #leads-view
+       only, so Tasks cards are untouched. Same markup/classes, just tighter spacing,
+       since 30+ leads in one flat list need to scan quickly. */
+    #leads-view .card-summary { padding: 10px 13px; gap: 8px; }
+    #leads-view .card-title { font-size: 13px; margin-bottom: 2px; }
+    #leads-view .card-snippet { font-size: 12px; }
+    #leads-view .card-meta-row { margin-top: 3px; }
+    #leads-view .quick-log button { font-size: 10px !important; padding: 2px 9px !important; }
+
     /* ── Lead chips (new leads with no entries) ── */
     .lead-chips { display:flex; flex-wrap:wrap; gap:7px; }
     .lead-chip {
@@ -830,34 +840,25 @@
       <button class="lf-btn" id="hide-wl-btn" style="margin-left:auto" onclick="toggleHideWaitlist()">Hide ⏳</button>
     </div>
 
+    <!-- Sort bar (flat list replaced the Do/Wait 2-column board 2026-07-14 — lead count outgrew scanning two card columns) -->
+    <div class="lead-filter" style="padding-top:6px;">
+      <span style="font-size:11px;color:var(--text2);font-weight:700;align-self:center;margin-right:2px;">Sort</span>
+      <button class="lf-btn sort-btn active" data-sort="attention" onclick="setLeadSort('attention')">🎯 Attention</button>
+      <button class="lf-btn sort-btn"        data-sort="recent"    onclick="setLeadSort('recent')">🕐 Recent</button>
+      <button class="lf-btn sort-btn"        data-sort="az"        onclick="setLeadSort('az')">🔤 A–Z</button>
+      <button class="lf-btn sort-btn"        data-sort="stage"     onclick="setLeadSort('stage')">📶 Stage</button>
+      <span class="col-badge" id="lead-total-badge" style="margin-left:auto">0</span>
+    </div>
+
     <!-- New leads strip (compact chips) -->
     <div id="new-leads-wrap" style="display:none; max-width:1100px; margin:0 auto; padding:12px 16px 0; width:100%;">
       <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--text2); margin-bottom:8px;">New — tap ＋ to add first update</div>
       <div id="new-leads-list" class="lead-chips"></div>
     </div>
 
-    <!-- DO / WAIT grid -->
-    <div class="grid">
-      <div style="min-width:0">
-        <div class="col-hd">
-          <div class="col-hd-left">
-            <div class="col-icon do">⚡</div>
-            <div><h2>Do</h2><sub>Follow up · Send · Call</sub></div>
-          </div>
-          <span class="col-badge" id="lead-do-badge">0</span>
-        </div>
-        <div class="topic-list" id="lead-do-list"></div>
-      </div>
-      <div style="min-width:0">
-        <div class="col-hd">
-          <div class="col-hd-left">
-            <div class="col-icon wait">⏳</div>
-            <div><h2>Wait</h2><sub>Their decision · Response</sub></div>
-          </div>
-          <span class="col-badge" id="lead-wait-badge">0</span>
-        </div>
-        <div class="topic-list" id="lead-wait-list"></div>
-      </div>
+    <!-- Flat lead list (was a 2-column Do/Wait board; Do/Wait now shows as a small badge on each row) -->
+    <div style="max-width:1100px; margin:0 auto; padding:12px 16px 0; width:100%;">
+      <div class="topic-list" id="lead-flat-list"></div>
     </div>
 
     <!-- Won / Lost section -->
@@ -1414,6 +1415,7 @@
     <div class="modal-foot" style="justify-content:space-between;">
       <button class="btn" onclick="closeFollowupQueue()">Close</button>
       <div style="display:flex;gap:8px;">
+        <button class="btn" onclick="fuqArchive()" title="Archived leads stop showing as follow-ups due, but can still surface here as a space match if a size/location match comes up.">📁 Archive</button>
         <button class="btn" id="fuq-snooze-btn" onclick="fuqSnooze()">Snooze</button>
         <button class="btn" onclick="fuqSkip()">Skip</button>
         <button class="btn dark" onclick="fuqSend()">✉️ Send</button>
@@ -2402,6 +2404,10 @@ let editLeadId   = null;
 let leadFilter   = 'all';
 let showWonLost  = false;
 let hideWaitlist = false;
+// Flat-list sort (replaced the Do/Wait 2-column board 2026-07-14). 'attention' = due-first,
+// then longest-quiet-first; 'recent' = most-recently-touched first; 'az' = company name;
+// 'stage' = pipeline order (cold→contacted→toured→proposal).
+let leadSort = 'attention';
 const wlCollapsed = new Set();   // lead ids whose waitlist block is collapsed
 let expandedLeadIds = new Set();
 const addingLink = new Set();    // `${coll}:${id}` keys with an open "add email thread" form
@@ -2488,6 +2494,35 @@ function isFollowupDue(lead) {
   if (isFollowupSnoozed(lead)) return false;
   const { bizDays, dir } = contactInfo(lead);
   return dir === 'out' && bizDays !== null && bizDays >= FOLLOWUP_DAYS;   // outbound-cold, business days
+}
+
+// ── Flat lead-list sort comparators (2026-07-14) ───────────────────────────
+// 'attention' (default): due-for-followup leads first (worst/longest-quiet first),
+// then everyone else longest-quiet-first — one continuous urgency ranking so the
+// row that most needs a look is always at the top, no column to check separately.
+function leadAttentionSort(a, b) {
+  const aDue = isFollowupDue(a), bDue = isFollowupDue(b);
+  if (aDue !== bDue) return aDue ? -1 : 1;
+  const ad = contactInfo(a).days, bd = contactInfo(b).days;
+  const av = ad == null ? Infinity : ad, bv = bd == null ? Infinity : bd;
+  if (av !== bv) return bv - av;
+  return (Date.parse(a.createdAt) || 0) - (Date.parse(b.createdAt) || 0);
+}
+function leadRecentSort(a, b) {
+  const ad = contactInfo(a).days, bd = contactInfo(b).days;
+  const av = ad == null ? Infinity : ad, bv = bd == null ? Infinity : bd;
+  if (av !== bv) return av - bv;
+  return (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0);
+}
+const LEAD_STAGE_ORDER = ['cold', 'contacted', 'toured', 'proposal'];
+function leadStageSort(a, b) {
+  const ai = LEAD_STAGE_ORDER.indexOf(a.stage || 'cold'), bi = LEAD_STAGE_ORDER.indexOf(b.stage || 'cold');
+  if (ai !== bi) return ai - bi;
+  return (a.company || '').localeCompare(b.company || '');
+}
+function setLeadSort(key) {
+  leadSort = key;
+  renderLeadsSection();
 }
 
 // Stage-aware, VALUE-LED suggested messages. Each leads with something useful —
@@ -2606,12 +2641,17 @@ function renderLeadsSection() {
     : active.filter(l => (l.stage||'cold') === leadFilter);
   if (hideWaitlist && leadFilter !== 'waitlist') filtered = filtered.filter(l => !l.wl_on);
 
-  const newL  = filtered.filter(l => !l.entries.length);
-  const doL   = filtered.filter(l =>  l.entries.length && currentStatus(l) === 'do').sort(byOrder);
-  const waitL = filtered.filter(l =>  l.entries.length && currentStatus(l) === 'wait').sort(byOrder);
+  const newL = filtered.filter(l => !l.entries.length);
+  const sortFn = leadSort === 'recent' ? leadRecentSort
+    : leadSort === 'az'    ? (a, b) => (a.company || '').localeCompare(b.company || '')
+    : leadSort === 'stage' ? leadStageSort
+    : leadAttentionSort;
+  const sorted = filtered.filter(l => l.entries.length).sort(sortFn);
 
-  // filter buttons
-  document.querySelectorAll('.lf-btn').forEach(b => b.classList.toggle('active', b.dataset.stage === leadFilter));
+  // filter buttons (scoped to [data-stage] so the new sort pills below, which share
+  // the .lf-btn class for visual consistency, don't get toggled by this same query)
+  document.querySelectorAll('.lf-btn[data-stage]').forEach(b => b.classList.toggle('active', b.dataset.stage === leadFilter));
+  document.querySelectorAll('.lf-btn[data-sort]').forEach(b => b.classList.toggle('active', b.dataset.sort === leadSort));
 
   // Tab badge — count of leads needing a look: a pending email draft to approve,
   // or the yellow "new mail" highlight (hasNewMail) on a linked thread. Counted
@@ -2634,11 +2674,9 @@ function renderLeadsSection() {
     ? `🔔 Follow-ups <span class="tab-badge">${dueLeads.length}</span>`
     : '🔔 Follow-ups';
 
-  // stats
-  const doEl   = document.getElementById('lead-do-badge');
-  const waitEl = document.getElementById('lead-wait-badge');
-  if (doEl)   doEl.textContent   = doL.length;
-  if (waitEl) waitEl.textContent = waitL.length;
+  // total count badge (replaced the separate Do/Wait column badges)
+  const totalEl = document.getElementById('lead-total-badge');
+  if (totalEl) totalEl.textContent = sorted.length;
 
   // new leads strip
   const nw = document.getElementById('new-leads-wrap');
@@ -2654,11 +2692,9 @@ function renderLeadsSection() {
     </div>`;
   }).join('');
 
-  // DO / WAIT cols
-  const doList   = document.getElementById('lead-do-list');
-  const waitList = document.getElementById('lead-wait-list');
-  if (doList)   doList.innerHTML   = doL.length   ? doL.map(l => renderLeadCard(l)).join('')   : '<div class="empty">Nothing here ✓</div>';
-  if (waitList) waitList.innerHTML = waitL.length ? waitL.map(l => renderLeadCard(l)).join('') : '<div class="empty">Nothing here ✓</div>';
+  // Flat list (was the 2-column Do/Wait board — see 2026-07-14 CLAUDE.md note)
+  const flatList = document.getElementById('lead-flat-list');
+  if (flatList) flatList.innerHTML = sorted.length ? sorted.map(l => renderLeadCard(l)).join('') : '<div class="empty">Nothing here ✓</div>';
 
   // Won/Lost
   const wlBtn  = document.getElementById('wl-toggle');
@@ -3028,6 +3064,23 @@ async function fuqSnooze() {
   fuqAdvance();
 }
 
+// Archive from the queue — reuses the same toggleArchive('leads') the lead
+// card's own Archive button calls, so behavior stays identical everywhere.
+// Note: archiving sets lead.archived = true, which makes isFollowupDue()
+// return false immediately (it's excluded from Follow-ups from then on), but
+// isDeadPoolLead() explicitly INCLUDES archived leads in the Space Match
+// watch pool (that's the point of Space Matches — reconnecting dead leads
+// when new space frees up). So an archived lead can still resurface here on
+// the Space Match side if it has a real match; it's just gone for good from
+// the Follow-up side.
+async function fuqArchive() {
+  const item = fuQueue[fuqIdx];
+  if (!item) return;
+  const lead = findItem(item.lead.id, 'leads');
+  if (lead && !lead.archived) await toggleArchive(lead.id, 'leads');
+  fuqAdvance();
+}
+
 function renderLeadCard(lead) {
   const status  = currentStatus(lead);
   const isOpen  = expandedLeadIds.has(lead.id);
@@ -3053,21 +3106,21 @@ function renderLeadCard(lead) {
         ${qbtn('📥 Inbound', `logTouch('${lead.id}','inbound',event)`)}
       </div>`;
 
+  // Do/Wait chip — the two-column board (its own headers explained Do/Wait) was replaced
+  // 2026-07-14 by one flat, sorted list, so that meaning now has to live on the row itself.
+  const statusChip = (!lead.archived && !['won','lost'].includes(lead.stage||'cold'))
+    ? `<span class="badge" style="background:${status==='do' ? 'var(--do-bg)' : 'var(--wait-bg)'};color:${status==='do' ? 'var(--do)' : 'var(--wait)'};border:1px solid ${status==='do' ? 'var(--do-mid)' : 'var(--wait-mid)'}">${status==='do' ? '⚡ Do' : '⏳ Wait'}</span>`
+    : '';
+
   return `
-  <div class="topic-card ${lead.archived ? 'archived' : status}${isOpen ? ' open' : ''}${hasNewMail(lead) ? ' has-new-mail' : ''}" id="lc-${lead.id}" style="border-left-color:${stage.color}"
-       ondragstart="leadDragStart(event,'${lead.id}')" ondragend="leadDragEnd(event)"
-       ondragover="leadDragOver(event,'${lead.id}')" ondragleave="leadDragLeave(event)"
-       ondrop="leadDrop(event,'${lead.id}')">
+  <div class="topic-card ${lead.archived ? 'archived' : status}${isOpen ? ' open' : ''}${hasNewMail(lead) ? ' has-new-mail' : ''}" id="lc-${lead.id}" style="border-left-color:${stage.color}">
     <div class="card-summary" onclick="toggleLeadCard('${lead.id}')">
-      ${(lead.archived || ['won','lost'].includes(lead.stage||'cold')) ? '' : `<span class="drag-handle" title="Drag to reorder"
-            onmousedown="enableLeadDrag('${lead.id}')" onmouseup="disableLeadDrag('${lead.id}')"
-            ontouchstart="startTouchDrag(event,'${lead.id}','leads')"
-            onclick="event.stopPropagation()">⠿</span>`}
       <div class="card-summary-body">
         <div class="card-title">
           <span class="badge" style="background:#f3f4f6;color:${stage.color};border:1px solid ${stage.color}40">
             ${lead.archived ? 'Archived' : allRes ? 'Done' : stage.label}
           </span>
+          ${statusChip}
           <span class="badge" style="background:${seg.bg};color:${seg.color};border:1px solid ${seg.color}30">${seg.label}</span>
           ${lead.wl_on ? `<span class="badge" style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d">⏳ Waitlist</span>` : ''}
           ${esc(lead.company)}
@@ -6893,6 +6946,7 @@ window.leadDragLeave       = leadDragLeave;
 window.leadDrop            = leadDrop;
 window.startTouchDrag      = startTouchDrag;
 window.setLeadFilter       = setLeadFilter;
+window.setLeadSort         = setLeadSort;
 window.toggleHideWaitlist  = toggleHideWaitlist;
 window.toggleWonLost       = toggleWonLost;
 window.approveEmail        = approveEmail;
@@ -6944,6 +6998,7 @@ window.closeFollowupQueue  = closeFollowupQueue;
 window.fuqSend             = fuqSend;
 window.fuqSkip              = fuqSkip;
 window.fuqSnooze           = fuqSnooze;
+window.fuqArchive          = fuqArchive;
 window.openSpaceMatchEmail = openSpaceMatchEmail;
 window.onPOSearch          = onPOSearch;
 window.togglePOProp        = togglePOProp;
