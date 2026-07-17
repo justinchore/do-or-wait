@@ -1430,7 +1430,7 @@
      Follow-ups-due and Space-Matches into a single clearable stack instead of
      two separate banners competing for attention. -->
 <div class="overlay" id="fuqueue-overlay">
-  <div class="modal" style="max-width:480px;">
+  <div class="modal" style="max-width:560px;max-height:88vh;overflow-y:auto;">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
       <h3 style="flex:1;margin-bottom:0;" id="fuq-kind-title">Follow-up</h3>
       <div style="font-size:12px;color:var(--text2);font-weight:700;" id="fuq-progress"></div>
@@ -2557,7 +2557,9 @@ function setLeadSort(key) {
 function fuSpace(l){ return l.unit ? `${l.unit}${l.unit_sf ? ` (${Number(l.unit_sf).toLocaleString()} sf)` : ''}` : 'the space we discussed'; }
 function fuHi(l){ return `Hi ${l.first_name || 'there'},`; }
 function fuIncluded(l){ return l.included_items ? `${l.included_items} included` : 'utilities, 24/7 access and loading included'; }
-const FU_SIGN = '\n\nBest,\nJustin Cho\nBusiness Development — Cubework';
+// Left blank on purpose — Justin's email client already appends his own
+// signature, so generated drafts shouldn't add a second one.
+const FU_SIGN = '';
 
 // Playbook value blocks (from the Cubework Sales Playbook _kb — USPs / Triple-A).
 // Written as standalone sentences so templates compose into short, clean lines.
@@ -2989,6 +2991,9 @@ async function snoozeSpaceMatch(leadId, e) {
 // ═══════════════════════════════════════════════════════════════
 let fuQueue = [];   // [{lead, kind:'followup'|'spacematch', draft:{subject,body,...}}]
 let fuqIdx  = 0;
+let fuqStoryOpen = true; // show the lead's full details + update history by default —
+                          // the whole point is to see what's behind the generated email,
+                          // not just the draft itself. Persists across cards in a session.
 
 function dailyQueueItems() {
   const active = leads.filter(l => !l.archived && !['won', 'lost'].includes(l.stage || 'cold'));
@@ -3066,9 +3071,51 @@ function renderFuqCard() {
     : '';
   document.getElementById('fuq-body').innerHTML = `
     ${matchLine}
+    ${renderFuqStory(lead)}
     <div class="field"><label>Subject</label><div style="padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;">${esc(draft.subject || '')}</div></div>
     <div class="field"><label>Body</label><div style="padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;white-space:pre-wrap;max-height:220px;overflow-y:auto;">${esc(draft.body || '')}</div></div>
   `;
+}
+
+// Full lead context behind the draft above — company/contact/stage/size details
+// plus every logged update, newest first, so you can actually see the "story"
+// (what was said, what happened) that the generated email is supposedly based
+// on, not just take the draft on faith. Collapsible (fuqStoryOpen) since it can
+// get long on an old lead, but defaults open — that visibility is the whole
+// point of this addition.
+function renderFuqStory(lead) {
+  const entries = (lead.entries || []).slice()
+    .sort((a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0));
+  const entriesHtml = entries.length ? entries.map(e => {
+    const noteBits = (e.notes || []).map(n => {
+      if (n.type === 'audio') return '🎤 voice note' + (n.duration ? ` (${fmtDur(n.duration)})` : '');
+      if (n.type === 'file')  return '📎 ' + esc(n.fileName || 'file');
+      return '📝 ' + esc(n.text || '');
+    });
+    const when = `${fmtDate(e.createdAt)}${e.kind ? ` · ${esc(e.kind)}` : (e.type ? ` · ${e.type === 'do' ? 'Do' : 'Wait'}` : '')}${e.done ? ' · done' : ''}`;
+    return `<div style="padding:7px 0;border-bottom:1px solid var(--border);">
+      <div style="font-size:11px;color:var(--text2);font-weight:600;">${when}</div>
+      <div style="font-size:13px;color:var(--text);white-space:pre-wrap;">${esc(e.text || '')}</div>
+      ${noteBits.length ? `<div style="font-size:12px;color:var(--text2);margin-top:2px;">${noteBits.join(' · ')}</div>` : ''}
+    </div>`;
+  }).join('') : `<div style="font-size:12px;color:var(--text2);padding:7px 0;">No updates logged on this lead yet.</div>`;
+
+  return `
+  <div class="field">
+    <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;" onclick="toggleFuqStory()">
+      <label style="margin-bottom:0;">📖 Lead info &amp; story (${entries.length} update${entries.length !== 1 ? 's' : ''})</label>
+      <span style="font-size:11px;color:var(--text2);">${fuqStoryOpen ? '▲ hide' : '▼ show'}</span>
+    </div>
+    ${fuqStoryOpen ? `
+      ${renderLeadDetails(lead)}
+      <div style="max-height:240px;overflow-y:auto;border:1.5px solid var(--border);border-radius:8px;padding:0 10px;margin-top:6px;">${entriesHtml}</div>
+    ` : ''}
+  </div>`;
+}
+
+function toggleFuqStory() {
+  fuqStoryOpen = !fuqStoryOpen;
+  renderFuqCard();
 }
 
 function fuqSend() {
@@ -7045,6 +7092,7 @@ window.fuqSend             = fuqSend;
 window.fuqSkip              = fuqSkip;
 window.fuqSnooze           = fuqSnooze;
 window.fuqArchive          = fuqArchive;
+window.toggleFuqStory      = toggleFuqStory;
 window.openSpaceMatchEmail = openSpaceMatchEmail;
 window.onPOSearch          = onPOSearch;
 window.togglePOProp        = togglePOProp;
