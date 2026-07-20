@@ -2602,17 +2602,20 @@ const FU_SIGN = '';
 
 // Playbook value blocks (from the Cubework Sales Playbook _kb — USPs / Triple-A).
 // Written as standalone sentences so templates compose into short, clean lines.
-const FU_INCLUSIVE = "Pricing's all-inclusive — one flat rate, no triple-net (NNN) or common-area maintenance (CAM) fees on top, and no surprise utility bills.";
+// No em/en dashes anywhere in this copy (Justin's rule for prospect-facing text,
+// see [[no-dashes-in-copy]] — reconfirmed 2026-07-20 after it slipped back into
+// these client-side templates during the availability-quoting cleanup above).
+const FU_INCLUSIVE = "Pricing is all-inclusive: one flat rate, no triple-net (NNN) or common-area maintenance (CAM) fees on top, and no surprise utility bills.";
 const FU_FLEX = "It's month-to-month with 30-day notice, so you're never locked in.";
-const FU_FAST = "We can have you moved in within 24–48 hours.";
-const FU_TCO  = "once you add the triple-net (NNN), common-area maintenance (CAM) and utility charges a standard lease stacks on, we usually come out ~20–30% lower all-in";   // clause — embeds mid-sentence
+const FU_FAST = "We can have you moved in within 24 to 48 hours.";
+const FU_TCO  = "once you add the triple-net (NNN), common-area maintenance (CAM), and utility charges a standard lease stacks on, we usually come out about 20 to 30% lower all-in";   // clause — embeds mid-sentence
 const fuCap = s => s.charAt(0).toUpperCase() + s.slice(1);
 // Segment-tailored value angle (uses lead.segment, matching LEAD_SEGS keys).
 function fuHook(l){
   switch (l.segment) {
-    case 'importer':  return "you're minutes from the LA/Long Beach ports — Cubeship can handle freight and customs from the same site";
+    case 'importer':  return "you're minutes from the LA/Long Beach ports, and Cubeship can handle freight and customs from the same site";
     case 'ecommerce': return "it's set up for fulfillment and last-mile, with 24/7 access for fast turns";
-    case '3pl':       return "you can scale up or down as accounts change — dedicated docks, and multiple sites under one agreement";
+    case '3pl':       return "you can scale up or down as accounts change, with dedicated docks and multiple sites under one agreement";
     case 'tenant':    return "it's easy to add as overflow or a second site under the same simple agreement";
     default:          return "you can scale the space up or down as your needs change";
   }
@@ -2635,19 +2638,19 @@ function followupTargetSf(l){
 }
 
 const FOLLOWUP_BY_STAGE = {
-  cold:      [{ label: 'First touch', build: l => ({ subject: `Cubework — flexible, all-inclusive space for ${l.company || 'you'}`,
+  cold:      [{ label: 'First touch', build: l => ({ subject: `Flexible, all-inclusive space for ${l.company || 'you'}`,
       body: `${fuHi(l)}\n\nWanted to put Cubework on your radar. ${FU_INCLUSIVE} ${FU_FLEX} And ${fuHook(l)}.\n\n${FU_FAST} Worth a quick 15-minute look to see if it fits ${l.company || 'your operation'}?${FU_SIGN}` }) }],
-  contacted: [{ label: 'Check-in', build: l => ({ subject: `Cubework — still here when you're ready`,
-      body: `${fuHi(l)}\n\n${FU_INCLUSIVE} ${FU_FLEX}\n\nWant me to set up a quick tour?${FU_SIGN}` }) }],
-  toured:    [{ label: 'Post-tour', build: l => ({ subject: `Cubework — next steps on ${fuSpace(l)}`,
-      body: `${fuHi(l)}\n\nThanks again for coming out. If rate's the open question, it's worth running the all-in numbers side by side — ${FU_TCO}.\n\nWhat would help get you to a yes?${FU_SIGN}` }) }],
-  proposal:  [{ label: 'Proposal nudge', build: l => ({ subject: `Cubework — keeping ${fuSpace(l)} on the table`,
-      body: `${fuHi(l)}\n\nWanted to keep this moving. If the numbers are the sticking point, remember ${FU_TCO} — and a longer term sharpens the rate further. Glad to rework the proposal so it lands.\n\nWhat would need to be true for this to be a yes?${FU_SIGN}` }) }],
+  contacted: [{ label: 'Check-in', build: l => ({ subject: `Still here when you're ready`,
+      body: `${fuHi(l)}\n\n${FU_INCLUSIVE} ${FU_FLEX}\n\nStill worth exploring, or is timing off right now?${FU_SIGN}` }) }],
+  toured:    [{ label: 'Post-tour', build: l => ({ subject: `Next steps on ${fuSpace(l)}`,
+      body: `${fuHi(l)}\n\nThanks again for coming out. If rate's the open question, it's worth running the all-in numbers side by side: ${FU_TCO}.\n\nWhat would help get you to a yes?${FU_SIGN}` }) }],
+  proposal:  [{ label: 'Proposal nudge', build: l => ({ subject: `Keeping ${fuSpace(l)} on the table`,
+      body: `${fuHi(l)}\n\nWanted to keep this moving. If the numbers are the sticking point, remember ${FU_TCO}. A longer term sharpens the rate further too. Glad to rework the proposal so it lands.\n\nWhat would need to be true for this to be a yes?${FU_SIGN}` }) }],
 };
 const FOLLOWUP_VALUE = { label: 'Value-add', build: l => ({ subject: `What you get with a Cubework space`,
   body: `${fuHi(l)}\n\nHere's why teams pick us:\n• ${FU_INCLUSIVE}\n• ${FU_FLEX}\n• ${FU_FAST}\n• ${fuCap(fuHook(l))}.\n\nWorth 15 minutes to take a look?${FU_SIGN}` }) };
-const FOLLOWUP_BREAKUP = { label: 'Break-up', build: l => ({ subject: `Last note — Cubework`,
-  body: `${fuHi(l)}\n\nI'll keep this short — haven't heard back, which is completely fine if the timing's off. Want me to keep an eye out and only reach back when something opens in your size range? Otherwise I'll get out of your inbox.\n\nEither way, wishing you${l.company ? ` and ${l.company}` : ''} the best.${FU_SIGN}` }) };
+const FOLLOWUP_BREAKUP = { label: 'Break-up', build: l => ({ subject: `One last note`,
+  body: `${fuHi(l)}\n\nI'll keep this short. Haven't heard back, which is completely fine if the timing's off. Want me to keep an eye out and only reach back when something opens in your size range? Otherwise I'll get out of your inbox.\n\nEither way, wishing you${l.company ? ` and ${l.company}` : ''} the best.${FU_SIGN}` }) };
 
 function followupMsgsFor(lead){
   const base = FOLLOWUP_BY_STAGE[lead.stage || 'cold'] || FOLLOWUP_BY_STAGE.cold;
@@ -2919,8 +2922,8 @@ function spaceMatchMsgFor(lead) {
   const m = matches[0];
   const sizeTxt = m.sf ? `${m.sf.toLocaleString()} sf` : 'a space';
   const typeTxt = (m.type && m.type !== 'WH') ? `${m.type.toLowerCase()} ` : '';
-  const subject = `Cubework — space just opened up at ${m.property}`;
-  const body = `${fuHi(lead)}\n\nWanted to reach back out — ${sizeTxt} of ${typeTxt}space just opened up at ${m.property}, which lines up with what you were looking at before.\n\n${FU_INCLUSIVE} ${FU_FLEX}\n\nWant me to send more details or set up a quick look?${FU_SIGN}`;
+  const subject = `Space just opened up at ${m.property}`;
+  const body = `${fuHi(lead)}\n\nWanted to reach back out. ${sizeTxt} of ${typeTxt}space just opened up at ${m.property}, which lines up with what you were looking at before.\n\n${FU_INCLUSIVE} ${FU_FLEX}\n\nWant me to send more details or set up a quick look?${FU_SIGN}`;
   return { subject, body, match: m, extra: matches.length - 1 };
 }
 

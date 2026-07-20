@@ -909,6 +909,12 @@ Justin reported the Leads daily follow-up queue (2026-07-10 above) was still quo
 
 **Changed files:** `index.html` (`FOLLOWUP_BY_STAGE`, `FOLLOWUP_VALUE`, removed `fuAvail`/`followupUnitStillOpen`/`followupAvailMatches`).
 
+**Follow-up, same day: dashes slipped back in, and the "contacted" CTA didn't fit.** Justin's actual Jorge Gomez draft still had an em dash in `FU_INCLUSIVE` ("Pricing's all-inclusive — one flat rate...") — the fix above touched the availability/hold issues but didn't re-check the surrounding copy against the existing no-dashes rule ([[no-dashes-in-copy]]), so it slipped back in. He also flagged the "Want me to set up a quick tour?" CTA on the `contacted` template as presumptuous ("why would i ask for a tour right now") — asking for an in-person visit isn't the right ask at every contacted-stage lead, especially early or out-of-area ones.
+
+**Fix (`index.html`):** removed every em/en dash from the client-side follow-up value props and templates: `FU_INCLUSIVE` (now uses a colon), `FU_FAST`/`FU_TCO` (number ranges spelled out as "X to Y" instead of an en-dash range), `fuHook`'s importer/3pl cases (restructured with commas), all 5 `FOLLOWUP_BY_STAGE`/`FOLLOWUP_VALUE`/`FOLLOWUP_BREAKUP` subjects and bodies (dropped the decorative "Cubework — " subject prefixes entirely rather than swap the punctuation, split dash-joined clauses into two sentences), and `spaceMatchMsgFor`'s subject/body (same pattern). Also softened the `contacted` stage CTA from "Want me to set up a quick tour?" to "Still worth exploring, or is timing off right now?" — an open question that doesn't presume the lead is ready for a site visit.
+
+**To deploy:** pure app-side change. `git push` the updated `index.html`.
+
 **To deploy:** just `git push` the updated `index.html` — no Firebase console step needed (no `firestore.rules` change this time, since the catch-all already covers it). First time any staff account opens the tab after that, the 9 seed links populate automatically.
 
 **Changed files:** `index.html` (new 🔗 Links tab, `sharepoint_links` listener/seed/render/CRUD).
