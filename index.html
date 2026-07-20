@@ -2618,61 +2618,34 @@ function fuHook(l){
   }
 }
 
-// ── Live availability line (real open units only — never a guess) ──────────────
-// Size-matched within 0.5×–2× of the lead's stated need; locations = watched ones,
-// else all synced. Only asserts what's actually available in availMap right now.
+// followupTargetSf is still used by the Space Match feature (spaceMatches(), below)
+// to size-match archived/dead leads against live availability — that's a distinct,
+// deliberate feature (proactively reconnecting a dead lead when real space opens
+// up) and is untouched here.
+//
+// The live-availability "quick update" line that used to run through these
+// follow-up templates (fuAvail/followupUnitStillOpen/followupAvailMatches) was
+// removed 2026-07-20 — Justin's call: a generic Leads follow-up should never
+// quote a specific unit/sf/price, live or not (same "don't quote availability"
+// rule applied to workflow 17's Claude prompt). Removed entirely rather than
+// left unused, per this project's usual cleanup convention.
 function followupTargetSf(l){
   const s = [Number(l.unit_sf), Number(l.sqft), Number(l.wl_sf_min), Number(l.wl_sf_max)].filter(n => n > 0);
   return s.length ? s.sort((a, b) => a - b)[Math.floor(s.length / 2)] : 0;
 }
-function followupUnitStillOpen(l){
-  if (!l.unit) return null;
-  const want = String(l.unit).toLowerCase();
-  for (const pid in availMap){
-    const u = (availMap[pid].units || []).find(x => String(x.unit).toLowerCase() === want);
-    if (u) return { open: !!(u.available || u.hold), property: availMap[pid].property || pid, unit: u.unit, sf: Number(u.sf) || 0 };
-  }
-  return null;
-}
-function followupAvailMatches(l){
-  const target  = followupTargetSf(l);
-  const hasLocs = l.wl_locations && l.wl_locations.length;
-  if (!target && !hasLocs) return [];   // nothing to match on — don't offer random space
-  const locs = hasLocs ? l.wl_locations : Object.keys(availMap);
-  const out = [];
-  locs.forEach(pid => {
-    const d = availMap[pid]; if (!d) return;
-    (d.units || []).forEach(u => {
-      if (!(u.available || u.hold)) return;
-      const sf = Number(u.sf) || 0;
-      if (target > 0 && sf > 0 && (sf < target * 0.5 || sf > target * 2)) return;
-      out.push({ property: d.property || pid, unit: u.unit, sf, type: u.type });
-    });
-  });
-  if (target > 0) out.sort((a, b) => Math.abs(a.sf - target) - Math.abs(b.sf - target));
-  return out;
-}
-// Ready-to-drop sentence about REAL availability, or '' if none to honestly offer.
-function fuAvail(l){
-  const u = followupUnitStillOpen(l);
-  if (u && u.open) return `Quick update — ${u.unit}${u.sf ? ` (${u.sf.toLocaleString()} sf)` : ''} at ${u.property} is still open. `;
-  const m = followupAvailMatches(l);
-  if (m.length){ const t = m[0]; return `Quick update — I've got ${t.sf ? `${t.sf.toLocaleString()} sf` : 'space'} open right now at ${t.property}${m.length > 1 ? ` (plus ${m.length - 1} more in your size range)` : ''}. `; }
-  return '';
-}
 
 const FOLLOWUP_BY_STAGE = {
   cold:      [{ label: 'First touch', build: l => ({ subject: `Cubework — flexible, all-inclusive space for ${l.company || 'you'}`,
-      body: `${fuHi(l)}\n\nWanted to put Cubework on your radar. ${fuAvail(l)}${FU_INCLUSIVE} ${FU_FLEX} And ${fuHook(l)}.\n\n${FU_FAST} Worth a quick 15-minute look to see if it fits ${l.company || 'your operation'}?${FU_SIGN}` }) }],
+      body: `${fuHi(l)}\n\nWanted to put Cubework on your radar. ${FU_INCLUSIVE} ${FU_FLEX} And ${fuHook(l)}.\n\n${FU_FAST} Worth a quick 15-minute look to see if it fits ${l.company || 'your operation'}?${FU_SIGN}` }) }],
   contacted: [{ label: 'Check-in', build: l => ({ subject: `Cubework — still here when you're ready`,
-      body: `${fuHi(l)}\n\n${fuAvail(l)}${FU_INCLUSIVE} ${FU_FLEX}\n\nHappy to hold a unit briefly while you decide, or set up a quick tour — want me to line either up?${FU_SIGN}` }) }],
+      body: `${fuHi(l)}\n\n${FU_INCLUSIVE} ${FU_FLEX}\n\nWant me to set up a quick tour?${FU_SIGN}` }) }],
   toured:    [{ label: 'Post-tour', build: l => ({ subject: `Cubework — next steps on ${fuSpace(l)}`,
-      body: `${fuHi(l)}\n\nThanks again for coming out. ${fuAvail(l)}If rate's the open question, it's worth running the all-in numbers side by side — ${FU_TCO}. And I can hold ${l.unit || 'the unit'} for you while you decide.\n\nWhat would help get you to a yes?${FU_SIGN}` }) }],
+      body: `${fuHi(l)}\n\nThanks again for coming out. If rate's the open question, it's worth running the all-in numbers side by side — ${FU_TCO}.\n\nWhat would help get you to a yes?${FU_SIGN}` }) }],
   proposal:  [{ label: 'Proposal nudge', build: l => ({ subject: `Cubework — keeping ${fuSpace(l)} on the table`,
-      body: `${fuHi(l)}\n\nWanted to keep this moving. ${fuAvail(l)}If the numbers are the sticking point, remember ${FU_TCO} — and a longer term sharpens the rate further. Glad to rework the proposal so it lands.\n\nWhat would need to be true for this to be a yes?${FU_SIGN}` }) }],
+      body: `${fuHi(l)}\n\nWanted to keep this moving. If the numbers are the sticking point, remember ${FU_TCO} — and a longer term sharpens the rate further. Glad to rework the proposal so it lands.\n\nWhat would need to be true for this to be a yes?${FU_SIGN}` }) }],
 };
 const FOLLOWUP_VALUE = { label: 'Value-add', build: l => ({ subject: `What you get with a Cubework space`,
-  body: `${fuHi(l)}\n\n${fuAvail(l)}Here's why teams pick us:\n• ${FU_INCLUSIVE}\n• ${FU_FLEX}\n• ${FU_FAST}\n• ${fuCap(fuHook(l))}.\n\nWorth 15 minutes to take a look?${FU_SIGN}` }) };
+  body: `${fuHi(l)}\n\nHere's why teams pick us:\n• ${FU_INCLUSIVE}\n• ${FU_FLEX}\n• ${FU_FAST}\n• ${fuCap(fuHook(l))}.\n\nWorth 15 minutes to take a look?${FU_SIGN}` }) };
 const FOLLOWUP_BREAKUP = { label: 'Break-up', build: l => ({ subject: `Last note — Cubework`,
   body: `${fuHi(l)}\n\nI'll keep this short — haven't heard back, which is completely fine if the timing's off. Want me to keep an eye out and only reach back when something opens in your size range? Otherwise I'll get out of your inbox.\n\nEither way, wishing you${l.company ? ` and ${l.company}` : ''} the best.${FU_SIGN}` }) };
 
