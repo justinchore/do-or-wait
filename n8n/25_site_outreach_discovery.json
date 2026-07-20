@@ -1,0 +1,379 @@
+{
+  "name": "CW — 25. Site Outreach Discovery (CoreClaw)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "site-outreach-discover",
+        "responseMode": "responseNode",
+        "options": { "allowedOrigins": "*" }
+      },
+      "id": "cc250001-0000-4000-8000-000000000001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "site-outreach-discover"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Body: { propId, address, categories? }. propId/address are required — this\n// workflow is per-site, never a bulk-all-locations sweep. categories is an\n// optional override array; default to the 9-item v1 list when omitted.\n// Also derives a CoreClaw \"base_location\" (\"City, ST, USA\") from the raw\n// address string via a regex on the City, ST ZIP tail — the app sends the\n// full address, this node does the extraction, not the app.\nconst b = $json.body || {};\nconst propId = b.propId || '';\nconst address = b.address || '';\nif (!propId) throw new Error('Missing body.propId');\nif (!address) throw new Error('Missing body.address');\n\nconst DEFAULT_CATEGORIES = [\n  'importer', 'distribution company', 'wholesale distributor', '3PL logistics company',\n  'freight forwarder', 'ecommerce fulfillment center', 'trucking company', 'manufacturer',\n  'moving and storage company'\n];\nconst categories = (Array.isArray(b.categories) && b.categories.length) ? b.categories : DEFAULT_CATEGORIES;\n\n// \"3950 E Airport Dr, Ontario, CA 91761\" -> \"Ontario, CA, USA\"\nconst m = address.match(/,\\s*([^,]+),\\s*([A-Z]{2})\\s*\\d{5}/);\nconst base_location = m ? `${m[1].trim()}, ${m[2].trim()}, USA` : address; // fallback: pass the raw address through rather than fail the whole run\n\nreturn [{ json: { propId, address, base_location, categories } }];"
+      },
+      "id": "cc250001-0000-4000-8000-000000000002",
+      "name": "Parse request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [224, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://openapi.coreclaw.com/api/scraper?slug=01KPD6M5YQADCQKGVKPDZVYC63",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "cc250001-0000-4000-8000-000000000003",
+      "name": "Get scraper schema",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [448, 0],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "CoreClaw API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// UNVERIFIED against a real response (see CLAUDE.md 2026-07-20 (cont. #5) —\n// no CoreClaw account existed at build time). Golden rule from CoreClaw's own\n// docs: never hardcode a Worker's parameter names/version — read data.version\n// and data.parameters.custom.properties (array of {name,type,title,required,\n// default?}) and match candidate fields by substring rather than assuming\n// exact keys. Seeds the loop-over-categories accumulator and stashes the\n// resolved schema info for every category iteration to reuse.\nconst schema = $json.data || {};\nconst version = schema.version;\nconst props = (schema.parameters && schema.parameters.custom && schema.parameters.custom.properties) || [];\n\nfunction findProp(substrings) {\n  const hit = props.find(p => substrings.some(s => String(p.name||'').toLowerCase().includes(s) || String(p.title||'').toLowerCase().includes(s)));\n  return hit ? hit.name : null;\n}\nconst keywordProp  = findProp(['keyword', 'query', 'search_term', 'search term', 'term']);\nconst locationProp = findProp(['base_location', 'location', 'city', 'area']);\nconst enrichProp   = findProp(['business_leads_enrichment', 'leads_enrichment', 'enrichment', 'business leads']);\n\nconst warnings = [];\nif (!keywordProp)  warnings.push('Could not confidently match a keyword/search-term parameter — check data.parameters.custom.properties in this node\\'s input and hardcode the real name.');\nif (!locationProp) warnings.push('Could not confidently match a base_location/location parameter — same fix as above.');\nif (!enrichProp)   warnings.push('Could not confidently match the business-leads-enrichment toggle parameter — enrichment (named contact/email/phone/LinkedIn) may silently not be requested. Check the schema and hardcode the real name.');\nif (warnings.length) console.warn('[Site Outreach Discovery] Parameter match warnings:', warnings.join(' | '));\n\nconst req = $('Parse request').first().json;\n// Build the default \"system\" params object as-is from the schema's own defaults\n// (untouched — this workflow only overrides the 3 fields it actually needs).\nconst systemDefaults = {};\n((schema.parameters && schema.parameters.system && schema.parameters.system.properties) || []).forEach(p => {\n  if (p.default !== undefined) systemDefaults[p.name] = p.default;\n});\n\nreturn [{ json: {\n  ...req,\n  scraper_version: version,\n  keywordProp, locationProp, enrichProp, systemDefaults,\n  warnings,\n  categoryIndex: 0\n} }];"
+      },
+      "id": "cc250001-0000-4000-8000-000000000004",
+      "name": "Match schema fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [672, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Reset the cross-category accumulator on static data so a fresh webhook call\n// never inherits leftovers from a prior errored run (same pattern as workflow\n// 18's tab-loop accumulator). One item per category, fed into the batch loop.\nconst ws = $getWorkflowStaticData('global');\nws.rows = [];\nconst ctx = $json;\nreturn (ctx.categories || []).map(cat => ({ json: { ...ctx, category: cat } }));"
+      },
+      "id": "cc250001-0000-4000-8000-000000000005",
+      "name": "Reset accumulator + fan out categories",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [896, 0]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "cc250001-0000-4000-8000-000000000006",
+      "name": "Batch categories (loop)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1120, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build input.parameters.custom from the LIVE schema field names matched\n// earlier — never hardcode. Falls back to the best-guess key (keyword /\n// base_location / business_leads_enrichment) ONLY if the earlier substring\n// match failed to find anything at all, so a run still attempts something\n// useful rather than hard-failing — but the earlier warning already flagged\n// this case for a human to go fix.\nconst j = $json;\nconst custom = {};\ncustom[j.keywordProp || 'keyword'] = j.category;\ncustom[j.locationProp || 'base_location'] = j.base_location;\ncustom[j.enrichProp || 'business_leads_enrichment'] = true;\n\nconst input = { parameters: { system: j.systemDefaults || {}, custom } };\nreturn [{ json: { ...j, coreclawInput: input } }];"
+      },
+      "id": "cc250001-0000-4000-8000-000000000007",
+      "name": "Build custom params",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1344, -80]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openapi.coreclaw.com/api/v1/scraper/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ scraper_slug: '01KPD6M5YQADCQKGVKPDZVYC63', version: $json.scraper_version, is_async: true, input: $json.coreclawInput }) }}",
+        "options": {}
+      },
+      "id": "cc250001-0000-4000-8000-000000000008",
+      "name": "Run scraper",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1568, -80],
+      "continueOnFail": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "CoreClaw API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Non-zero `code` in the JSON body means failure even on HTTP 200 (per\n// CoreClaw docs) — check explicitly, don't just trust the HTTP status.\nconst prev = $('Build custom params').first().json;\nconst res = $json;\nif (res.error || (res.code && res.code !== 0)) {\n  console.warn('[Site Outreach Discovery] Run failed for category', prev.category, JSON.stringify(res).slice(0,300));\n  return [{ json: { ...prev, runFailed: true, run_slug: null } }];\n}\nconst run_slug = (res.data && res.data.run_slug) || null;\nreturn [{ json: { ...prev, runFailed: !run_slug, run_slug, pollAttempts: 0 } }];"
+      },
+      "id": "cc250001-0000-4000-8000-000000000009",
+      "name": "Extract run_slug",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1792, -80]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            { "leftValue": "={{ $json.runFailed }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true" } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cc250001-0000-4000-8000-00000000000a",
+      "name": "Run started ok?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2016, -80]
+    },
+    {
+      "parameters": {
+        "amount": 15,
+        "unit": "seconds"
+      },
+      "id": "cc250001-0000-4000-8000-00000000000b",
+      "name": "Wait before poll",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [2240, 80],
+      "webhookId": "cc250001-wait-poll"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openapi.coreclaw.com/api/v1/run/detail",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ run_slug: $json.run_slug }) }}",
+        "options": {}
+      },
+      "id": "cc250001-0000-4000-8000-00000000000c",
+      "name": "Get run detail",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2464, 80],
+      "continueOnFail": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "CoreClaw API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// status: 1 Ready, 2 Running, 3 Succeeded, 4 Failed, 5 Aborting. Capped poll\n// loop — 20 attempts x 15s = 5min max per category (same capped-deadline\n// convention as the Avail Export feature), then treat as a soft failure for\n// THIS category only and move to the next one, not a hard workflow failure.\nconst prev = $('Extract run_slug').first().json;\nconst res = $json;\nconst status = res && res.data ? res.data.status : null;\nconst attempts = (prev.pollAttempts || 0) + 1;\nconst CAP = 20;\nconst done = status === 3 || status === 4 || attempts >= CAP;\nreturn [{ json: { ...prev, pollAttempts: attempts, runStatus: status, pollDone: done, runFailed: (status === 4) || (attempts >= CAP && status !== 3) } }];"
+      },
+      "id": "cc250001-0000-4000-8000-00000000000d",
+      "name": "Check poll status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2688, 80]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            { "leftValue": "={{ $json.pollDone }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true" } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cc250001-0000-4000-8000-00000000000e",
+      "name": "Poll done?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2912, 80]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Paginated results. Page size 100; loop pages if the response signals more\n// (UNVERIFIED pagination field names — check the real response shape on\n// first run and fix has_more/total/page_index if they differ). page_index\n// tracked on the item so repeated calls advance.\nconst prev = $json;\nif (prev.runFailed) return [{ json: { ...prev, resultsDone: true, pageIndex: 0 } }];\nreturn [{ json: { ...prev, pageIndex: prev.pageIndex || 0 } }];"
+      },
+      "id": "cc250001-0000-4000-8000-00000000000f",
+      "name": "Prep result paging",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3136, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openapi.coreclaw.com/api/v1/run/result/list",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ run_slug: $json.run_slug, page_index: $json.pageIndex || 0, page_size: 100 }) }}",
+        "options": {}
+      },
+      "id": "cc250001-0000-4000-8000-000000000010",
+      "name": "Get results page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3360, 0],
+      "continueOnFail": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "CoreClaw API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Tags each result row with the search_category that surfaced it, extracts\n// the fields we care about (base record shape confirmed from CoreClaw docs;\n// leads-enrichment lead_* keys are UNVERIFIED — see CLAUDE.md), and appends\n// to the shared static-data accumulator. Also decides whether another page\n// needs fetching (UNVERIFIED pagination field names, see previous node).\nconst prev = $('Prep result paging').first().json;\nconst res = $json;\nconst rowsIn = (res && res.data && Array.isArray(res.data)) ? res.data\n            : (res && Array.isArray(res.data && res.data.items)) ? res.data.items\n            : [];\nconst ws = $getWorkflowStaticData('global');\nws.rows = ws.rows || [];\n\nfunction pick(row, keys) { for (const k of keys) { if (row[k] !== undefined && row[k] !== null && row[k] !== '') return row[k]; } return null; }\n\nfor (const row of rowsIn) {\n  ws.rows.push({\n    place_cid: row.cid || row.data_id || null,\n    name: row.title || row.name || '',\n    address: row.address || '',\n    city: row.city || '',\n    state: row.state || '',\n    website: row.website || '',\n    phone: row.phone || '',\n    search_category: prev.category,\n    google_category: row.primary_category || '',\n    all_categories: row.all_categories || null,\n    latitude: row.latitude != null ? row.latitude : null,\n    longitude: row.longitude != null ? row.longitude : null,\n    rating: row.review_rating != null ? row.review_rating : null,\n    review_count: row.review_count != null ? row.review_count : null,\n    // Leads-enrichment fields — key names are a best guess (lead_name /\n    // lead_title / lead_email / lead_linkedin_url), UNVERIFIED. Check a real\n    // enriched result record and fix these picks on first run.\n    contact_name: pick(row, ['lead_name', 'contact_name', 'person_name']),\n    contact_title: pick(row, ['lead_title', 'contact_title', 'job_title']),\n    contact_email: pick(row, ['lead_email', 'contact_email', 'email']),\n    contact_linkedin: pick(row, ['lead_linkedin_url', 'lead_linkedin', 'contact_linkedin', 'linkedin_url'])\n  });\n}\n\n// UNVERIFIED: guess at a has_more/total signal; if absent, assume one page\n// was enough (page_size 100 comfortably covers typical category volume) and\n// stop rather than loop forever.\nconst hasMore = !!(res && res.data && (res.data.has_more === true || (typeof res.data.total === 'number' && (prev.pageIndex+1)*100 < res.data.total)));\nreturn [{ json: { ...prev, resultsDone: !hasMore, pageIndex: (prev.pageIndex||0) + 1, resultCount: rowsIn.length } }];"
+      },
+      "id": "cc250001-0000-4000-8000-000000000011",
+      "name": "Tag + accumulate results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3584, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            { "leftValue": "={{ $json.resultsDone }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true" } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cc250001-0000-4000-8000-000000000012",
+      "name": "More pages?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [3808, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Dedupe the FULL cross-category accumulator by cid (falling back to\n// data_id — same key chosen as the Firestore doc id) — first occurrence\n// wins for search_category, matching the design spec (\"first-wins is fine\").\n// Runs once, after the category loop's \"done\" output fires.\nconst ws = $getWorkflowStaticData('global');\nconst rows = ws.rows || [];\nconst byId = new Map();\nfor (const r of rows) {\n  const id = r.place_cid;\n  if (!id) continue; // no stable id to dedupe/write on — skip (can't safely key a Firestore doc)\n  if (!byId.has(id)) byId.set(id, r);\n}\nconst deduped = [...byId.values()];\nws.rows = []; // clear for the next run\nreturn [{ json: { propId: $('Parse request').first().json.propId, categories: $('Parse request').first().json.categories, rows: deduped } }];"
+      },
+      "id": "cc250001-0000-4000-8000-000000000013",
+      "name": "Dedupe accumulated rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1344, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the workflow-20 (generic Firestore writer) bulk_update payload.\n// bulk_update does a Firestore `update` write WITH an updateMask containing\n// ONLY the keys in `fields` — confirmed by reading n8n/20_firestore_writer.json\n// (\"Build batchWrite\" node): buildWrite(..., partial=true) sets\n// `updateMask.fieldPaths = Object.keys(fields)`. Firestore's update+updateMask\n// write type creates the doc if absent (with just those fields) and, for an\n// existing doc, touches ONLY the listed field paths — every other existing\n// field (status/notes/attempts/archived/cold_draft) is left completely alone.\n// So bulk_update is exactly the masked/idempotent write this feature needs —\n// NEVER bulk_create, which would stomp the whole doc on a re-run.\n// discovered_at is intentionally left OUT of every re-run's fields (only ever\n// set once, see below) so it truly reflects first-seen, not last-seen.\nconst j = $json;\nconst nowIso = new Date().toISOString();\nconst items = (j.rows || []).map(r => ({\n  id: r.place_cid,\n  fields: {\n    location: j.propId,\n    place_cid: r.place_cid,\n    name: r.name,\n    address: r.address,\n    city: r.city,\n    state: r.state,\n    website: r.website,\n    phone: r.phone,\n    search_category: r.search_category,\n    google_category: r.google_category,\n    all_categories: r.all_categories,\n    latitude: r.latitude,\n    longitude: r.longitude,\n    rating: r.rating,\n    review_count: r.review_count,\n    contact_name: r.contact_name,\n    contact_title: r.contact_title,\n    contact_email: r.contact_email,\n    contact_linkedin: r.contact_linkedin,\n    last_seen_at: nowIso\n  }\n}));\nreturn [{ json: { propId: j.propId, categoriesRun: (j.categories||[]).length, discovered: items.length, writerBody: { collection: 'site_outreach', action: 'bulk_update', items } } }];"
+      },
+      "id": "cc250001-0000-4000-8000-000000000014",
+      "name": "Build write payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1568, 240]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ailinker.item.com/webhook/firestore-write",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.writerBody) }}",
+        "options": {}
+      },
+      "id": "cc250001-0000-4000-8000-000000000015",
+      "name": "Write via workflow 20",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1792, 240],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// discovered_at (first-seen only, never overwritten by a re-run) is set here,\n// AFTER the masked bulk_update above already landed — a second, separate\n// pass with a Firestore query-and-conditionally-set would be needed to set\n// it ONLY on brand-new docs without clobbering an existing one, but that's\n// unnecessary complexity for v1: instead, the app itself defaults a MISSING\n// discovered_at to last_seen_at at read time (same \"default missing fields\"\n// convention already used for status/archived/attempts — see index.html),\n// so first-seen is still knowable without a second write pass here.\nconst build = $('Build write payload').first().json;\nconst wrote = $json;\nreturn [{ json: { ok: true, propId: build.propId, categoriesRun: build.categoriesRun, discovered: build.discovered, writerResponse: wrote } }];"
+      },
+      "id": "cc250001-0000-4000-8000-000000000016",
+      "name": "Build response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2016, 240]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, discovered: $json.discovered, categoriesRun: $json.categoriesRun, propId: $json.propId }) }}",
+        "options": { "responseCode": 200, "responseHeaders": { "entries": [ { "name": "Access-Control-Allow-Origin", "value": "*" } ] } }
+      },
+      "id": "cc250001-0000-4000-8000-000000000017",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2240, 240]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Parse request", "type": "main", "index": 0 }]] },
+    "Parse request": { "main": [[{ "node": "Get scraper schema", "type": "main", "index": 0 }]] },
+    "Get scraper schema": { "main": [[{ "node": "Match schema fields", "type": "main", "index": 0 }]] },
+    "Match schema fields": { "main": [[{ "node": "Reset accumulator + fan out categories", "type": "main", "index": 0 }]] },
+    "Reset accumulator + fan out categories": { "main": [[{ "node": "Batch categories (loop)", "type": "main", "index": 0 }]] },
+    "Batch categories (loop)": {
+      "main": [
+        [{ "node": "Dedupe accumulated rows", "type": "main", "index": 0 }],
+        [{ "node": "Build custom params", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build custom params": { "main": [[{ "node": "Run scraper", "type": "main", "index": 0 }]] },
+    "Run scraper": { "main": [[{ "node": "Extract run_slug", "type": "main", "index": 0 }]] },
+    "Extract run_slug": { "main": [[{ "node": "Run started ok?", "type": "main", "index": 0 }]] },
+    "Run started ok?": {
+      "main": [
+        [{ "node": "Batch categories (loop)", "type": "main", "index": 0 }],
+        [{ "node": "Wait before poll", "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait before poll": { "main": [[{ "node": "Get run detail", "type": "main", "index": 0 }]] },
+    "Get run detail": { "main": [[{ "node": "Check poll status", "type": "main", "index": 0 }]] },
+    "Check poll status": { "main": [[{ "node": "Poll done?", "type": "main", "index": 0 }]] },
+    "Poll done?": {
+      "main": [
+        [{ "node": "Prep result paging", "type": "main", "index": 0 }],
+        [{ "node": "Wait before poll", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prep result paging": { "main": [[{ "node": "Get results page", "type": "main", "index": 0 }]] },
+    "Get results page": { "main": [[{ "node": "Tag + accumulate results", "type": "main", "index": 0 }]] },
+    "Tag + accumulate results": { "main": [[{ "node": "More pages?", "type": "main", "index": 0 }]] },
+    "More pages?": {
+      "main": [
+        [{ "node": "Batch categories (loop)", "type": "main", "index": 0 }],
+        [{ "node": "Get results page", "type": "main", "index": 0 }]
+      ]
+    },
+    "Dedupe accumulated rows": { "main": [[{ "node": "Build write payload", "type": "main", "index": 0 }]] },
+    "Build write payload": { "main": [[{ "node": "Write via workflow 20", "type": "main", "index": 0 }]] },
+    "Write via workflow 20": { "main": [[{ "node": "Build response", "type": "main", "index": 0 }]] },
+    "Build response": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "a1b2c3d4-0000-4000-8000-000000000025",
+  "meta": {
+    "instanceId": "576f1552f658e6ccbe293a5c310c12c03fc3f516211957ae27ecb76646f5be19"
+  },
+  "id": "cwSiteOutreachDiscovery25",
+  "tags": []
+}

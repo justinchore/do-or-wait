@@ -694,6 +694,7 @@
     <button class="tab-btn" data-tab="leads" onclick="switchTab('leads')">🎯 Leads</button>
     <button class="tab-btn" data-tab="outreach" onclick="switchTab('outreach')">📧 Outreach</button>
     <button class="tab-btn" data-tab="propoutreach" onclick="switchTab('propoutreach')">🏢 Prop Outreach</button>
+    <button class="tab-btn" data-tab="nearbyprospects" onclick="switchTab('nearbyprospects')">📍 Nearby Prospects</button>
     <button class="tab-btn" data-tab="playbook" onclick="switchTab('playbook')">📞 Playbook</button>
     <button class="tab-btn active" data-tab="avail" onclick="switchTab('avail')">🏭 Avail</button>
     <button class="tab-btn" data-tab="roster" onclick="switchTab('roster')">🗂️ Roster</button>
@@ -1116,6 +1117,58 @@
   <div id="po-modal-overlay" onclick="poModalBgClick(event)" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;align-items:flex-start;justify-content:center;overflow:auto;padding:32px 16px;">
     <div onclick="event.stopPropagation()" style="background:var(--surface);border-radius:16px;max-width:600px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3);">
       <div id="po-modal-body" style="padding:22px 24px 28px;"></div>
+    </div>
+  </div>
+
+  <!-- Nearby Prospects view (per-site CoreClaw discovery of nearby importers/
+       distributors/3PLs/etc — NEW businesses to cold-outreach, NOT existing
+       tenant leads (that's Prop Outreach) and NOT the dead Apollo-based
+       Outreach tab. See site_outreach/{id} in the project's CLAUDE.md. -->
+  <div id="nearbyprospects-view" style="display:none">
+    <div style="max-width:1100px;margin:0 auto;padding:16px;width:100%;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+        <input id="np-search" oninput="onNPSearch(this.value)" placeholder="Search company, address, or notes…"
+               style="flex:1;min-width:200px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:14px;" />
+        <select id="np-location" onchange="setNPLocation(this.value)"
+               style="padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:13px;"><option value="all">All properties</option></select>
+        <select id="np-category" onchange="setNPCategory(this.value)"
+               style="padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:13px;"><option value="all">All categories</option></select>
+        <select id="np-status" onchange="setNPStatus(this.value)"
+               style="padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:13px;">
+          <option value="all">All statuses</option>
+          <option value="not_contacted">Not contacted</option>
+          <option value="attempted">Attempted</option>
+          <option value="reached">Reached</option>
+          <option value="interested">Interested</option>
+          <option value="not_interested">Not interested</option>
+          <option value="bad_number">Bad number</option>
+          <option value="do_not_call">Do not call</option>
+          <option value="promoted">Promoted</option>
+          <option value="archived">Archived</option>
+        </select>
+        <span id="np-meta" style="font-size:12px;color:var(--text2);"></span>
+      </div>
+
+      <!-- Discover a site — works even before any records exist for that
+           property (picks any known Avail location by id/address). Each
+           already-populated property card below also gets its own inline
+           re-discover button once expanded. -->
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--bg);border-radius:10px;padding:10px 12px;margin-bottom:14px;">
+        <span style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.04em;">🔎 Discover</span>
+        <select id="np-discover-loc" style="flex:1;min-width:200px;padding:7px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px;"></select>
+        <button id="np-discover-btn-top" onclick="discoverNearby(document.getElementById('np-discover-loc').value, 'np-discover-btn-top', event)"
+               style="font-size:12px;font-weight:700;border:none;background:#38D430;color:#fff;border-radius:8px;padding:7px 14px;cursor:pointer;">🔎 Discover nearby companies</button>
+        <span id="np-discover-note" style="font-size:11px;color:var(--text2);"></span>
+      </div>
+
+      <div id="np-content"></div>
+    </div>
+  </div>
+
+  <!-- Nearby Prospects detail modal -->
+  <div id="np-modal-overlay" onclick="npModalBgClick(event)" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;align-items:flex-start;justify-content:center;overflow:auto;padding:32px 16px;">
+    <div onclick="event.stopPropagation()" style="background:var(--surface);border-radius:16px;max-width:600px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3);">
+      <div id="np-modal-body" style="padding:22px 24px 28px;"></div>
     </div>
   </div>
 
@@ -2654,17 +2707,27 @@ const FOLLOWUP_BY_STAGE = {
 // four have actually happened with real clients. Rotated at random per build
 // so repeated touches don't repeat the same story, and each ends with an easy
 // way to reach him directly since the point is inviting a real conversation.
+// Each case study is tagged with the approximate SF range its situation best
+// fits (small overflow need, mid-size seasonal fulfillment, the playbook's own
+// 10,000 SF TCO example, and a larger 3PL adding a full second site), so the
+// closest one shows instead of a blind random pick — added 2026-07-20, Justin's
+// call ("the size should determine which random value template to show").
+// Falls back to a fully random pick when the lead has no size on file to
+// match against (followupTargetSf returns 0).
 const FU_CASE_STUDIES = [
-  "One of our clients needed extra space fast during their busy season. They moved in within 48 hours instead of the usual 3 to 6 months, then gave the space back once the rush ended, no long-term lease to unwind.",
-  "A growing ecommerce brand we work with scaled fulfillment space up for the holidays, then back down in January. Paying only for what they used cut their annual space cost by about 20 to 30% compared to a fixed year-round lease.",
-  "One 3PL client of ours picked up a new account and needed a second site fast. Skipping the lease build-out saved them roughly 75% of the upfront capital a traditional space would have required.",
-  "One client compared a 10,000 SF traditional lease at about $160,000 a year to Cubework's all-inclusive rate at $125,000. That's $35,000 saved a year, or $175,000 over five years, once NNN, CAM, and build-out costs were counted."
+  { maxSf: 2500,     text: "One of our clients needed extra space fast during their busy season. They moved in within 48 hours instead of the usual 3 to 6 months, then gave the space back once the rush ended, no long-term lease to unwind." },
+  { maxSf: 7500,     text: "A growing ecommerce brand we work with scaled fulfillment space up for the holidays, then back down in January. Paying only for what they used cut their annual space cost by about 20 to 30% compared to a fixed year-round lease." },
+  { maxSf: 15000,    text: "One client compared a 10,000 SF traditional lease at about $160,000 a year to Cubework's all-inclusive rate at $125,000. That's $35,000 saved a year, or $175,000 over five years, once NNN, CAM, and build-out costs were counted." },
+  { maxSf: Infinity, text: "One 3PL client of ours picked up a new account and needed a second site fast. Skipping the lease build-out saved them roughly 75% of the upfront capital a traditional space would have required." }
 ];
-function fuRandomCaseStudy(){
-  return FU_CASE_STUDIES[Math.floor(Math.random() * FU_CASE_STUDIES.length)];
+function fuRandomCaseStudy(lead){
+  const target = followupTargetSf(lead);
+  if (!target) return FU_CASE_STUDIES[Math.floor(Math.random() * FU_CASE_STUDIES.length)].text;
+  const match = FU_CASE_STUDIES.find(c => target <= c.maxSf) || FU_CASE_STUDIES[FU_CASE_STUDIES.length - 1];
+  return match.text;
 }
 const FOLLOWUP_VALUE = { label: 'Random value', build: l => ({ subject: `One thing worth knowing`,
-  body: `${fuHi(l)}\n\n${fuRandomCaseStudy()}\n\nFeel free to call or text me anytime if you want to learn more about how Cubework could help with your plans.${FU_SIGN}` }) };
+  body: `${fuHi(l)}\n\n${fuRandomCaseStudy(l)}\n\nFeel free to call or text me anytime if you want to learn more about how Cubework could help with your plans.${FU_SIGN}` }) };
 // Light, low-pressure bump — added 2026-07-20 alongside the queue's explicit
 // template-picker buttons (see pickFollowupTpl below). Distinct from the
 // stage-specific first message and from Break-up: no value props, no ask
@@ -4344,6 +4407,7 @@ function switchTab(tab) {
   document.getElementById('notes-view').style.display    = tab === 'notes'    ? '' : 'none';
   document.getElementById('outreach-view').style.display = tab === 'outreach' ? '' : 'none';
   document.getElementById('propoutreach-view').style.display = tab === 'propoutreach' ? '' : 'none';
+  document.getElementById('nearbyprospects-view').style.display = tab === 'nearbyprospects' ? '' : 'none';
   document.getElementById('assistant-view').style.display = tab === 'assistant' ? '' : 'none';
   document.querySelectorAll('.tab-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.tab === tab);
@@ -4355,6 +4419,7 @@ function switchTab(tab) {
   if (tab === 'ratebands') renderRateBands();
   if (tab === 'outreach') renderOutreach();
   if (tab === 'propoutreach') renderPropertyOutreach();
+  if (tab === 'nearbyprospects') renderNearbyProspects();
   if (tab === 'playbook') renderPlaybookCards();
   if (tab === 'leads') refreshAllLeadEmailLinks();
   if (tab === 'tasks') refreshAllTaskEmailLinks();
@@ -4446,6 +4511,7 @@ const PRICING_BD_SYNC_WEBHOOK = `${PROXY}/webhook/pricing-bd-sync`; // manual "S
 const ROSTER_SYNC_WEBHOOK = `${PROXY}/webhook/roster-sync`; // manual "Sync now" for the Roster tab (n8n workflow 19)
 const ASSISTANT_CHAT_WEBHOOK = `${PROXY}/webhook/assistant-chat`; // 🤖 Assistant tab: {messages} → Claude (native MCP connector against the do-or-wait Cloud Run server) → {ok,reply,toolsUsed} (n8n workflow 24)
 const OUTREACH_REPLY_SCAN_WEBHOOK = `${PROXY}/webhook/outreach-reply-scan`; // manual "⟳ Check now" on Outreach + Prop Outreach — runs the next reply scan immediately (n8n workflow 23)
+const SITE_OUTREACH_DISCOVER_WEBHOOK = `${PROXY}/webhook/site-outreach-discover`; // 📍 Nearby Prospects "🔎 Discover" button: {propId,address} → CoreClaw Google Maps scrape per category → site_outreach/{cid} (n8n workflow 25)
 
 // Listen to ALL availability docs (scales to multiple locations)
 unsubAvail = liveSnapshot(collection(db, 'availability'), snap => {
@@ -6113,10 +6179,12 @@ function outreachRows(){
   const seedDomains = new Set(seed.map(s=>(s.domain||'').toLowerCase()).filter(Boolean));
   const rows = seed.map(s => rowFrom(s, byDomain[(s.domain||'').toLowerCase()] || {}));
   // Also show live Firestore prospects NOT in the bundled seed (new n8n batches
-  // like last-mile / fashion-district) so anything the pipeline writes appears.
+  // like last-mile / fashion-district), AND prospects with no domain at all yet
+  // (e.g. the job-posting-sourced batch, added before any contact/email was found —
+  // these used to be silently dropped here since an empty domain made `k` falsy).
   Object.values(outreachMap).forEach(d => {
     const k=(d.domain||'').toLowerCase();
-    if(k && !seedDomains.has(k)) rows.push(rowFrom({ domain:d.domain, company:d.company, city:d.person_loc||d.org_state||'', industry:d.industry }, d));
+    if(!k || !seedDomains.has(k)) rows.push(rowFrom({ domain:d.domain, company:d.company, city:d.person_loc||d.org_state||d.location||'', industry:d.industry }, d));
   });
   return rows;
 }
@@ -7095,6 +7163,380 @@ try {
   }, err => console.warn('property_outreach_context listener', err));
 } catch(e){ console.warn('property_outreach_context listener init', e); }
 
+// ═══════════════════════════════════════════════════════════════
+//  NEARBY PROSPECTS — per-site discovery of NEW nearby businesses to
+//  cold-outreach (📍 Nearby Prospects tab), via CoreClaw's Google Maps
+//  Scraper Worker. Deliberately separate from `outreach/{id}` (dead
+//  Apollo-based industry prospecting) and `property_outreach/{id}` (Yardi
+//  call-sheet backlogs of EXISTING tenant leads, not new-business discovery).
+//  Doc id = the CoreClaw/Google `cid` (or data_id if no cid), so re-running
+//  discovery for a site naturally dedupes. No bundled seed — live Firestore
+//  only, same as Roster/Rate Bands/Prop Outreach. See site_outreach/{id} in
+//  the project's CLAUDE.md and n8n workflow 25.
+// ═══════════════════════════════════════════════════════════════
+let siteOutreachMap = {};     // firestore doc id (cid) → record
+let unsubSiteOutreach = null;
+let npSearch   = '';
+let npLocation = 'all';
+let npCategory = 'all';
+let npStatus   = 'all';
+let npModalId  = null;
+
+// Which property groups are expanded — same "none open by default" convention
+// as poExpandedProps / expandedAvailProps. Click a property's header to expand.
+const npExpandedProps = new Set();
+function toggleNPProp(loc){
+  if(npExpandedProps.has(loc)) npExpandedProps.delete(loc); else npExpandedProps.add(loc);
+  renderNearbyProspects();
+}
+
+function npRows(){ return Object.values(siteOutreachMap); }
+function npLocationName(id){ const d = availMap[id]; return (d && d.property) ? d.property : (id || '—'); }
+// search_category is a free-text keyword (importer / 3PL logistics company / etc,
+// tunable in n8n workflow 25) — just a display-cased label, not an enum.
+function npCategoryLabel(c){
+  const s = String(c||'').trim();
+  if(!s) return 'Uncategorized';
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function onNPSearch(v){ npSearch = (v||'').trim().toLowerCase(); renderNearbyProspects(); }
+function setNPLocation(v){ npLocation = v; renderNearbyProspects(); }
+function setNPCategory(v){ npCategory = v; renderNearbyProspects(); }
+function setNPStatus(v){ npStatus = v; renderNearbyProspects(); }
+
+const NP_STATUS_LABEL = {
+  not_contacted:'Not contacted', attempted:'Attempted', reached:'Reached',
+  interested:'Interested', not_interested:'Not interested', bad_number:'Bad number',
+  do_not_call:'Do not call', promoted:'Promoted'
+};
+const NP_STATUS_COLOR = {
+  not_contacted:'background:#f3f4f6;color:#6b7280;', attempted:'background:#fef3c7;color:#92400e;',
+  reached:'background:#dbeafe;color:#1e40af;', interested:'background:#dcfce7;color:#166534;',
+  not_interested:'background:#f3f4f6;color:#6b7280;', bad_number:'background:#fee2e2;color:#991b1b;',
+  do_not_call:'background:#fee2e2;color:#991b1b;', promoted:'background:#e0e7ff;color:#3730a3;'
+};
+const NP_OUTCOMES = [
+  {key:'no_answer',      label:'📵 No answer'},
+  {key:'voicemail',      label:'📞 Voicemail'},
+  {key:'interested',     label:'✅ Interested'},
+  {key:'not_interested', label:'❌ Not interested'},
+  {key:'bad_number',     label:'⚠️ Bad number'},
+  {key:'do_not_call',    label:'🚫 Do not call'}
+];
+const NP_OUTCOME_LABEL  = Object.fromEntries(NP_OUTCOMES.map(o=>[o.key,o.label]));
+const NP_OUTCOME_STATUS = {
+  no_answer:'attempted', voicemail:'attempted', bad_number:'bad_number',
+  not_interested:'not_interested', do_not_call:'do_not_call', interested:'interested'
+};
+// Same "1st decline just records, 2nd auto-archives" convention as Property Outreach.
+function notInterestedTwiceNP(r){ return Array.isArray(r.attempts) && r.attempts.filter(a=>a.outcome==='not_interested').length >= 2; }
+
+function renderNearbyProspects(){
+  const host = document.getElementById('np-content'); if(!host) return;
+  const showingArchived = npStatus === 'archived';
+  // Default missing fields at read time (records come straight off an n8n
+  // bulk_update — see workflow 25 — and status/archived/attempts may be absent
+  // on a never-touched record): status→'not_contacted', archived→false,
+  // attempts→[]. discovered_at falls back to last_seen_at wherever it's shown.
+  const all = npRows().filter(r => showingArchived ? !!r.archived : !r.archived);
+
+  const statusSel = document.getElementById('np-status');
+  if(statusSel) statusSel.value = npStatus;
+
+  // Location FILTER select — only properties that actually have records.
+  const locSel = document.getElementById('np-location');
+  if(locSel){
+    const locs = [...new Set(all.map(r=>r.location).filter(Boolean))].sort((a,b)=>npLocationName(a).localeCompare(npLocationName(b)));
+    locSel.innerHTML = '<option value="all">All properties</option>' +
+      locs.map(l=>`<option value="${esc(l)}">${esc(npLocationName(l))}</option>`).join('');
+    locSel.value = npLocation;
+  }
+
+  // Category FILTER select — only categories actually present in the data.
+  const catSel = document.getElementById('np-category');
+  if(catSel){
+    const cats = [...new Set(all.map(r=>r.search_category).filter(Boolean))].sort();
+    catSel.innerHTML = '<option value="all">All categories</option>' +
+      cats.map(c=>`<option value="${esc(c)}">${esc(npCategoryLabel(c))}</option>`).join('');
+    catSel.value = npCategory;
+  }
+
+  // Discover picker — every KNOWN Avail location, not just ones with records
+  // already — this is how discovery gets run for a brand-new property with
+  // zero rows yet (per the CLAUDE.md spec: "works on any known Avail location
+  // even before it has any records yet").
+  const discSel = document.getElementById('np-discover-loc');
+  if(discSel){
+    const allLocs = Object.keys(availMap).sort((a,b)=>npLocationName(a).localeCompare(npLocationName(b)));
+    const prevVal = discSel.value;
+    discSel.innerHTML = allLocs.map(l=>`<option value="${esc(l)}">${esc(npLocationName(l))}</option>`).join('');
+    if(allLocs.includes(prevVal)) discSel.value = prevVal;
+  }
+
+  let rows = all;
+  if(npLocation!=='all') rows = rows.filter(r=>r.location===npLocation);
+  if(npCategory!=='all') rows = rows.filter(r=>r.search_category===npCategory);
+  if(!showingArchived && npStatus!=='all') rows = rows.filter(r=>(r.status||'not_contacted')===npStatus);
+  if(npSearch) rows = rows.filter(r => [r.name,r.address,r.notes,r.contact_name,r.google_category].some(x=>String(x||'').toLowerCase().includes(npSearch)));
+
+  const meta = document.getElementById('np-meta');
+  if(meta) meta.textContent = all.length ? `${rows.length} of ${all.length}` : '';
+  if(!all.length){ host.innerHTML = '<div class="empty">No Nearby Prospects yet — pick a property above and run 🔎 Discover.</div>'; return; }
+  if(!rows.length){ host.innerHTML = '<div class="empty">No records match.</div>'; return; }
+
+  const groups = {};
+  rows.forEach(r => { const k = r.location || '—'; (groups[k] = groups[k] || []).push(r); });
+
+  host.innerHTML = Object.keys(groups).sort((a,b)=>npLocationName(a).localeCompare(npLocationName(b))).map(loc => {
+    const grp = groups[loc];
+    const byCat = {};
+    grp.forEach(r => { const c = r.search_category || 'uncategorized'; (byCat[c] = byCat[c] || []).push(r); });
+    const catKeys = Object.keys(byCat).sort((a,b)=> byCat[b].length - byCat[a].length || a.localeCompare(b));
+    const catBlocks = catKeys.map(c => {
+      const rows2 = byCat[c].slice().sort((a,b)=> String(a.name||'').localeCompare(String(b.name||'')));
+      const body = rows2.map(r=>{
+        const status = r.status || 'not_contacted';
+        const badge = `<span style="font-size:10px;font-weight:600;border-radius:10px;padding:2px 8px;white-space:nowrap;${NP_STATUS_COLOR[status]||''}">${esc(NP_STATUS_LABEL[status]||status)}</span>` +
+          (r.archived ? ` <span style="font-size:10px;font-weight:600;border-radius:10px;padding:2px 8px;white-space:nowrap;background:#f3f4f6;color:#6b7280;">🗄 Archived</span>` : '');
+        const attempts = Array.isArray(r.attempts) ? r.attempts.length : 0;
+        const contactCell = r.contact_name
+          ? `${esc(r.contact_name||'')}${r.contact_title?' · '+esc(r.contact_title):''}`
+          : '<span style="color:var(--text2);">No named contact</span>';
+        return `<tr onclick="openNPModal('${esc(r.id)}')" style="cursor:pointer;border-top:1px solid var(--border);">
+            <td style="padding:6px 8px;font-weight:600;">${esc(r.name||'')}</td>
+            <td style="padding:6px 8px;font-size:12px;">${contactCell}</td>
+            <td style="padding:6px 8px;font-size:12px;color:var(--text2);">${r.rating?('⭐ '+r.rating+(r.review_count?' ('+r.review_count+')':'')):''}</td>
+            <td style="padding:6px 8px;">${badge}</td>
+            <td style="padding:6px 8px;text-align:center;color:var(--text2);">${attempts||''}</td>
+          </tr>`;
+      }).join('');
+      return `<div style="margin:12px 0 18px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;">
+            <span style="font-size:11px;font-weight:700;border-radius:8px;padding:3px 9px;white-space:nowrap;background:#eef2ff;color:#3730a3;">${esc(npCategoryLabel(c))}</span>
+            <span style="font-size:12px;color:var(--text2);">${rows2.length} lead${rows2.length!==1?'s':''}</span>
+          </div>
+          <div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead><tr style="color:var(--text2);font-size:11px;text-transform:uppercase;letter-spacing:.04em;text-align:left;">
+              <th style="padding:4px 8px;">Company</th><th style="padding:4px 8px;">Contact</th><th style="padding:4px 8px;">Rating</th><th style="padding:4px 8px;">Status</th><th style="padding:4px 8px;text-align:center;">Attempts</th>
+            </tr></thead><tbody>${body}</tbody></table></div>
+        </div>`;
+    }).join('');
+    const isOpen = npExpandedProps.has(loc);
+    // Collapsed summary — one chip per category present, so it still reads at a
+    // glance without opening it (same convention as Prop Outreach's wave chips).
+    const catChips = catKeys.map(c=>`<span style="font-size:10.5px;font-weight:700;border-radius:8px;padding:2px 8px;white-space:nowrap;background:#eef2ff;color:#3730a3;">${esc(npCategoryLabel(c))} · ${byCat[c].length}</span>`).join(' ');
+    return `<div style="margin-bottom:22px;border:1px solid var(--border);border-radius:12px;overflow:hidden;">
+        <div onclick="toggleNPProp('${esc(loc)}')" style="cursor:pointer;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;background:var(--bg);">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <span style="font-size:12px;color:var(--text2);">${isOpen?'▾':'▸'}</span>
+            <span style="font-weight:700;font-size:14px;">${esc(npLocationName(loc))}</span>
+            <span style="color:var(--text2);font-weight:400;font-size:13px;">(${grp.length})</span>
+          </div>
+          ${!isOpen ? `<div style="display:flex;gap:6px;flex-wrap:wrap;">${catChips}</div>` : ''}
+        </div>
+        ${isOpen ? `<div style="padding:0 14px 14px;">
+            <div style="margin:10px 0;">
+              <button id="np-redisc-${esc(loc)}" onclick="discoverNearby('${esc(loc)}','np-redisc-${esc(loc)}',event)" style="font-size:12px;font-weight:600;border:1px solid var(--border);border-radius:8px;padding:6px 12px;background:var(--surface);color:var(--text);cursor:pointer;">🔎 Re-discover this property</button>
+            </div>
+            ${catBlocks}
+          </div>` : ''}
+      </div>`;
+  }).join('');
+}
+
+function openNPModal(id){
+  npModalId = id;
+  const r = siteOutreachMap[id]; if(!r) return;
+  const status = r.status || 'not_contacted';
+  const attempts = Array.isArray(r.attempts) ? r.attempts.slice().sort((a,b)=> new Date(b.at||0)-new Date(a.at||0)) : [];
+  const outcomeBtns = NP_OUTCOMES.map(o => `<button onclick="logNPAttempt('${id}','${o.key}',event)" style="font-size:12px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);cursor:pointer;">${o.label}</button>`).join('');
+  const attemptsList = attempts.length ? attempts.map(a=>`<div style="padding:6px 0;border-top:1px solid var(--border);font-size:12px;"><b>${esc(NP_OUTCOME_LABEL[a.outcome]||a.outcome||'')}</b> <span style="color:var(--text2);">${a.at?new Date(a.at).toLocaleString([], {month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):''}</span>${a.note?`<div style="color:var(--text2);margin-top:2px;">${esc(a.note)}</div>`:''}</div>`).join('') : '<div style="color:var(--text2);font-size:13px;">No calls logged yet.</div>';
+  const promoted = r.promoted_lead_id;
+  // discovered_at falls back to last_seen_at when absent (per the "default missing
+  // fields at read time" rule — see the site_outreach/{id} doc in CLAUDE.md).
+  const discoveredIso = r.discovered_at || r.last_seen_at || null;
+  const discoveredLbl = discoveredIso && !isNaN(new Date(discoveredIso).getTime())
+    ? new Date(discoveredIso).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '';
+  const contactBlock = (r.contact_name || r.contact_email || r.contact_linkedin)
+    ? `<div style="font-size:13px;">
+        ${r.contact_name?`<div><b>${esc(r.contact_name)}</b>${r.contact_title?' — '+esc(r.contact_title):''}</div>`:''}
+        ${r.contact_email?`<div style="margin-top:2px;"><a href="mailto:${esc(r.contact_email)}" style="color:#0969da;text-decoration:none;">✉️ ${esc(r.contact_email)}</a></div>`:''}
+        ${r.contact_linkedin?`<div style="margin-top:2px;"><a href="${esc(r.contact_linkedin)}" target="_blank" rel="noopener" style="color:#0969da;text-decoration:none;">🔗 LinkedIn</a></div>`:''}
+      </div>`
+    : `<div style="font-size:13px;color:var(--text2);">No named contact found — try the main line.</div>`;
+  document.getElementById('np-modal-body').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+      <div><div style="font-size:18px;font-weight:800;">${esc(r.name||'')}</div>
+        <div style="font-size:12px;color:var(--text2);">${esc(npLocationName(r.location))}${r.search_category?' · '+esc(npCategoryLabel(r.search_category)):''}${discoveredLbl?' · found '+discoveredLbl:''}</div>
+        ${r.address?`<div style="font-size:12px;color:var(--text2);margin-top:2px;">${esc(r.address)}</div>`:''}
+      </div>
+      <button onclick="closeNPModal()" style="border:none;background:var(--bg);border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:16px;">✕</button>
+    </div>
+    ${r.archived ? `<div style="margin-top:10px;background:#f3f4f6;border-radius:8px;padding:8px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+      <span style="font-size:12px;color:#6b7280;">🗄 Archived${notInterestedTwiceNP(r)?' — declined twice':''}</span>
+      <button onclick="setNPArchived('${id}',false,event)" style="font-size:12px;padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);cursor:pointer;">↩ Restore</button>
+    </div>` : ''}
+    <div style="margin-top:14px;display:flex;gap:6px;flex-wrap:wrap;">
+      ${r.website?`<a href="${esc(r.website)}" target="_blank" rel="noopener" style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;color:#0969da;text-decoration:none;">🌐 Website</a>`:''}
+      ${r.phone?`<a href="tel:${esc((r.phone||'').replace(/[^0-9+]/g,''))}" style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);text-decoration:none;">📞 ${esc(r.phone)}</a>`:''}
+    </div>
+    <div style="margin-top:14px;">
+      <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);margin-bottom:6px;">Discovered contact <span style="font-weight:400;color:var(--text2);text-transform:none;">— from CoreClaw's business-leads enrichment</span></div>
+      ${contactBlock}
+    </div>
+    <div style="margin-top:14px;">
+      <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);margin-bottom:6px;">Status</div>
+      <select onchange="saveNPStatus('${id}',this.value)" style="padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px;">
+        ${Object.keys(NP_STATUS_LABEL).map(k=>`<option value="${k}" ${k===status?'selected':''}>${esc(NP_STATUS_LABEL[k])}</option>`).join('')}
+      </select>
+    </div>
+    <div style="margin-top:14px;">
+      <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);margin-bottom:6px;">Log a call</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">${outcomeBtns}</div>
+    </div>
+    <div style="margin-top:14px;">
+      <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);margin-bottom:6px;">Notes</div>
+      <textarea onchange="saveNPNotes('${id}',this.value)" placeholder="Free-text notes…" rows="3" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px;font-family:inherit;">${esc(r.notes||'')}</textarea>
+    </div>
+    <div style="margin-top:14px;">
+      <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);margin-bottom:4px;">Call history</div>
+      ${attemptsList}
+    </div>
+    <div style="margin-top:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      ${promoted
+        ? `<span style="font-size:12px;color:#166534;">✓ Promoted to lead</span>`
+        : `<button onclick="promoteNPToLead('${id}',event)" style="font-size:12px;padding:7px 12px;border:1px solid #38D430;border-radius:8px;background:#38D430;color:#fff;cursor:pointer;">🎯 Promote to lead</button>`}
+      ${!r.archived ? `<button onclick="setNPArchived('${id}',true,event)" style="font-size:12px;padding:7px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text2);cursor:pointer;">🗄 Archive</button>` : ''}
+    </div>`;
+  document.getElementById('np-modal-overlay').style.display='flex';
+}
+function closeNPModal(){ const o=document.getElementById('np-modal-overlay'); if(o) o.style.display='none'; npModalId=null; }
+function npModalBgClick(e){ if(e.target && e.target.id==='np-modal-overlay') closeNPModal(); }
+
+async function saveNPStatus(id, val){
+  if(!id) return;
+  try { await setDoc(doc(db,'site_outreach',id), { status: val, updatedAt: new Date().toISOString() }, { merge:true }); }
+  catch(e){ console.warn('saveNPStatus', e); }
+}
+
+async function saveNPNotes(id, val){
+  if(!id) return;
+  try { await setDoc(doc(db,'site_outreach',id), { notes: val, updatedAt: new Date().toISOString() }, { merge:true }); }
+  catch(e){ console.warn('saveNPNotes', e); }
+}
+
+async function logNPAttempt(id, outcome, e){
+  if(e) e.stopPropagation();
+  const r = siteOutreachMap[id]; if(!r) return;
+  const note = prompt('Note (optional):', '') || '';
+  const attempts = Array.isArray(r.attempts) ? r.attempts.slice() : [];
+  attempts.push({ id: 'att'+Date.now(), at: new Date().toISOString(), outcome, note });
+  const status = NP_OUTCOME_STATUS[outcome] || 'attempted';
+  // Auto-archive on the 2nd "Not interested" — same convention as Property
+  // Outreach's logPOAttempt. The 1st just records the outcome normally.
+  const notInterestedCount = attempts.filter(a=>a.outcome==='not_interested').length;
+  const archived = (outcome === 'not_interested' && notInterestedCount >= 2) ? true : !!r.archived;
+  try {
+    await setDoc(doc(db,'site_outreach',id), { attempts, status, archived, last_contacted_at: new Date().toISOString(), updatedAt: new Date().toISOString() }, { merge:true });
+  } catch(err){ console.warn('logNPAttempt', err); alert('Could not save — try again.'); return; }
+  if(archived && !r.archived) alert(`${r.name||'This lead'} said not interested twice — archived. Find it again anytime under Status → Archived.`);
+  openNPModal(id); // refresh with the new attempt
+}
+
+async function setNPArchived(id, val, e){
+  if(e) e.stopPropagation();
+  if(!id) return;
+  try { await setDoc(doc(db,'site_outreach',id), { archived: !!val, updatedAt: new Date().toISOString() }, { merge:true }); }
+  catch(err){ console.warn('setNPArchived', err); alert('Could not save — try again.'); return; }
+  openNPModal(id);
+}
+
+async function promoteNPToLead(id, e){
+  if(e) e.stopPropagation();
+  const r = siteOutreachMap[id]; if(!r) return;
+  if(r.promoted_lead_id){ alert('Already promoted.'); return; }
+  if(!confirm(`Create a lead from "${r.name||'this record'}"?`)) return;
+  const leadId = 'l'+Date.now()+Math.floor(Math.random()*100000);
+  const contactBits = [r.contact_name, r.contact_title].filter(Boolean).join(', ');
+  const summary = `Promoted from Nearby Prospects (CoreClaw discovery, ${npLocationName(r.location)}, category: ${r.search_category?npCategoryLabel(r.search_category):'—'}).${contactBits?' Contact: '+contactBits+'.':''}${r.notes?' '+r.notes:''}`;
+  const lead = {
+    id: leadId, archived: false, createdAt: new Date().toISOString(), seq_status: 'active',
+    company: r.name||'', contact: r.contact_name||null, email: r.contact_email||null, phone: r.phone||null,
+    location: r.location||null, stage: 'cold',
+    entries: [{ id:'e'+Date.now(), type:'wait', text: summary, done:false, notes:[], createdAt:new Date().toISOString(), kind:'note', dir:'out' }]
+  };
+  try {
+    await setDoc(doc(db,'leads',leadId), lead);
+    await setDoc(doc(db,'site_outreach',id), { status:'promoted', promoted_lead_id: leadId, updatedAt: new Date().toISOString() }, { merge:true });
+  } catch(err){ console.warn('promoteNPToLead', err); alert('Could not promote — try again.'); return; }
+  closeNPModal();
+  alert('Promoted — check the Leads tab.');
+}
+
+// Manual, per-site discovery trigger — a real scrape (CoreClaw's Google Maps
+// Scraper Worker, looped across ~9 categories), so this genuinely takes a
+// few minutes rather than looking stuck. n8n workflow 25, responseNode-mode
+// (synchronous), returns {ok,discovered,categoriesRun,propId} on success.
+async function discoverNearby(propId, btnId, e){
+  if(e) e.stopPropagation();
+  if(!propId){ alert('Pick a property first.'); return; }
+  const d = availMap[propId];
+  const address = (d && d.address) || '';
+  if(!address){ alert('No address on file for this property — add it via the Avail tab first.'); return; }
+  const btn = btnId ? document.getElementById(btnId) : null;
+  const origText = btn ? btn.textContent : '';
+  const noteEl = document.getElementById('np-discover-note');
+  if(btn){ btn.disabled = true; btn.textContent = '🔎 Discovering…'; }
+  if(noteEl) noteEl.textContent = 'Running a live scrape across several categories — this can take a few minutes, please wait.';
+  try {
+    const res = await fetch(SITE_OUTREACH_DISCOVER_WEBHOOK, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ propId, address })
+    });
+    const text = await res.text().catch(()=>'');
+    if(!res.ok){
+      console.error('[site-outreach-discover]', res.status, text);
+      if(noteEl) noteEl.textContent = '';
+      alert('Discovery failed (HTTP ' + res.status + ').\n' +
+        (res.status === 404
+          ? 'The site-outreach-discover webhook isn’t reachable — is n8n workflow 25 imported and Active?'
+          : 'Workflow 25 errored — check its Executions log in n8n.') +
+        (text ? '\n\n' + text.slice(0, 300) : ''));
+      return;
+    }
+    let parsed = null;
+    try { parsed = JSON.parse(text); } catch(_e){}
+    if(noteEl){
+      noteEl.textContent = (parsed && parsed.discovered != null)
+        ? `Done — found ${parsed.discovered} across ${parsed.categoriesRun!=null?parsed.categoriesRun:'?'} categories.`
+        : 'Done — check the list below.';
+    }
+    // the site_outreach listener below re-renders as records land; nothing else to do here.
+  } catch(err){
+    console.error('discoverNearby failed:', err);
+    if(noteEl) noteEl.textContent = '';
+    alert('Could not reach the discovery service — check your connection and try again.');
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = origText || '🔎 Discover nearby companies'; }
+  }
+}
+
+// Live from Firestore only — no bundled seed (same reasoning as Roster/Rate
+// Bands/Property Outreach: internal discovery data, not something to ship in
+// the public repo).
+try {
+  unsubSiteOutreach = liveSnapshot(collection(db,'site_outreach'), snap => {
+    siteOutreachMap = {};
+    snap.forEach(d => { siteOutreachMap[d.id] = { id:d.id, ...d.data() }; });
+    const v = document.getElementById('nearbyprospects-view');
+    if (v && v.style.display !== 'none') renderNearbyProspects();
+    const ov = document.getElementById('np-modal-overlay');
+    if (npModalId && siteOutreachMap[npModalId] && ov && ov.style.display !== 'none') openNPModal(npModalId);
+  }, err => console.warn('site_outreach listener', err));
+} catch(e){ console.warn('site_outreach listener init', e); }
+
+
 // Renewals — per-tenant lease expiration / renewal status (written by the n8n Renewals
 // Sync, workflow 10). Surfaced on occupied unit rows in the Avail tab. No snapshot fallback.
 try {
@@ -7368,6 +7810,20 @@ window.loadDefaultPOPrompt  = loadDefaultPOPrompt;
 window.generatePODraft     = generatePODraft;
 window.copyPODraftMsg      = copyPODraftMsg;
 window.dismissPODraft      = dismissPODraft;
+window.onNPSearch          = onNPSearch;
+window.setNPLocation       = setNPLocation;
+window.setNPCategory       = setNPCategory;
+window.setNPStatus         = setNPStatus;
+window.toggleNPProp        = toggleNPProp;
+window.discoverNearby      = discoverNearby;
+window.openNPModal         = openNPModal;
+window.closeNPModal        = closeNPModal;
+window.npModalBgClick      = npModalBgClick;
+window.saveNPStatus        = saveNPStatus;
+window.saveNPNotes         = saveNPNotes;
+window.logNPAttempt        = logNPAttempt;
+window.setNPArchived       = setNPArchived;
+window.promoteNPToLead     = promoteNPToLead;
 window.copySpaceMatchMsg   = copySpaceMatchMsg;
 window.snoozeSpaceMatch    = snoozeSpaceMatch;
 window.generateFollowup    = generateFollowup;
