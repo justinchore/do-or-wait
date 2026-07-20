@@ -697,6 +697,7 @@
     <button class="tab-btn" data-tab="playbook" onclick="switchTab('playbook')">📞 Playbook</button>
     <button class="tab-btn active" data-tab="avail" onclick="switchTab('avail')">🏭 Avail</button>
     <button class="tab-btn" data-tab="roster" onclick="switchTab('roster')">🗂️ Roster</button>
+    <button class="tab-btn" data-tab="sharepoint" onclick="switchTab('sharepoint')">🔗 Links</button>
     <button class="tab-btn" data-tab="pricing" onclick="switchTab('pricing')">💲 Pricing</button>
     <button class="tab-btn" data-tab="ratebands" onclick="switchTab('ratebands')">📊 Rate Bands</button>
     <button class="tab-btn" data-tab="notes" onclick="switchTab('notes')">💡 Notes</button>
@@ -969,6 +970,22 @@
     </div>
   </div>
 
+  <!-- SharePoint Links view — a personal directory of external doc links (per-location
+       availability sheets, trackers, etc.) so Justin doesn't have to go hunting across
+       SharePoint/Google Sheets for the link he needs. Added 2026-07-20. -->
+  <div id="sharepoint-view" style="display:none">
+    <div style="max-width:900px;margin:0 auto;padding:16px;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+        <input id="splink-search" oninput="onSplinkSearch(this.value)" placeholder="Search links…"
+               style="flex:1;min-width:200px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:14px;" />
+        <select id="splink-category" onchange="setSplinkCategory(this.value)"
+               style="padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:13px;"></select>
+        <button class="add-topic-btn" id="splink-add-btn" style="margin:0;width:auto" onclick="openAddSplink()">＋ Add link</button>
+      </div>
+      <div id="splinks-list"></div>
+    </div>
+  </div>
+
   <!-- Pricing view (national rate card) -->
   <div id="pricing-view" style="display:none">
     <div style="max-width:1200px;margin:0 auto;padding:16px;width:100%;">
@@ -1199,6 +1216,26 @@
     <div class="modal-foot">
       <button class="btn" onclick="closePAModal()">Cancel</button>
       <button class="btn dark" onclick="savePA()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- SharePoint Link modal (add/edit) -->
+<div class="overlay" id="splink-overlay" onclick="if(event.target===this)closeSplinkModal()">
+  <div class="modal">
+    <h3 id="splink-modal-title">Add Link</h3>
+    <input type="hidden" id="splink-id">
+    <div class="field"><label>Label</label><input id="splink-label" type="text" placeholder="e.g. 2720 Pellissier — Availability Sheet" autocomplete="off"/></div>
+    <div class="field"><label>URL</label><input id="splink-url" type="url" placeholder="https://…" autocomplete="off"/></div>
+    <div class="field">
+      <label>Category</label>
+      <input id="splink-category-input" type="text" placeholder="e.g. Location Sheet" autocomplete="off" list="splink-cat-list"/>
+      <datalist id="splink-cat-list"></datalist>
+    </div>
+    <div class="field"><label>Notes (optional)</label><textarea id="splink-notes" rows="2" placeholder="Anything worth remembering about this link…"></textarea></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeSplinkModal()">Cancel</button>
+      <button class="btn dark" onclick="saveSplinkModal()">Save</button>
     </div>
   </div>
 </div>
@@ -1536,7 +1573,9 @@ function doSignOut(){ signOut(auth); }
 // contact directory, not sensitive/negotiating data like Pricing/Rate Bands)
 // and strips write controls for a restricted sign-in. Cosmetic/UX only — the
 // real gate is firestore.rules, which restricts what her token can read/write
-// regardless of what the UI shows.
+// regardless of what the UI shows. Links (added 2026-07-20) is NOT in this
+// allow-list — Justin's call, she doesn't need it — so it falls back to
+// firestore.rules' catch-all (isAllowed()-only), same as Leads/Notes/Outreach.
 function lockToAvailReadOnly() {
   document.querySelectorAll('.tab-btn').forEach(b => {
     b.style.display = (b.dataset.tab === 'avail' || b.dataset.tab === 'roster') ? '' : 'none';
@@ -3108,9 +3147,25 @@ function renderFuqStory(lead) {
     </div>
     ${fuqStoryOpen ? `
       ${renderLeadDetails(lead)}
+      ${renderFuqSourceLine(lead)}
       <div style="max-height:240px;overflow-y:auto;border:1.5px solid var(--border);border-radius:8px;padding:0 10px;margin-top:6px;">${entriesHtml}</div>
     ` : ''}
   </div>`;
+}
+
+// Small "drafted from" hint + a link to the actual Outlook thread — NOT the
+// thread content itself (that's never persisted, see chat), just a one-click
+// way to go read it for real. Reuses the same emailLinkChips() the lead card's
+// collapsed summary already uses, so it's the identical resolved/unresolved
+// states and the same fixThreadUrl() link-repair logic — nothing new to build.
+const FU_SOURCE_LABEL = { thread: 'the email thread', notes: 'your logged notes', 'thread+notes': 'the email thread + your notes' };
+function renderFuqSourceLine(lead) {
+  const src = lead.followup_draft && lead.followup_draft.source;
+  const srcTxt = src && FU_SOURCE_LABEL[src]
+    ? `<div style="font-size:11px;color:var(--text2);margin-top:6px;">✨ Drafted from ${FU_SOURCE_LABEL[src]}</div>` : '';
+  const chips = emailLinkChips(lead, 'leads');
+  if (!srcTxt && !chips) return '';
+  return `<div style="margin-top:2px;">${srcTxt}${chips}</div>`;
 }
 
 function toggleFuqStory() {
@@ -4259,6 +4314,7 @@ function switchTab(tab) {
   document.getElementById('playbook-view').style.display = tab === 'playbook' ? '' : 'none';
   document.getElementById('avail-view').style.display    = tab === 'avail'    ? '' : 'none';
   document.getElementById('roster-view').style.display   = tab === 'roster'   ? '' : 'none';
+  document.getElementById('sharepoint-view').style.display = tab === 'sharepoint' ? '' : 'none';
   document.getElementById('pricing-view').style.display  = tab === 'pricing'  ? '' : 'none';
   document.getElementById('ratebands-view').style.display = tab === 'ratebands' ? '' : 'none';
   document.getElementById('notes-view').style.display    = tab === 'notes'    ? '' : 'none';
@@ -4270,6 +4326,7 @@ function switchTab(tab) {
   });
   if (tab === 'notes') renderNotes();
   if (tab === 'roster') renderRoster();
+  if (tab === 'sharepoint') renderSplinks();
   if (tab === 'pricing') renderPricing();
   if (tab === 'ratebands') renderRateBands();
   if (tab === 'outreach') renderOutreach();
@@ -5497,6 +5554,168 @@ function clearNoteSince() {
   noteSince = '';
   const el = document.getElementById('note-since'); if (el) el.value = '';
   renderNotes();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SHAREPOINT LINKS — a personal directory of external doc links
+//  (per-location availability sheets, trackers, etc.) so Justin
+//  doesn't have to hop across SharePoint/Google Sheets to find one.
+//  Firestore sharepoint_links/{id} = {label,url,category,notes,createdAt,updatedAt}.
+//  Read-only for the Avail-only restricted role (Lucy, see AVAIL_READONLY);
+//  full add/edit/delete for the 3 staff accounts. Added 2026-07-20.
+// ═══════════════════════════════════════════════════════════════
+let splinks = [];
+let splinksSearch = '';
+let splinksCategory = '';
+let unsubSplinks = null;
+let _splinksSeeding = false;
+
+// One-time seed — the links already collected in sharepoint_location_links.txt,
+// plus the Renewals tracker. Pricing/Rate Bands/Roster source sheets aren't
+// included (this project only has their Graph driveId/itemId, not a normal
+// browsable URL) — add those by hand via ＋ Add link once you have the link.
+const SPLINKS_SEED = [
+  { id: 'loc-terminal-west-sac', label: 'Terminal, West Sacramento — Availability Sheet', category: 'Location Sheet',
+    url: 'https://cubework365.sharepoint.com/:x:/r/sites/Cubework_PropertyManagement/_layouts/15/Doc.aspx?sourcedoc=%7B00014AA8-0BDF-458C-844B-89399D957BAE%7D&file=1630%20Terminal%20Street%20West%20Sacramento.xlsx&action=default&mobileredirect=true' },
+  { id: 'loc-fresno', label: 'Fresno — Availability Sheet', category: 'Location Sheet',
+    url: 'https://cubework365.sharepoint.com/:x:/r/sites/Cubework_PropertyManagement/_layouts/15/Doc.aspx?sourcedoc=%7BD134A7DA-E177-4422-80A2-00049927C77B%7D&file=Fresno%20CA.xlsx&action=default&mobileredirect=true' },
+  { id: 'loc-walnut', label: 'Walnut, CA — Availability Sheet', category: 'Location Sheet',
+    url: 'https://cubework365.sharepoint.com/:x:/r/sites/Cubework_PropertyManagement/_layouts/15/Doc.aspx?sourcedoc=%7BEF6BCC03-BE22-4E7D-B06E-D6770C6FC3FD%7D&file=Walnut%20CA.xlsx&action=default&mobileredirect=true&DefaultItemOpen=1' },
+  { id: 'loc-pellissier', label: '2720 Pellissier — Availability Sheet', category: 'Location Sheet',
+    url: 'https://cubework365.sharepoint.com/:x:/r/sites/Cubework_PropertyManagement/_layouts/15/Doc.aspx?sourcedoc=%7B8A8CC979-8C52-4B37-B2A0-B51B4992A933%7D&file=2720%20Pellissier.xlsx&action=default&mobileredirect=true' },
+  { id: 'loc-reyes', label: 'Reyes, Compton — Availability Sheet', category: 'Location Sheet',
+    url: 'https://cubework365.sharepoint.com/:x:/r/sites/Cubework_PropertyManagement/_layouts/15/Doc.aspx?sourcedoc=%7B5729C745-9A44-48C6-893A-E687AA808111%7D&file=Reyes%20Compton%2C%20CA.xlsx&action=default&mobileredirect=true' },
+  { id: 'loc-ontario-airport', label: 'Airport, Ontario — Availability Sheet', category: 'Location Sheet',
+    url: 'https://cubework365.sharepoint.com/:x:/r/sites/Cubework_PropertyManagement/_layouts/15/Doc.aspx?sourcedoc=%7B51D4D0ED-3ABC-411E-8850-D8B370794A48%7D&file=Airport%2C%20Ontario%20CA%20(Data%20to%20be%20updated).xlsx&action=default&mobileredirect=true' },
+  { id: 'loc-la-mirada', label: 'La Mirada — Availability Sheet', category: 'Location Sheet',
+    url: 'https://cubework365.sharepoint.com/:x:/r/sites/Cubework_PropertyManagement/_layouts/15/Doc.aspx?sourcedoc=%7BF6D81B28-74A4-4AB1-9CC1-B8018752DF60%7D&file=La%20Mirada%20CA.xlsx&action=default&mobileredirect=true' },
+  { id: 'loc-banana-fontana', label: 'Banana, Fontana — Availability Sheet', category: 'Location Sheet',
+    url: 'https://cubework365.sharepoint.com/:x:/r/sites/Cubework_PropertyManagement/_layouts/15/Doc.aspx?sourcedoc=%7B0B3499A2-FE5B-4ECC-8417-1346DADB2C76%7D&file=Banana%2C%20Fontana%20PA%20Weekly%20Report.xlsx&action=default&mobileredirect=true' },
+  { id: 'renewals-tracker', label: 'Lease Renewals Tracker', category: 'Renewals',
+    url: 'https://docs.google.com/spreadsheets/d/1TqWFcbyeQ2ulHdD54akyHZyuvkWcULl3ApL_sRE86v0/edit#gid=844109688' },
+];
+
+unsubSplinks = liveSnapshot(collection(db, 'sharepoint_links'), snap => {
+  seedSplinksIfEmpty(snap);
+  splinks = snap.docs.map(d => d.data()).filter(x => !x._deleted);
+  renderSplinks();
+});
+
+async function seedSplinksIfEmpty(snap) {
+  if (!snap.empty || _splinksSeeding || AVAIL_READONLY) return;
+  _splinksSeeding = true;
+  const now = new Date().toISOString();
+  for (const item of SPLINKS_SEED) {
+    try { await setDoc(doc(db, 'sharepoint_links', item.id), { ...item, notes: '', createdAt: now, updatedAt: now }); }
+    catch (e) { console.error('seed sharepoint_links failed:', e); }
+  }
+}
+
+function splinkCategories() {
+  return [...new Set(splinks.map(l => l.category || 'Other'))].sort();
+}
+
+function onSplinkSearch(v) { splinksSearch = (v || '').trim().toLowerCase(); renderSplinks(); }
+function setSplinkCategory(v) { splinksCategory = v; renderSplinks(); }
+
+function renderSplinks() {
+  const catSel = document.getElementById('splink-category');
+  if (catSel) {
+    const cats = splinkCategories();
+    const cur = splinksCategory;
+    catSel.innerHTML = `<option value="">All categories</option>` + cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+    catSel.value = cats.includes(cur) ? cur : '';
+  }
+  const addBtn = document.getElementById('splink-add-btn');
+  if (addBtn) addBtn.style.display = AVAIL_READONLY ? 'none' : '';
+
+  const el = document.getElementById('splinks-list');
+  if (!el) return;
+  let list = splinks.slice();
+  if (splinksCategory) list = list.filter(l => (l.category || 'Other') === splinksCategory);
+  if (splinksSearch) {
+    list = list.filter(l => [l.label, l.url, l.notes, l.category].some(v => (v || '').toLowerCase().includes(splinksSearch)));
+  }
+  if (!list.length) {
+    el.innerHTML = `<div class="empty">${splinks.length ? 'No links match.' : 'No links yet — hit ＋ Add link.'}</div>`;
+    return;
+  }
+  const groups = {};
+  list.forEach(l => { const c = l.category || 'Other'; (groups[c] = groups[c] || []).push(l); });
+  const cats = Object.keys(groups).sort();
+  el.innerHTML = cats.map(c => {
+    const rows = groups[c].sort((a, b) => (a.label || '').localeCompare(b.label || '')).map(splinkRow).join('');
+    return `<div style="margin-bottom:20px;">
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:8px;">${esc(c)}</div>
+        ${rows}
+      </div>`;
+  }).join('');
+}
+
+function splinkRow(l) {
+  const editBtns = AVAIL_READONLY ? '' : `
+      <button class="btn sm" onclick="editSplinkModal('${l.id}')">Edit</button>
+      <button onclick="deleteSplink('${l.id}')" style="font-size:12px;color:#b91c1c;background:transparent;border:1px solid #fecaca;border-radius:8px;padding:4px 10px;cursor:pointer;">Delete</button>`;
+  return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:12px 16px;margin-bottom:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:200px;">
+        <a href="${esc(l.url)}" target="_blank" rel="noopener" style="font-weight:700;font-size:14px;">${esc(l.label || l.url)}</a>
+        ${l.notes ? `<div style="font-size:12px;color:var(--text2);margin-top:2px;">${esc(l.notes)}</div>` : ''}
+      </div>
+      <div style="display:flex;gap:8px;">${editBtns}</div>
+    </div>`;
+}
+
+function openAddSplink() {
+  if (AVAIL_READONLY) return;
+  document.getElementById('splink-modal-title').textContent = 'Add Link';
+  document.getElementById('splink-id').value = '';
+  document.getElementById('splink-label').value = '';
+  document.getElementById('splink-url').value = '';
+  document.getElementById('splink-category-input').value = '';
+  document.getElementById('splink-notes').value = '';
+  fillSplinkCatList();
+  document.getElementById('splink-overlay').classList.add('open');
+}
+function editSplinkModal(id) {
+  if (AVAIL_READONLY) return;
+  const l = splinks.find(x => x.id === id);
+  if (!l) return;
+  document.getElementById('splink-modal-title').textContent = 'Edit Link';
+  document.getElementById('splink-id').value = l.id;
+  document.getElementById('splink-label').value = l.label || '';
+  document.getElementById('splink-url').value = l.url || '';
+  document.getElementById('splink-category-input').value = l.category || '';
+  document.getElementById('splink-notes').value = l.notes || '';
+  fillSplinkCatList();
+  document.getElementById('splink-overlay').classList.add('open');
+}
+function fillSplinkCatList() {
+  const dl = document.getElementById('splink-cat-list');
+  if (dl) dl.innerHTML = splinkCategories().map(c => `<option value="${esc(c)}">`).join('');
+}
+function closeSplinkModal() {
+  document.getElementById('splink-overlay').classList.remove('open');
+}
+async function saveSplinkModal() {
+  if (AVAIL_READONLY) return;
+  const id = document.getElementById('splink-id').value || ('sl' + Date.now());
+  const label = document.getElementById('splink-label').value.trim();
+  const url = document.getElementById('splink-url').value.trim();
+  if (!label || !url) { alert('Label and URL are both required.'); return; }
+  const category = document.getElementById('splink-category-input').value.trim() || 'Other';
+  const notes = document.getElementById('splink-notes').value.trim();
+  const existing = splinks.find(x => x.id === id);
+  const now = new Date().toISOString();
+  const item = { id, label, url, category, notes, createdAt: existing?.createdAt || now, updatedAt: now };
+  closeSplinkModal();
+  try { await setDoc(doc(db, 'sharepoint_links', id), item); }
+  catch (e) { console.error('Save link failed:', e); alert('Save failed — see console.'); }
+}
+async function deleteSplink(id) {
+  if (AVAIL_READONLY) return;
+  if (!confirm('Delete this link?')) return;
+  try { await deleteDoc(doc(db, 'sharepoint_links', id)); }
+  catch (e) { console.error('Delete link failed:', e); }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -6978,6 +7197,13 @@ window.deleteIdeaNote      = deleteIdeaNote;
 window.setNoteSort         = setNoteSort;
 window.setNoteSince        = setNoteSince;
 window.clearNoteSince      = clearNoteSince;
+window.onSplinkSearch      = onSplinkSearch;
+window.setSplinkCategory   = setSplinkCategory;
+window.openAddSplink       = openAddSplink;
+window.editSplinkModal     = editSplinkModal;
+window.closeSplinkModal    = closeSplinkModal;
+window.saveSplinkModal     = saveSplinkModal;
+window.deleteSplink        = deleteSplink;
 window.triggerAvailSync    = triggerAvailSync;
 window.setAvailSort        = setAvailSort;
 window.openAvailExport     = openAvailExport;

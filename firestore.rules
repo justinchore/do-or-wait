@@ -11,8 +11,8 @@ rules_version = '2';
 //      opened up to this role 2026-07-07, unlike Pricing/Rate Bands, since
 //      it's just a staff contact directory, not sensitive/negotiating data).
 //      No access to anything else (leads, tasks, notes, outreach, pricing,
-//      pricing_bd), even via a direct Firestore call from the browser
-//      console. MUST match
+//      pricing_bd, sharepoint_links), even via a direct Firestore call from
+//      the browser console. MUST match
 //      AVAIL_ONLY_EMAILS in index.html. This is the real enforcement for
 //      that restricted role — index.html only controls what the UI shows;
 //      this is what actually stops her token from reading/writing more.
