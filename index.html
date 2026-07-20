@@ -2650,7 +2650,7 @@ const FOLLOWUP_BY_STAGE = {
 const FOLLOWUP_VALUE = { label: 'Value-add', build: l => ({ subject: `What you get with a Cubework space`,
   body: `${fuHi(l)}\n\nHere's why teams pick us:\n• ${FU_INCLUSIVE}\n• ${FU_FLEX}\n• ${FU_FAST}\n• ${fuCap(fuHook(l))}.\n\nWorth 15 minutes to take a look?${FU_SIGN}` }) };
 const FOLLOWUP_BREAKUP = { label: 'Break-up', build: l => ({ subject: `One last note`,
-  body: `${fuHi(l)}\n\nI'll keep this short. Haven't heard back, which is completely fine if the timing's off. Want me to keep an eye out and only reach back when something opens in your size range? Otherwise I'll get out of your inbox.\n\nEither way, wishing you${l.company ? ` and ${l.company}` : ''} the best.${FU_SIGN}` }) };
+  body: `${fuHi(l)}\n\nDidn't want to stop reaching out without one more check in. If your plans ever call for space, ours is flexible: no long commitment required, and we can move you in within a day or two.\n\nFeel free to reach out whenever the timing's right, whether that's now or down the road.${FU_SIGN}` }) };
 
 function followupMsgsFor(lead){
   const base = FOLLOWUP_BY_STAGE[lead.stage || 'cold'] || FOLLOWUP_BY_STAGE.cold;

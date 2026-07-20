@@ -915,6 +915,10 @@ Justin reported the Leads daily follow-up queue (2026-07-10 above) was still quo
 
 **To deploy:** pure app-side change. `git push` the updated `index.html`.
 
+**Follow-up, same session: `FOLLOWUP_BREAKUP` body rewritten after a few rounds of copy review.** Justin workshopped the last-touch ("Break-up") email body live in chat. The original was stiff ("regarding your interest," "learning more about our spaces"); a first MTM/fast-move-in rewrite bunched too many hyphenated compounds into one sentence (month-to-month, long-term, lock-in, move-in all together read cluttered even though none were actual em/en dashes); and a closing line, "is this a good place to leave it?", read awkward. Landed on: "Didn't want to stop reaching out without one more check in. If your plans ever call for space, ours is flexible: no long commitment required, and we can move you in within a day or two. Feel free to reach out whenever the timing's right, whether that's now or down the road." Justin's call: "simple and dependable to start with." `FOLLOWUP_BREAKUP` in `index.html` now uses this body verbatim (subject unchanged, "One last note").
+
+**To deploy:** `git push` the updated `index.html`.
+
 **To deploy:** just `git push` the updated `index.html` — no Firebase console step needed (no `firestore.rules` change this time, since the catch-all already covers it). First time any staff account opens the tab after that, the 9 seed links populate automatically.
 
 **Changed files:** `index.html` (new 🔗 Links tab, `sharepoint_links` listener/seed/render/CRUD).
