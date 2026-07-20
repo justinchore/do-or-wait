@@ -2609,7 +2609,6 @@ const FU_INCLUSIVE = "Pricing is all-inclusive: one flat rate, no triple-net (NN
 const FU_FLEX = "It's month-to-month with 30-day notice, so you're never locked in.";
 const FU_FAST = "We can have you moved in within 24 to 48 hours.";
 const FU_TCO  = "once you add the triple-net (NNN), common-area maintenance (CAM), and utility charges a standard lease stacks on, we usually come out about 20 to 30% lower all-in";   // clause — embeds mid-sentence
-const fuCap = s => s.charAt(0).toUpperCase() + s.slice(1);
 // Segment-tailored value angle (uses lead.segment, matching LEAD_SEGS keys).
 function fuHook(l){
   switch (l.segment) {
@@ -2647,14 +2646,37 @@ const FOLLOWUP_BY_STAGE = {
   proposal:  [{ label: 'Proposal nudge', build: l => ({ subject: `Keeping ${fuSpace(l)} on the table`,
       body: `${fuHi(l)}\n\nWanted to keep this moving. If the numbers are the sticking point, remember ${FU_TCO}. A longer term sharpens the rate further too. Glad to rework the proposal so it lands.\n\nWhat would need to be true for this to be a yes?${FU_SIGN}` }) }],
 };
-const FOLLOWUP_VALUE = { label: 'Value-add', build: l => ({ subject: `What you get with a Cubework space`,
-  body: `${fuHi(l)}\n\nHere's why teams pick us:\n• ${FU_INCLUSIVE}\n• ${FU_FLEX}\n• ${FU_FAST}\n• ${fuCap(fuHook(l))}.\n\nWorth 15 minutes to take a look?${FU_SIGN}` }) };
+// Random value — replaced twice now (2026-07-20). First pass was a single
+// value-prop line (all-inclusive/flex/fast/segment hook), but Justin found it
+// too thin, no real information. Second pass: real, anonymized Cubework
+// customer situations with concrete numbers, grounded in the Sales Playbook's
+// own TCO/speed/upfront-capital figures (not invented) — Justin confirmed all
+// four have actually happened with real clients. Rotated at random per build
+// so repeated touches don't repeat the same story, and each ends with an easy
+// way to reach him directly since the point is inviting a real conversation.
+const FU_CASE_STUDIES = [
+  "One of our clients needed extra space fast during their busy season. They moved in within 48 hours instead of the usual 3 to 6 months, then gave the space back once the rush ended, no long-term lease to unwind.",
+  "A growing ecommerce brand we work with scaled fulfillment space up for the holidays, then back down in January. Paying only for what they used cut their annual space cost by about 20 to 30% compared to a fixed year-round lease.",
+  "One 3PL client of ours picked up a new account and needed a second site fast. Skipping the lease build-out saved them roughly 75% of the upfront capital a traditional space would have required.",
+  "One client compared a 10,000 SF traditional lease at about $160,000 a year to Cubework's all-inclusive rate at $125,000. That's $35,000 saved a year, or $175,000 over five years, once NNN, CAM, and build-out costs were counted."
+];
+function fuRandomCaseStudy(){
+  return FU_CASE_STUDIES[Math.floor(Math.random() * FU_CASE_STUDIES.length)];
+}
+const FOLLOWUP_VALUE = { label: 'Random value', build: l => ({ subject: `One thing worth knowing`,
+  body: `${fuHi(l)}\n\n${fuRandomCaseStudy()}\n\nFeel free to call or text me anytime if you want to learn more about how Cubework could help with your plans.${FU_SIGN}` }) };
+// Light, low-pressure bump — added 2026-07-20 alongside the queue's explicit
+// template-picker buttons (see pickFollowupTpl below). Distinct from the
+// stage-specific first message and from Break-up: no value props, no ask
+// beyond "any update", meant for a quiet nudge partway through the cadence.
+const FOLLOWUP_NUDGE = { label: 'Nudge', build: l => ({ subject: `Quick nudge`,
+  body: `${fuHi(l)}\n\nWondering if anything's changed on your end since we last talked. Feel free to call or text me with any questions or concerns.${FU_SIGN}` }) };
 const FOLLOWUP_BREAKUP = { label: 'Break-up', build: l => ({ subject: `One last note`,
   body: `${fuHi(l)}\n\nDidn't want to stop reaching out without one more check in. If your plans ever call for space, ours is flexible: no long commitment required, and we can move you in within a day or two.\n\nFeel free to reach out whenever the timing's right, whether that's now or down the road.${FU_SIGN}` }) };
 
 function followupMsgsFor(lead){
   const base = FOLLOWUP_BY_STAGE[lead.stage || 'cold'] || FOLLOWUP_BY_STAGE.cold;
-  return base.concat([FOLLOWUP_VALUE, FOLLOWUP_BREAKUP]);
+  return base.concat([FOLLOWUP_NUDGE, FOLLOWUP_VALUE, FOLLOWUP_BREAKUP]);
 }
 function followupMsgFor(lead) {
   const list = followupMsgsFor(lead);
@@ -3084,9 +3106,23 @@ function renderFuqCard() {
   const matchLine = (!isFU && draft.match)
     ? `<div style="font-size:12px;color:var(--text2);margin-bottom:8px;">${esc(draft.match.property)} · ${esc(draft.match.unit)} · ${draft.match.sf} sf${draft.extra ? ` (+${draft.extra} more)` : ''}<br>${esc(availExpSyncLabel(draft.match.synced_at))}</div>`
     : '';
+  // Explicit template picker (added 2026-07-20) — only meaningful for the
+  // generic multi-template system, so it's hidden once a lead already has a
+  // real cached Claude draft (lead.followup_draft), which is a single message,
+  // not a set to switch between. Reuses followupMsgsFor/followupTplIdx, the
+  // same state the per-card ↻ cycle button on the Leads tab already uses.
+  const hasClaudeDraft = !!(lead.followup_draft && lead.followup_draft.body);
+  const tplPicker = (isFU && !hasClaudeDraft) ? (() => {
+    const list = followupMsgsFor(lead);
+    const curIdx = (followupTplIdx.get(lead.id) || 0) % list.length;
+    const btns = list.map((t, i) => `<button onclick="pickFollowupTpl('${lead.id}',${i},event)"
+        style="font-size:11px;border:1px solid ${i === curIdx ? 'var(--text)' : 'var(--border)'};background:${i === curIdx ? 'var(--text)' : 'var(--surface)'};color:${i === curIdx ? 'var(--bg)' : 'var(--text)'};border-radius:8px;padding:4px 10px;cursor:pointer;">${esc(t.label)}</button>`).join('');
+    return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">${btns}</div>`;
+  })() : '';
   document.getElementById('fuq-body').innerHTML = `
     ${matchLine}
     ${renderFuqStory(lead)}
+    ${tplPicker}
     <div class="field"><label>Subject</label><div style="padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;">${esc(draft.subject || '')}</div></div>
     <div class="field"><label>Body</label><div style="padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;white-space:pre-wrap;max-height:220px;overflow-y:auto;">${esc(draft.body || '')}</div></div>
   `;
@@ -3932,6 +3968,18 @@ function cycleFollowupTpl(leadId, e) {
   if (e) e.stopPropagation();
   followupTplIdx.set(leadId, (followupTplIdx.get(leadId) || 0) + 1);
   renderLeadsSection();
+}
+
+// Explicit template picker (added 2026-07-20 for the daily follow-up queue) —
+// jumps straight to a named template (Nudge/Value-add/Break-up/the stage one)
+// instead of blind-cycling. Writes to the SAME followupTplIdx map the per-card
+// ↻ cycle button uses, so whichever one you pick here is also what Send/Snooze
+// downstream (openFollowupEmail/snoozeFollowup, which both call followupMsgFor
+// again) actually uses — no separate state to keep in sync.
+function pickFollowupTpl(leadId, idx, e) {
+  if (e) e.stopPropagation();
+  followupTplIdx.set(leadId, idx);
+  renderFuqCard();
 }
 
 function openFollowupEmail(leadId, e) {
@@ -7283,6 +7331,7 @@ window.syncRosterNow       = syncRosterNow;
 window.onPlaybookSearch    = onPlaybookSearch;
 window.togglePbCard        = togglePbCard;
 window.cycleFollowupTpl    = cycleFollowupTpl;
+window.pickFollowupTpl     = pickFollowupTpl;
 window.openFollowupEmail   = openFollowupEmail;
 window.copyFollowupMsg     = copyFollowupMsg;
 window.snoozeFollowup      = snoozeFollowup;

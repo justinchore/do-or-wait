@@ -921,4 +921,38 @@ Justin reported the Leads daily follow-up queue (2026-07-10 above) was still quo
 
 **To deploy:** just `git push` the updated `index.html` — no Firebase console step needed (no `firestore.rules` change this time, since the catch-all already covers it). First time any staff account opens the tab after that, the 9 seed links populate automatically.
 
+---
+
+## 2026-07-20 (cont. #2) — Explicit template picker in the daily follow-up queue, new "Nudge" template
+
+Justin asked for named "Breakup"/"Nudge" buttons on the follow-ups. Turned out the per-lead-card follow-up block already has a template system (`followupMsgsFor`/`followupTplIdx`, cycled one at a time via the "↻ {label}" button — see 2026-06-10 session) — he just hadn't noticed it, and separately wanted the same picking ability inside the **daily follow-up queue modal** (2026-07-10 session), which had no way to switch templates at all before sending.
+
+**New `FOLLOWUP_NUDGE` template** — a standalone-message option (`followupMsgsFor` now returns `base.concat([FOLLOWUP_NUDGE, FOLLOWUP_VALUE, FOLLOWUP_BREAKUP])`), a light, low-pressure bump distinct from the stage-specific first message and from Break-up: no value props, no ask beyond "any update since last time."
+
+**Explicit picker in the queue (`renderFuqCard`, `index.html`).** Added `pickFollowupTpl(leadId, idx, e)` — writes directly to the SAME `followupTplIdx` map the per-card "↻ cycle" button already uses, then re-renders just the queue card (`renderFuqCard()`, not the whole Leads tab). Because `openFollowupEmail`/`snoozeFollowup` both call `followupMsgFor(lead)` again when you actually act on a queue item, whichever template you pick in the queue is exactly what gets sent/snoozed — no separate state to keep in sync. The queue card now shows a row of named buttons (one per template: the stage-specific one, Nudge, Value-add, Break-up), current selection highlighted, right above the Subject/Body preview. **Only shown for `kind==='followup'` items that do NOT already have a cached Claude draft** (`lead.followup_draft`) — a cached draft is a single message from workflow 17, not a set of templates to switch between, so the picker would be meaningless there.
+
+**Not yet done:** Justin flagged general dissatisfaction with the wording on "each one" of the existing templates (cold/contacted/toured/proposal/value-add) but didn't specify which — parking that until he reviews them through the new picker and gives specific feedback per template, same iterative pattern used to land the Break-up copy earlier this session.
+
+**To deploy:** pure app-side change. `git push` the updated `index.html`.
+
+**Changed files:** `index.html` (`FOLLOWUP_NUDGE`, `followupMsgsFor`, `pickFollowupTpl`, `renderFuqCard`).
+
+**Follow-up, same session: Nudge body workshopped through a few rounds, same live-copy-review pattern as Break-up.** First draft ("Just wanted to bump this back up...") was rejected outright. Iterated on a "just checking in" substitute without using that banned phrase or the word "reply" (which read awkward paired with "no need to"). Landed on: "Wondering if anything's changed on your end since we last talked. Feel free to call or text me with any questions or concerns." — honest, low pressure, gives an easy channel (phone) instead of just an email reply. `FOLLOWUP_NUDGE` in `index.html` now uses this body verbatim (subject unchanged, "Quick nudge").
+
+**To deploy:** `git push` the updated `index.html`.
+
+**Follow-up, same session: "Value-add" replaced with "Random value".** Justin's ask, once he had Breakup and Nudge in place: a third option, "random value", instead of the old `FOLLOWUP_VALUE` template that bulleted all 4 value props (all-inclusive pricing, month-to-month flex, fast move-in, segment hook) in one message. Confirmed he meant a full replacement, not a 4th addition. New `fuRandomValueLine(l)` picks ONE of those 4 at random every time the template is built (re-rolls on each render/regenerate, not fixed per lead) and the body features just that single line instead of a bulleted list, so repeated touches over time surface a different angle rather than repeating the same full dump. `FOLLOWUP_VALUE` constant name kept as-is (only referenced by `followupMsgsFor`), but its label is now "Random value" and subject is "One thing worth knowing".
+
+**To deploy:** `git push` the updated `index.html`.
+
+**Follow-up, same session: Random value replaced again, with real anonymized case studies + concrete numbers.** Justin's reaction to the single-value-prop line: "too short, doesn't really give the person any information." He asked for short case-study style stories instead ("Company A had overflow blah blah"), then wanted them to feature real numbers since "business people like numbers." Confirmed all four scenarios below have actually happened with real Cubework clients (not hypothetical), so they're grounded in the Sales Playbook's own published figures rather than invented stats: 60x faster move-in (2-day vs 3-6 month), ~75% less upfront capital, ~20-30% lower all-in TCO, and the playbook's own 10,000 SF TCO example ($160k vs $125k/yr, $175k over 5 years). Also discussed and dropped the initial "Company A/B/C/D" labeling as reading too generic/invented-sounding for real customer stories — landed on natural anonymized phrasing instead ("one of our clients," "a growing ecommerce brand we work with," etc.). Each case study ends with a direct invitation to reach Justin ("Feel free to call or text me anytime..."), since the point of resurfacing value later in a cadence is inviting an actual conversation, not just a stat drop.
+
+New `FU_CASE_STUDIES` array (4 entries, one per pain point: speed/overflow, ecommerce flexibility+cost, 3PL upfront capital, TCO comparison) + `fuRandomCaseStudy()` picks one at random per build, replacing the short-lived `fuRandomValueLine`/single-value-prop version from earlier this session. `fuCap()` (only used by the old value-prop version) was removed as dead code, per this project's usual cleanup convention.
+
+**To deploy:** `git push` the updated `index.html`.
+
+**Follow-up, same session: closing line on the Random value template tightened.** Justin workshopped the CTA closing "Feel free to call or text me anytime if you want to learn more about how this could work for you" — landed on "...how Cubework could help with your plans" instead, a small wording tweak (help vs. work for you, tied to "your plans" specifically).
+
+**To deploy:** `git push` the updated `index.html`.
+
 **Changed files:** `index.html` (new 🔗 Links tab, `sharepoint_links` listener/seed/render/CRUD).
