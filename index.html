@@ -855,6 +855,12 @@
   <!-- Leads view -->
   <div id="leads-view" style="display:none">
 
+    <!-- Search bar -->
+    <div class="lead-filter" style="padding-top:12px;">
+      <input id="lead-search" type="text" placeholder="🔍  Search by company, contact, email, or phone…" value="" oninput="onLeadSearch(this.value)"
+        style="flex:1;min-width:200px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;font-size:14px;outline:none;background:var(--surface);color:var(--text);box-sizing:border-box;" />
+    </div>
+
     <!-- Stage filter -->
     <div class="lead-filter">
       <button class="lf-btn active" data-stage="all"       onclick="setLeadFilter('all')">All</button>
@@ -2519,6 +2525,7 @@ let leads = [];
 let unsubLeads = null;
 let editLeadId   = null;
 let leadFilter   = 'all';
+let leadSearch   = '';
 let showWonLost  = false;
 let hideWaitlist = false;
 // Flat-list sort (replaced the Do/Wait 2-column board 2026-07-14). 'attention' = due-first,
@@ -2758,15 +2765,28 @@ unsubLeads = liveSnapshot(collection(db, 'leads'), snap => {
 });
 
 // ── Lead renders ──────────────────────────────────────────────
+function leadMatchesSearch(l, q) {
+  if (!q) return true;
+  const hay = [l.company, l.first_name, l.contact, l.email, l.phone, l.location, l.unit]
+    .filter(Boolean).join(' ').toLowerCase();
+  return hay.includes(q);
+}
+
 function renderLeadsSection() {
   const closed  = ['won','lost'];
   const active  = leads.filter(l => !l.archived && !closed.includes(l.stage || 'cold'));
-  const wonlost = leads.filter(l => l.archived || closed.includes(l.stage || 'cold'));
+  let wonlost = leads.filter(l => l.archived || closed.includes(l.stage || 'cold'));
   let filtered = leadFilter === 'all' ? active
     : leadFilter === 'waitlist' ? active.filter(l => l.wl_on)
     : leadFilter === 'followup' ? active.filter(isFollowupDue)
     : active.filter(l => (l.stage||'cold') === leadFilter);
   if (hideWaitlist && leadFilter !== 'waitlist') filtered = filtered.filter(l => !l.wl_on);
+
+  const searchQ = leadSearch.trim().toLowerCase();
+  if (searchQ) {
+    filtered = filtered.filter(l => leadMatchesSearch(l, searchQ));
+    wonlost  = wonlost.filter(l => leadMatchesSearch(l, searchQ));
+  }
 
   const newL = filtered.filter(l => !l.entries.length);
   const sortFn = leadSort === 'recent' ? leadRecentSort
@@ -4265,6 +4285,11 @@ function toggleLeadCard(id) {
 
 function setLeadFilter(stage) {
   leadFilter = stage;
+  renderLeadsSection();
+}
+
+function onLeadSearch(v) {
+  leadSearch = v;
   renderLeadsSection();
 }
 
@@ -7731,6 +7756,7 @@ window.leadDragLeave       = leadDragLeave;
 window.leadDrop            = leadDrop;
 window.startTouchDrag      = startTouchDrag;
 window.setLeadFilter       = setLeadFilter;
+window.onLeadSearch        = onLeadSearch;
 window.setLeadSort         = setLeadSort;
 window.toggleHideWaitlist  = toggleHideWaitlist;
 window.toggleWonLost       = toggleWonLost;

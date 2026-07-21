@@ -1,35 +1,26 @@
-# Firestore security — what's exposed and how to fix it
+# Firestore security — current state (updated 2026-07-21; superseded the original 2026-06 proposal below)
 
-## The short version
-- The `AIzaSy…` value in `index.html` (`firebaseConfig.apiKey`) and `firestore-mcp/server.js` is a **Firebase Web API key**. It is **not a secret** — Firebase ships it in the browser by design. It identifies the project; it does not grant data access.
-- The real exposure is that **Firestore runs on open rules** (anyone can read/write) and **the repo is public**, so the project is trivially discoverable. The API key is irrelevant to that — the open rules are the hole.
-- This matters more now because we're about to load **real prospect names + emails** (the `outreach` collection) into that open database.
+## Status: DONE, locked down since 2026-06-24
+This file originally proposed a fix for open Firestore rules + no app auth. That fix has been implemented (differently in one respect — see below) and has been live for almost a month. The sections under "Historical: original proposal" are kept for context only; do not treat them as a to-do list.
 
-## The fix (two steps, in order)
+## What's actually in place today
+- **Firestore rules are locked** (`firestore.rules`, published in Firebase console 2026-06-24): read/write only for a signed-in user whose email is on the `ALLOWED_EMAILS` allowlist (`isAllowed()`), plus a narrower `isAnyAllowed()` read-only carve-out for `availability`, `config/properties`, `renewals/current`, and `roster/current` so the Avail-only restricted role (Lucy, added 2026-07-07) can read those without full access. Everything else falls under the catch-all `match /{document=**}` block, `isAllowed()`-only.
+- **App auth is email/password, not Google.** The original proposal below called for a Google sign-in gate; that was tried and reversed because the OAuth redirect between github.io and firebaseapp.com breaks on mobile (storage partitioning). The shipped fix is Firebase **email/password** sign-in restricted to `ALLOWED_EMAILS` — see `CLAUDE.md`'s "App auth — email/password gate" section (2026-06-24) for the full story.
+- **Listeners are deferred until auth, not attached at load.** `liveSnapshot()` wraps every `onSnapshot` call and queues it; `startLiveData()` flushes the queue on first valid sign-in — so nothing hits Firestore before a user is authenticated (which would 403 under the locked rules).
+- **Raw REST writes carry the ID token.** `savePA()`/`saveOwnership()` (and the newer Future Plan / Ownership REST PATCH calls) send `Authorization: Bearer <idToken>` via an `authToken()` helper.
+- **n8n workflows are unaffected** — they authenticate with a Google service-account credential (`Firebase_SDK_do_or_wait`, datastore scope), which is admin and bypasses security rules entirely. This required updating any n8n Firestore HTTP node that had previously called the REST API unauthenticated (`authentication: none`) to use the service-account credential instead — done as part of the 2026-06-24 lockdown.
+- **The Firebase Web API key** (`AIzaSy…` in `index.html`/`firestore-mcp/server.js`) is not a secret and was never the real exposure — it identifies the project, it doesn't grant data access. No rotation needed.
 
-### Step 1 — give the app a sign-in (required first)
-The app currently makes every Firestore call with **no authenticated user**. Tightening the rules without adding auth would lock the live app out. So first add a lightweight **Google sign-in gate** (restricted to `@cubework.com`). This is an `index.html` change — happy to implement it on request. It involves:
-- importing `firebase-auth`, showing the (already-styled) `.auth-card` sign-in screen,
-- signing in **before** the Firestore listeners attach,
-- sending the user's ID token on the two raw REST writes (see flags below).
+## If this ever needs revisiting
+- Adding a new top-level Firestore collection: check whether it should fall under the full-access catch-all (most collections do) or needs its own `isAnyAllowed()`-read carve-out (only needed if Lucy's Avail-only role should be able to see it — see `roster/current` for the precedent).
+- Adding a new restricted role (beyond Lucy): follow the `AVAIL_ONLY_EMAILS`/`isAvailOnly()` pattern documented in `CLAUDE.md`'s 2026-07-07 (cont.) session — it requires changes in both `index.html` (UI gating) and `firestore.rules` (real enforcement); a UI-only restriction is cosmetic and doesn't actually stop a signed-in user from hitting Firestore directly.
 
-### Step 2 — deploy the rules
-Once sign-in is live, paste `firestore.rules` (the RECOMMENDED block) into **Firebase console → Firestore Database → Rules → Publish**. n8n keeps working throughout — its service account bypasses rules.
+---
 
-If you want a same-day stopgap before the app work is done, deploy the **INTERIM** block (any signed-in user) together with **Anonymous Auth** — weak, but it closes the "no token needed at all" door.
+## Historical: original proposal (2026-06, before the 2026-06-24 lockdown — kept for context, no longer actionable)
 
-## Places in the app that assume no-auth (must be handled in Step 1)
+At the time this was written, Firestore ran on fully open rules (anyone could read/write) with no app-side auth at all, and the plan below was to add a Google sign-in gate + publish locked rules before loading real prospect PII (the `outreach` collection) into the database. The Google sign-in part of the plan was superseded by email/password (see above); the rules-locking part shipped as originally proposed.
 
-1. **Listeners start at load with no user** — `index.html` ~line 1224, comment *"FIRESTORE LISTENER (starts immediately, no auth needed)"*, plus every `onSnapshot(collection(db, …))` for `topics`, `leads`, `availability`, `notes`, `pricing`, `renewals`, and the new `outreach`. Under tightened rules these throw `permission-denied` unless a user is signed in first. → Attach listeners only after sign-in.
-2. **Raw REST PATCH writes with no token** — `savePA()` (~line 3879) and `saveOwnership()` (~line 3915) call the Firestore REST API directly with no `Authorization` header. These will be denied. → Add `Authorization: Bearer <idToken>` to those fetches, or convert them to SDK `setDoc(..., {merge:true})`.
-3. **SDK writes** — `persistItem()` (`setDoc`), `saveTopic`, `deleteDoc`, note/lead saves, and the Claude helper functions (`claudeLogLeadUpdate`, `claudeAddTask`, …) all run as the current user. These work fine once a user is signed in — no code change beyond having auth.
-
-## What does NOT need changing
-- **n8n workflows** (availability, pricing, renewals, follow-up scanner, Apollo ingestion, resolve-thread): all use the Google **service account**, which is admin and **ignores security rules**. They keep reading/writing normally.
-- The Firebase API key: no need to rotate — it isn't what's exposing data. (You *can* add API-key referrer/app restrictions in Google Cloud console as defense-in-depth, but it's optional.)
-
-## Recommended order of operations
-1. (Optional, today) Interim rules + Anonymous Auth as a stopgap.
-2. Implement the Google sign-in gate in `index.html` (ask me).
-3. Publish the RECOMMENDED rules.
-4. Then run the Apollo pull at volume into the now-protected `outreach` collection.
+- The real exposure was that Firestore ran on open rules and the repo is public, making the project trivially discoverable — the API key was never the issue.
+- The recommended order of operations was: (1) optional interim rules + Anonymous Auth stopgap, (2) implement a sign-in gate, (3) publish locked rules, (4) then run prospect data imports at volume.
+- Places in the app that assumed no-auth and needed handling: listeners starting at load with no user, raw REST PATCH writes with no token (`savePA`/`saveOwnership`), and SDK writes via `persistItem()`/`setDoc` (which "just work" once a user is signed in). All three were addressed as described in the "What's actually in place today" section above.
