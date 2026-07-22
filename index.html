@@ -7383,10 +7383,11 @@ function openNPModal(id){
   const discoveredIso = r.discovered_at || r.last_seen_at || null;
   const discoveredLbl = discoveredIso && !isNaN(new Date(discoveredIso).getTime())
     ? new Date(discoveredIso).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '';
-  const contactBlock = (r.contact_name || r.contact_email || r.contact_linkedin)
+  const contactBlock = (r.contact_name || r.contact_email || r.contact_linkedin || r.contact_phone)
     ? `<div style="font-size:13px;">
         ${r.contact_name?`<div><b>${esc(r.contact_name)}</b>${r.contact_title?' — '+esc(r.contact_title):''}</div>`:''}
         ${r.contact_email?`<div style="margin-top:2px;"><a href="mailto:${esc(r.contact_email)}" style="color:#0969da;text-decoration:none;">✉️ ${esc(r.contact_email)}</a></div>`:''}
+        ${r.contact_phone?`<div style="margin-top:2px;"><a href="tel:${esc((r.contact_phone||'').replace(/[^0-9+]/g,''))}" style="color:#0969da;text-decoration:none;">📱 ${esc(r.contact_phone)}${!r.contact_email?' (direct — no email on file)':''}</a></div>`:''}
         ${r.contact_linkedin?`<div style="margin-top:2px;"><a href="${esc(r.contact_linkedin)}" target="_blank" rel="noopener" style="color:#0969da;text-decoration:none;">🔗 LinkedIn</a></div>`:''}
       </div>`
     : `<div style="font-size:13px;color:var(--text2);">No named contact found — try the main line.</div>`;
@@ -7487,7 +7488,7 @@ async function promoteNPToLead(id, e){
   const summary = `Promoted from Nearby Prospects (CoreClaw discovery, ${npLocationName(r.location)}, category: ${r.search_category?npCategoryLabel(r.search_category):'—'}).${contactBits?' Contact: '+contactBits+'.':''}${r.notes?' '+r.notes:''}`;
   const lead = {
     id: leadId, archived: false, createdAt: new Date().toISOString(), seq_status: 'active',
-    company: r.name||'', contact: r.contact_name||null, email: r.contact_email||null, phone: r.phone||null,
+    company: r.name||'', contact: r.contact_name||null, email: r.contact_email||null, phone: r.phone||r.contact_phone||null,
     location: r.location||null, stage: 'cold',
     entries: [{ id:'e'+Date.now(), type:'wait', text: summary, done:false, notes:[], createdAt:new Date().toISOString(), kind:'note', dir:'out' }]
   };

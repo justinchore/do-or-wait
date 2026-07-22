@@ -2,15 +2,23 @@
 // Companion to 25_site_outreach_discovery.json — copy each block into the
 // matching node's "JavaScript Code" field.
 //
-// ⚠ UNVERIFIED FIELD NAMES. This whole workflow was built from CoreClaw's
-// (coreclaw.com) prose documentation, fetched live in June 2026 — no CoreClaw
-// account existed at build time, so none of this was checked against a real
-// /api/scraper schema response or a real result record (the same rigor the
-// Rate Bands/Roster parsers got via a real usedRange() fixture before shipping
-// was NOT possible here). Every place a field name is a best guess is called
-// out below with "UNVERIFIED" — check these against the real n8n execution
-// log the first time this workflow actually runs, and hardcode the corrected
-// names once confirmed.
+// ✅ VERIFIED 2026-07-21 against Justin's real CoreClaw account — see
+// CLAUDE.md's 2026-07-21 (cont.) session for the full test log. Every field
+// name below was confirmed by a real /api/scraper schema pull plus two real
+// scraper runs (one with an empty leads_enrichment result, one with populated
+// contacts), not guessed from prose docs. Real bugs this found and fixed vs.
+// the original build: `keywords` (plural, array of {keyword} objects — not a
+// string), `max_results` (REQUIRED by the Worker, was missing entirely
+// before), `max_leads_per_place` (an integer count, not a boolean toggle —
+// "business leads enrichment" has no dedicated on/off flag), the Get Results
+// Page response shape (rows live at `data.list`, not `data` or `data.items`),
+// no `cid` field exists at all (real identifiers are `place_id`/`data_id`),
+// coordinates are nested under `location:{lat,lng}` not top-level fields, and
+// `leads_enrichment` is an array of contact objects (`full_name`/`job_title`/
+// `email`/`linkedin_profile`/`mobile_number`/company_* fields), not flat
+// `lead_*` fields on the row. The substring-matching fallback is kept as a
+// hedge against CoreClaw renaming a param on a future Worker version, but the
+// confirmed exact name is tried first everywhere.
 // ─────────────────────────────────────────────────────────────────────────
 
 // ===== NODE "Parse request" ================================================
@@ -41,33 +49,33 @@ return [{ json: { propId, address, base_location, categories } }];
 
 
 // ===== NODE "Match schema fields" ==========================================
-// UNVERIFIED against a real response. Golden rule from CoreClaw's own docs:
-// never hardcode a Worker's parameter names/version — read data.version and
-// data.parameters.custom.properties (array of {name,type,title,required,
-// default?}) and match candidate fields by substring rather than assuming
-// exact keys like keyword/base_location/business_leads_enrichment (those are
-// a best guess from the prose docs, not confirmed JSON keys).
+// Confirmed real names tried first; substring match is only a hedge against
+// a future Worker version renaming a param — see header note above.
 const schema = $json.data || {};
 const version = schema.version;
 const props = (schema.parameters && schema.parameters.custom && schema.parameters.custom.properties) || [];
 
-function findProp(substrings) {
+function findProp(exactName, substrings) {
+  if (props.some(p => p.name === exactName)) return exactName;
   const hit = props.find(p => substrings.some(s => String(p.name||'').toLowerCase().includes(s) || String(p.title||'').toLowerCase().includes(s)));
   return hit ? hit.name : null;
 }
-const keywordProp  = findProp(['keyword', 'query', 'search_term', 'search term', 'term']);
-const locationProp = findProp(['base_location', 'location', 'city', 'area']);
-const enrichProp   = findProp(['business_leads_enrichment', 'leads_enrichment', 'enrichment', 'business leads']);
+const keywordProp    = findProp('keywords', ['keyword', 'query', 'search_term', 'search term', 'term']);
+const locationProp   = findProp('base_location', ['base_location', 'location', 'city', 'area']);
+const maxResultsProp = findProp('max_results', ['max_results', 'number of places', 'results']);
+const leadsCountProp = findProp('max_leads_per_place', ['leads_per_place', 'max_leads', 'leads count', 'business leads']);
+const seniorityProp  = findProp('leads_seniority', ['seniority']);
 
 const warnings = [];
-if (!keywordProp)  warnings.push('Could not confidently match a keyword/search-term parameter — check data.parameters.custom.properties in this node\'s input and hardcode the real name.');
-if (!locationProp) warnings.push('Could not confidently match a base_location/location parameter — same fix as above.');
-if (!enrichProp)   warnings.push('Could not confidently match the business-leads-enrichment toggle parameter — enrichment (named contact/email/phone/LinkedIn) may silently not be requested. Check the schema and hardcode the real name.');
+if (!keywordProp)    warnings.push('Could not match the keywords parameter — check data.parameters.custom.properties and hardcode the real name.');
+if (!locationProp)   warnings.push('Could not match the base_location parameter — same fix as above.');
+if (!maxResultsProp) warnings.push('Could not match the max_results parameter (REQUIRED by the Worker) — a run will 4000 without it.');
+if (!leadsCountProp) warnings.push('Could not match the max_leads_per_place parameter — business leads enrichment (named contact/email/phone/LinkedIn) may silently not be requested.');
 if (warnings.length) console.warn('[Site Outreach Discovery] Parameter match warnings:', warnings.join(' | '));
 
 const req = $('Parse request').first().json;
 // Build the default "system" params object as-is from the schema's own defaults
-// (untouched — this workflow only overrides the 3 fields it actually needs).
+// (untouched — this workflow only overrides the 4 fields it actually needs).
 const systemDefaults = {};
 ((schema.parameters && schema.parameters.system && schema.parameters.system.properties) || []).forEach(p => {
   if (p.default !== undefined) systemDefaults[p.name] = p.default;
@@ -76,7 +84,7 @@ const systemDefaults = {};
 return [{ json: {
   ...req,
   scraper_version: version,
-  keywordProp, locationProp, enrichProp, systemDefaults,
+  keywordProp, locationProp, maxResultsProp, leadsCountProp, seniorityProp, systemDefaults,
   warnings,
   categoryIndex: 0
 } }];
@@ -94,16 +102,22 @@ return (ctx.categories || []).map(cat => ({ json: { ...ctx, category: cat } }));
 
 // ===== NODE "Build custom params" ==========================================
 // Build input.parameters.custom from the LIVE schema field names matched
-// earlier — never hardcode. Falls back to the best-guess key (keyword /
-// base_location / business_leads_enrichment) ONLY if the earlier substring
-// match failed to find anything at all, so a run still attempts something
-// useful rather than hard-failing — but the earlier warning already flagged
-// this case for a human to go fix.
+// earlier. keywords is an array of {keyword} objects (confirmed 2026-07-21),
+// NOT a plain string. max_results is REQUIRED by the Worker — 20 per category
+// keeps a full 9-category property run under ~25 cents at CoreClaw's
+// $1.20/1,000-successful-results pricing. max_leads_per_place defaults to 2
+// (the real "business leads enrichment" control — no separate boolean).
+// leads_seniority biases toward decision-makers (owner/c_suite/vp/director/
+// manager) since a random staff contact is less useful for cold outreach than
+// someone who can actually say yes — tune or drop this list if it narrows
+// results too much for a given category.
 const j = $json;
 const custom = {};
-custom[j.keywordProp || 'keyword'] = j.category;
+custom[j.keywordProp || 'keywords'] = [{ keyword: j.category }];
 custom[j.locationProp || 'base_location'] = j.base_location;
-custom[j.enrichProp || 'business_leads_enrichment'] = true;
+custom[j.maxResultsProp || 'max_results'] = 20;
+custom[j.leadsCountProp || 'max_leads_per_place'] = 2;
+if (j.seniorityProp) custom[j.seniorityProp] = ['owner', 'c_suite', 'vp', 'director', 'manager'];
 
 const input = { parameters: { system: j.systemDefaults || {}, custom } };
 return [{ json: { ...j, coreclawInput: input } }];
@@ -138,9 +152,9 @@ return [{ json: { ...prev, pollAttempts: attempts, runStatus: status, pollDone: 
 
 // ===== NODE "Prep result paging" ===========================================
 // Paginated results. Page size 100; loop pages if the response signals more
-// (UNVERIFIED pagination field names — check the real response shape on
-// first run and fix has_more/total/page_index if they differ). page_index
-// tracked on the item so repeated calls advance.
+// (real pagination fields confirmed 2026-07-21 — see "Tag + accumulate
+// results" below, which reads data.count/data.page_size). page_index tracked
+// on the item so repeated calls advance.
 const prev = $json;
 if (prev.runFailed) return [{ json: { ...prev, resultsDone: true, pageIndex: 0 } }];
 return [{ json: { ...prev, pageIndex: prev.pageIndex || 0 } }];
@@ -148,24 +162,34 @@ return [{ json: { ...prev, pageIndex: prev.pageIndex || 0 } }];
 
 // ===== NODE "Tag + accumulate results" =====================================
 // Tags each result row with the search_category that surfaced it, extracts
-// the fields we care about (base record shape confirmed from CoreClaw docs;
-// leads-enrichment lead_* keys are UNVERIFIED — see header above), and appends
-// to the shared static-data accumulator. Also decides whether another page
-// needs fetching (UNVERIFIED pagination field names, see previous node).
+// the fields we care about, and appends to the shared static-data
+// accumulator. Response shape + field names confirmed 2026-07-21 against two
+// real CoreClaw runs — rows live at data.list (NOT data or data.items as
+// originally guessed), and the real total-count field is data.count.
 const prev = $('Prep result paging').first().json;
 const res = $json;
-const rowsIn = (res && res.data && Array.isArray(res.data)) ? res.data
-            : (res && Array.isArray(res.data && res.data.items)) ? res.data.items
-            : [];
+const rowsIn = (res && res.data && Array.isArray(res.data.list)) ? res.data.list : [];
+const totalCount = (res && res.data && typeof res.data.count === 'number') ? res.data.count : null;
+const pageSize = (res && res.data && typeof res.data.page_size === 'number') ? res.data.page_size : 100;
 const ws = $getWorkflowStaticData('global');
 ws.rows = ws.rows || [];
 
-function pick(row, keys) { for (const k of keys) { if (row[k] !== undefined && row[k] !== null && row[k] !== '') return row[k]; } return null; }
+// leads_enrichment is an array of contact objects (full_name/job_title/email/
+// linkedin_profile/mobile_number, plus company_* fields) — confirmed
+// 2026-07-21 against a real populated result. email is frequently null even
+// when a real contact was found (LinkedIn-sourced, not always email-verified)
+// — prefer a contact that has an email, else fall back to the first
+// available contact so a phone-only lead isn't dropped.
+function pickContact(leads) {
+  if (!Array.isArray(leads) || !leads.length) return null;
+  return leads.find(l => l && l.email) || leads[0];
+}
 
 for (const row of rowsIn) {
+  const contact = pickContact(row.leads_enrichment);
   ws.rows.push({
-    place_cid: row.cid || row.data_id || null,
-    name: row.title || row.name || '',
+    place_cid: row.place_id || row.data_id || null,
+    name: row.title || '',
     address: row.address || '',
     city: row.city || '',
     state: row.state || '',
@@ -173,25 +197,22 @@ for (const row of rowsIn) {
     phone: row.phone || '',
     search_category: prev.category,
     google_category: row.primary_category || '',
-    all_categories: row.all_categories || null,
-    latitude: row.latitude != null ? row.latitude : null,
-    longitude: row.longitude != null ? row.longitude : null,
+    all_categories: Array.isArray(row.all_categories) ? row.all_categories : (row.all_categories ? [row.all_categories] : null),
+    latitude: (row.location && row.location.lat != null) ? row.location.lat : null,
+    longitude: (row.location && row.location.lng != null) ? row.location.lng : null,
     rating: row.review_rating != null ? row.review_rating : null,
     review_count: row.review_count != null ? row.review_count : null,
-    // Leads-enrichment fields — key names are a best guess (lead_name /
-    // lead_title / lead_email / lead_linkedin_url), UNVERIFIED. Check a real
-    // enriched result record and fix these picks on first run.
-    contact_name: pick(row, ['lead_name', 'contact_name', 'person_name']),
-    contact_title: pick(row, ['lead_title', 'contact_title', 'job_title']),
-    contact_email: pick(row, ['lead_email', 'contact_email', 'email']),
-    contact_linkedin: pick(row, ['lead_linkedin_url', 'lead_linkedin', 'contact_linkedin', 'linkedin_url'])
+    contact_name: contact ? (contact.full_name || null) : null,
+    contact_title: contact ? (contact.job_title || contact.headline || null) : null,
+    contact_email: contact ? (contact.email || null) : null,
+    contact_linkedin: contact ? (contact.linkedin_profile || null) : null,
+    contact_phone: contact ? (contact.mobile_number || null) : null
   });
 }
 
-// UNVERIFIED: guess at a has_more/total signal; if absent, assume one page
-// was enough (page_size 100 comfortably covers typical category volume) and
-// stop rather than loop forever.
-const hasMore = !!(res && res.data && (res.data.has_more === true || (typeof res.data.total === 'number' && (prev.pageIndex+1)*100 < res.data.total)));
+// hasMore now uses the real data.count field (confirmed 2026-07-21) instead
+// of the originally guessed has_more/total keys, which don't exist.
+const hasMore = totalCount != null && (prev.pageIndex + 1) * pageSize < totalCount;
 return [{ json: { ...prev, resultsDone: !hasMore, pageIndex: (prev.pageIndex||0) + 1, resultCount: rowsIn.length } }];
 
 
@@ -250,6 +271,7 @@ const items = (j.rows || []).map(r => ({
     contact_title: r.contact_title,
     contact_email: r.contact_email,
     contact_linkedin: r.contact_linkedin,
+    contact_phone: r.contact_phone,
     last_seen_at: nowIso
   }
 }));
