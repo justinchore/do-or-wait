@@ -4537,6 +4537,7 @@ const ROSTER_SYNC_WEBHOOK = `${PROXY}/webhook/roster-sync`; // manual "Sync now"
 const ASSISTANT_CHAT_WEBHOOK = `${PROXY}/webhook/assistant-chat`; // 🤖 Assistant tab: {messages} → Claude (native MCP connector against the do-or-wait Cloud Run server) → {ok,reply,toolsUsed} (n8n workflow 24)
 const OUTREACH_REPLY_SCAN_WEBHOOK = `${PROXY}/webhook/outreach-reply-scan`; // manual "⟳ Check now" on Outreach + Prop Outreach — runs the next reply scan immediately (n8n workflow 23)
 const SITE_OUTREACH_DISCOVER_WEBHOOK = `${PROXY}/webhook/site-outreach-discover`; // 📍 Nearby Prospects "🔎 Discover" button: {propId,address} → CoreClaw Google Maps scrape per category → site_outreach/{cid} (n8n workflow 25)
+const NP_RESEARCH_WEBHOOK = `${PROXY}/webhook/nearby-prospect-research`; // 📍 Nearby Prospects "🔎 Research & draft" — business name/website/category → Claude web research + 4-hook draft, same engine as Outreach's workflow 13 (n8n workflow 26)
 
 // Listen to ALL availability docs (scales to multiple locations)
 unsubAvail = liveSnapshot(collection(db, 'availability'), snap => {
@@ -7206,6 +7207,7 @@ let npLocation = 'all';
 let npCategory = 'all';
 let npStatus   = 'all';
 let npModalId  = null;
+let npVariant  = {}; // site_outreach id -> selected draft-variant index (mismatch/forced-bet/freedom/commitment), same pattern as outreachVariant
 
 // Which property groups are expanded — same "none open by default" convention
 // as poExpandedProps / expandedAvailProps. Click a property's header to expand.
@@ -7370,6 +7372,67 @@ function renderNearbyProspects(){
   }).join('');
 }
 
+// Same VARLABEL/variant convention as Outreach's modal (see setOutreachVariant/
+// useOutreachVariant/copyOutreachDraft above) — redefined locally per tab rather
+// than shared, matching this project's usual per-tab-map convention.
+const NP_VARLABEL={mismatch:'Mismatch','forced-bet':'Forced bet','forcedbet':'Forced bet',freedom:'Freedom',commitment:'Commitment','default':'Draft'};
+function setNPVariant(id, i, e){ if(e) e.stopPropagation(); npVariant[id]=i; if(npModalId===id) openNPModal(id); }
+async function useNPVariant(id, i, e){
+  if(e) e.stopPropagation();
+  const r = siteOutreachMap[id]; if(!r) return;
+  const vl=Array.isArray(r.email_variants)?r.email_variants.filter(v=>v&&(v.subject||v.body)):[];
+  const v=vl[i]; if(!v) return;
+  npVariant[id]=i;
+  try { await setDoc(doc(db,'site_outreach',id), { email_subject:v.subject||'', email_body:v.body||'' }, { merge:true }); }
+  catch(err){ console.warn('useNPVariant', err); }
+  // the site_outreach listener re-opens the modal on write, so ✓ active state refreshes
+}
+function copyNPDraft(id, e){
+  if(e) e.stopPropagation();
+  const r = siteOutreachMap[id]; if(!r) return;
+  const vl=Array.isArray(r.email_variants)?r.email_variants.filter(v=>v&&(v.subject||v.body)):[];
+  let sub=r.email_subject||'', body=r.email_body||'';
+  if(vl.length){ const i=Math.min(Math.max(npVariant[id]||0,0),vl.length-1); sub=vl[i].subject||''; body=vl[i].body||''; }
+  const txt=(sub?('Subject: '+sub+'\n\n'):'')+(body||'');
+  if(navigator.clipboard) navigator.clipboard.writeText(txt);
+}
+// Trigger the n8n research agent (workflow 26 — same Claude web-search + 4-hook
+// engine as Outreach's workflow 13, forked for site_outreach's field names).
+// It writes research_brief/email_variants/confidence back to Firestore; the
+// site_outreach listener then refreshes this modal automatically.
+async function researchNearbyProspect(id, e){
+  e = e || (typeof event !== 'undefined' ? event : null);
+  if(e) e.stopPropagation();
+  const r = siteOutreachMap[id]; if(!r) return;
+  const btn = e && e.target;
+  const reset = () => { if(btn){ btn.disabled=false; btn.textContent = r.research_brief ? '🔎 Re-research' : '🔎 Research & draft'; } };
+  if(btn){ btn.disabled=true; btn.textContent='🔎 Researching…'; }
+  try {
+    const res = await fetch(NP_RESEARCH_WEBHOOK, { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ id, name:r.name||'', website:r.website||'', search_category:r.search_category||'', google_category:r.google_category||'',
+        address:r.address||'', city:r.city||'', state:r.state||'' }) });
+    const text = await res.text().catch(()=> '');
+    if(!res.ok){
+      console.error('[nearby-prospect-research]', res.status, text);
+      reset();
+      alert('Research failed (HTTP ' + res.status + ').\n' +
+        (res.status === 404
+          ? 'The nearby-prospect-research webhook isn’t reachable — is n8n workflow 26 imported and Active?'
+          : 'Workflow 26 errored (often the Claude node). Check its Executions log in n8n.') +
+        (text ? '\n\n' + text.slice(0, 300) : ''));
+      return;
+    }
+    // Workflow 26 responds only AFTER the Firestore write, so on success the new
+    // draft is already saved and the site_outreach listener re-renders this
+    // modal momentarily. Reset as a fallback in case the listener is slow.
+    setTimeout(reset, 4000);
+  } catch(err){
+    console.error('researchNearbyProspect failed:', err);
+    reset();
+    alert('Could not reach the research service — check your connection and try again.');
+  }
+}
+
 function openNPModal(id){
   npModalId = id;
   const r = siteOutreachMap[id]; if(!r) return;
@@ -7391,6 +7454,46 @@ function openNPModal(id){
         ${r.contact_linkedin?`<div style="margin-top:2px;"><a href="${esc(r.contact_linkedin)}" target="_blank" rel="noopener" style="color:#0969da;text-decoration:none;">🔗 LinkedIn</a></div>`:''}
       </div>`
     : `<div style="font-size:13px;color:var(--text2);">No named contact found — try the main line.</div>`;
+  // Research + 4-hook draft (n8n workflow 26) — same rendering pattern as
+  // Outreach's openOutreachModal (VARLABEL tabs, confidence chip, active-version
+  // check), reusing the identical field names workflow 26 writes.
+  const npResearched = !!r.research_brief;
+  const npResearchBlock = `<div style="margin-top:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);">Research</div>
+        <button onclick="researchNearbyProspect('${id}',event)" style="font-size:12px;padding:5px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface);cursor:pointer;">${npResearched?'🔎 Re-research':'🔎 Research & draft'}</button>
+      </div>
+      ${npResearched
+        ? `${renderResearchBrief(r.research_brief)}${(()=>{const rd=fmtResearchDate(r.researched_at);return rd?`<div style="font-size:11px;color:var(--text2);margin-top:6px;">Researched ${rd}</div>`:'';})()}`
+        : `<div style="color:var(--text2);font-size:13px;margin-top:4px;">Pull live web research on this business and draft a personalized cold email. Takes ~15s.</div>`}
+    </div>`;
+  const npVlist=Array.isArray(r.email_variants)?r.email_variants.filter(v=>v&&(v.subject||v.body)):[];
+  const npVi=npVlist.length?Math.min(Math.max(npVariant[id]||0,0),npVlist.length-1):0;
+  const npAv=npVlist.length?npVlist[npVi]:{subject:r.email_subject||'',body:r.email_body||''};
+  const npIsActiveVar=(npAv.subject===(r.email_subject||'')&&npAv.body===(r.email_body||''));
+  const npConf=(r.draft_confidence!=null&&r.draft_confidence!=='')?Number(r.draft_confidence):null;
+  const npConfC=npConf==null?'':(npConf>=70?'background:#dcfce7;color:#166534;':npConf>=40?'background:#fef3c7;color:#92400e;':'background:#fee2e2;color:#991b1b;');
+  const NP_FITC={High:'background:#dcfce7;color:#166534;',Medium:'background:#fef3c7;color:#92400e;',Mixed:'background:#ffedd5;color:#9a3412;',Low:'background:#f3f4f6;color:#6b7280;'};
+  const npDbadges=[
+    r.prospect_fit?`<span title="MTM fit" style="font-size:11px;border-radius:10px;padding:2px 9px;${NP_FITC[r.prospect_fit]||''}">${esc(r.prospect_fit)} fit</span>`:'',
+    npConf!=null?`<span title="${esc(r.confidence_reason||'')}" style="font-size:11px;border-radius:10px;padding:2px 9px;${npConfC}">Confidence ${npConf}</span>`:'',
+    r.prospect_group?`<span style="font-size:11px;color:var(--text2);align-self:center;">${esc(r.prospect_group)}</span>`:''
+  ].filter(Boolean).join(' ');
+  const npVtabs=npVlist.length>1?`<div style="display:flex;gap:6px;margin:8px 0;flex-wrap:wrap;">${npVlist.map((v,i)=>`<button onclick="setNPVariant('${id}',${i},event)" style="font-size:11px;padding:4px 10px;border-radius:8px;cursor:pointer;border:1px solid ${i===npVi?'#38D430':'var(--border)'};background:${i===npVi?'#38D430':'var(--surface)'};color:${i===npVi?'#fff':'var(--text)'};">${esc(NP_VARLABEL[(v.style||'').toLowerCase()]||v.style||('V'+(i+1)))}</button>`).join('')}</div>`:'';
+  const npUseBtn=(npVlist.length>1)?(npIsActiveVar?`<span style="font-size:11px;color:#166534;align-self:center;">✓ active version</span>`:`<button onclick="useNPVariant('${id}',${npVi},event)" style="font-size:12px;padding:6px 12px;border:1px solid #38D430;border-radius:8px;background:#38D430;color:#fff;cursor:pointer;">★ Use this version</button>`):'';
+  const npDraftBlock=(npVlist.length||r.email_subject||r.email_body)?`<div style="margin-top:14px;">
+      <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);margin-bottom:6px;">Draft email</div>
+      ${npDbadges?`<div style="display:flex;gap:6px;align-items:center;margin:2px 0;flex-wrap:wrap;">${npDbadges}</div>`:''}
+      ${npVtabs}
+      <div style="margin-top:2px;font-size:13px;"><div style="color:var(--text2);">Subject</div>
+      <div style="font-weight:600;margin-bottom:6px;">${esc(npAv.subject||'')}</div>
+      <div style="white-space:pre-wrap;line-height:1.55;border-left:3px solid #38D430;padding-left:12px;">${esc(npAv.body||'')}</div>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+        ${r.contact_email?`<a href="mailto:${esc(r.contact_email)}?subject=${encodeURIComponent(npAv.subject||'')}&body=${encodeURIComponent(npAv.body||'')}" style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;color:#0969da;text-decoration:none;">✉️ Open in email</a>`:''}
+        <button onclick="copyNPDraft('${id}',event)" style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);cursor:pointer;">📋 Copy</button>
+        ${npUseBtn}
+      </div></div>
+    </div>`:'';
   document.getElementById('np-modal-body').innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
       <div><div style="font-size:18px;font-weight:800;">${esc(r.name||'')}</div>
@@ -7411,6 +7514,8 @@ function openNPModal(id){
       <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);margin-bottom:6px;">Discovered contact <span style="font-weight:400;color:var(--text2);text-transform:none;">— from CoreClaw's business-leads enrichment</span></div>
       ${contactBlock}
     </div>
+    ${npResearchBlock}
+    ${npDraftBlock}
     <div style="margin-top:14px;">
       <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);margin-bottom:6px;">Status</div>
       <select onchange="saveNPStatus('${id}',this.value)" style="padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px;">
@@ -7843,6 +7948,10 @@ window.setNPCategory       = setNPCategory;
 window.setNPStatus         = setNPStatus;
 window.toggleNPProp        = toggleNPProp;
 window.discoverNearby      = discoverNearby;
+window.researchNearbyProspect = researchNearbyProspect;
+window.setNPVariant        = setNPVariant;
+window.useNPVariant        = useNPVariant;
+window.copyNPDraft         = copyNPDraft;
 window.openNPModal         = openNPModal;
 window.closeNPModal        = closeNPModal;
 window.npModalBgClick      = npModalBgClick;
