@@ -1,5 +1,15 @@
 # Do or Wait — Project Brief for Claude
 
+## ⏸️ Session handoff (last updated 2026-07-22) — pick up here first
+**Nothing below this note is done yet — Justin stepped away mid-session (headed to Reyes) before either deploy step happened.** The most recent work was building **n8n workflow 26** (Nearby Prospect Research & Draft — Claude web research + 4-hook draft for the 📍 Nearby Prospects tab, forked from Outreach's workflow 13). Both the workflow file and the `index.html` app-side UI (research button + draft variant tabs in `openNPModal`) are written and syntax-validated, but:
+- Workflow 26 has **not been imported into n8n** yet (needs the Anthropic credential picked + activation).
+- `index.html`/`CLAUDE.md`/the new `n8n/26_*` files have **not been git-pushed** yet.
+- No real test run has happened — the 4-variant draft has never actually been generated against a live business.
+
+Full deploy checklist and exact git commands are in the **"2026-07-22 — 📍 Nearby Prospects gets a research/draft engine (n8n workflow 26)"** section near the end of this file. Start there. Also still outstanding from the prior session (2026-07-20/21): **n8n workflow 25** (Site Outreach Discovery, the CoreClaw scraper itself) is verified and test-confirmed working, but neither its live-app button has been clicked for a real full 9-category run, nor has anyone confirmed the workflow is toggled Active long-term in n8n — worth a quick check before assuming either 25 or 26 "just works."
+
+---
+
 ## What this is
 A web app for Justin Cho (Justin.Cho@cubework.com) at Cubework. Tabs (numbered in actual tab-bar order — verified against `index.html`'s `data-tab="..."` attributes 2026-07-21):
 1. **Tasks** — DO/WAIT topic threads (digital sticky note system)
