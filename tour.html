@@ -26,8 +26,8 @@
   .auth-card{ background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:32px; width:340px; box-shadow:0 4px 24px rgba(0,0,0,.06); }
   .auth-card h1{ font-size:20px; margin:0 0 4px; }
   .auth-card p.sub{ color:var(--text2); font-size:13px; margin:0 0 20px; }
-  .auth-card input{ width:100%; padding:11px 12px; border:1px solid var(--border); border-radius:8px; font-size:15px; margin-bottom:10px; font-family:inherit; }
-  .auth-card button{ width:100%; padding:11px; border:none; border-radius:8px; background:var(--text); color:#fff; font-size:15px; font-weight:600; cursor:pointer; font-family:inherit; }
+  .auth-card input{ width:100%; padding:13px 12px; border:1px solid var(--border); border-radius:8px; font-size:16px; margin-bottom:10px; font-family:inherit; min-height:44px; }
+  .auth-card button{ width:100%; padding:13px; border:none; border-radius:8px; background:var(--text); color:#fff; font-size:16px; font-weight:600; cursor:pointer; font-family:inherit; min-height:44px; }
   #auth-msg{ color:#b91c1c; font-size:13px; margin-top:10px; min-height:16px; }
 
   #app{ display:none; max-width:1100px; margin:0 auto; padding:0 16px 60px; }
@@ -39,14 +39,14 @@
   header.topbar .brand{ font-weight:800; font-size:16px; letter-spacing:-.01em; }
   header.topbar .brand span{ color:var(--wait); }
   .mode-btn{
-    border:none; border-radius:20px; padding:8px 16px; font-weight:700; font-size:13px; cursor:pointer; font-family:inherit;
+    border:none; border-radius:20px; padding:11px 18px; font-weight:700; font-size:14px; cursor:pointer; font-family:inherit; min-height:44px;
   }
   .mode-btn.prep{ background:#111827; color:#fff; }
   .mode-btn.customer{ background:var(--green-bg); color:var(--green-fg); }
   .topbar-spacer{ flex:1; }
-  .btn{ border:1px solid var(--border); background:var(--card); border-radius:8px; padding:7px 12px; font-size:13px; cursor:pointer; font-family:inherit; color:var(--text); }
+  .btn{ border:1px solid var(--border); background:var(--card); border-radius:8px; padding:9px 14px; font-size:13px; cursor:pointer; font-family:inherit; color:var(--text); min-height:40px; }
   .btn:hover{ background:var(--bg); }
-  .btn.small{ padding:4px 9px; font-size:12px; }
+  .btn.small{ padding:8px 12px; font-size:12px; min-height:36px; }
   .btn.danger{ color:#b91c1c; border-color:#fecaca; }
   .btn.primary{ background:var(--wait); color:#fff; border-color:var(--wait); font-weight:700; }
 
@@ -54,7 +54,7 @@
   .card h2{ font-size:14px; margin:0 0 12px; text-transform:uppercase; letter-spacing:.03em; color:var(--text2); }
   .row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   select, input[type=text], input[type=number], textarea{
-    border:1px solid var(--border); border-radius:8px; padding:8px 10px; font-size:14px; font-family:inherit; color:var(--text); background:#fff;
+    border:1px solid var(--border); border-radius:8px; padding:10px 10px; font-size:16px; font-family:inherit; color:var(--text); background:#fff; min-height:44px;
   }
   textarea{ width:100%; min-height:70px; resize:vertical; }
   label.field-label{ font-size:12px; color:var(--text2); display:block; margin-bottom:4px; }
@@ -86,10 +86,11 @@
   .compare-card .stats{ display:flex; gap:16px; font-size:12px; }
   .compare-card .stats b{ color:var(--green-fg); }
 
-  .addon-row{ display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid var(--border); }
+  .addon-row{ display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border); }
   .addon-row:last-child{ border-bottom:none; }
-  .addon-row label{ flex:1; font-size:14px; cursor:pointer; }
-  .addon-row input[type=number]{ width:90px; }
+  .addon-row label{ flex:1; font-size:15px; cursor:pointer; padding:6px 0; }
+  .addon-row input[type=checkbox]{ width:22px; height:22px; flex-shrink:0; }
+  .addon-row input[type=number]{ width:90px; min-height:40px; }
   .addon-check-list{ list-style:none; margin:0; padding:0; }
   .addon-check-list li{ padding:5px 0; font-size:14px; }
 
