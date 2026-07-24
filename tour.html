@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Cubework — Tour Board</title>
+<style>
+  :root{
+    --do: #e85d04; --wait: #0077b6;
+    --bg: #f3f4f6; --card: #ffffff; --text: #111827; --text2: #6b7280; --border: #e5e7eb;
+    --green-bg:#dcfce7; --green-fg:#166534;
+    --gray-bg:#f3f4f6;  --gray-fg:#4b5563;
+    --amber-bg:#ffedd5; --amber-fg:#9a3412;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; }
+  body{
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 15px; -webkit-font-smoothing: antialiased;
+  }
+  #auth-screen{
+    display:flex; align-items:center; justify-content:center; min-height:100vh; padding:24px;
+  }
+  .auth-card{ background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:32px; width:340px; box-shadow:0 4px 24px rgba(0,0,0,.06); }
+  .auth-card h1{ font-size:20px; margin:0 0 4px; }
+  .auth-card p.sub{ color:var(--text2); font-size:13px; margin:0 0 20px; }
+  .auth-card input{ width:100%; padding:11px 12px; border:1px solid var(--border); border-radius:8px; font-size:15px; margin-bottom:10px; font-family:inherit; }
+  .auth-card button{ width:100%; padding:11px; border:none; border-radius:8px; background:var(--text); color:#fff; font-size:15px; font-weight:600; cursor:pointer; font-family:inherit; }
+  #auth-msg{ color:#b91c1c; font-size:13px; margin-top:10px; min-height:16px; }
+
+  #app{ display:none; max-width:1100px; margin:0 auto; padding:0 16px 60px; }
+
+  header.topbar{
+    position:sticky; top:0; z-index:20; background:var(--bg); padding:14px 0 10px;
+    display:flex; align-items:center; gap:12px; flex-wrap:wrap; border-bottom:1px solid var(--border); margin-bottom:16px;
+  }
+  header.topbar .brand{ font-weight:800; font-size:16px; letter-spacing:-.01em; }
+  header.topbar .brand span{ color:var(--wait); }
+  .mode-btn{
+    border:none; border-radius:20px; padding:8px 16px; font-weight:700; font-size:13px; cursor:pointer; font-family:inherit;
+  }
+  .mode-btn.prep{ background:#111827; color:#fff; }
+  .mode-btn.customer{ background:var(--green-bg); color:var(--green-fg); }
+  .topbar-spacer{ flex:1; }
+  .btn{ border:1px solid var(--border); background:var(--card); border-radius:8px; padding:7px 12px; font-size:13px; cursor:pointer; font-family:inherit; color:var(--text); }
+  .btn:hover{ background:var(--bg); }
+  .btn.small{ padding:4px 9px; font-size:12px; }
+  .btn.danger{ color:#b91c1c; border-color:#fecaca; }
+  .btn.primary{ background:var(--wait); color:#fff; border-color:var(--wait); font-weight:700; }
+
+  .card{ background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:18px; margin-bottom:16px; }
+  .card h2{ font-size:14px; margin:0 0 12px; text-transform:uppercase; letter-spacing:.03em; color:var(--text2); }
+  .row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  select, input[type=text], input[type=number], textarea{
+    border:1px solid var(--border); border-radius:8px; padding:8px 10px; font-size:14px; font-family:inherit; color:var(--text); background:#fff;
+  }
+  textarea{ width:100%; min-height:70px; resize:vertical; }
+  label.field-label{ font-size:12px; color:var(--text2); display:block; margin-bottom:4px; }
+
+  .pill{ font-size:11px; padding:2px 9px; border-radius:20px; font-weight:600; white-space:nowrap; }
+  .unit-row{
+    display:flex; align-items:center; gap:10px; padding:9px 11px; border:1px solid var(--border); border-radius:8px; margin-bottom:6px;
+    cursor:pointer; transition:box-shadow .12s, border-color .12s; background:#fff;
+  }
+  .unit-row:hover{ border-color:#c7ccd4; }
+  .unit-row.hl{ box-shadow:0 0 0 2px var(--wait) inset; border-color:var(--wait); }
+  .unit-row .u-id{ font-weight:700; font-size:13px; min-width:64px; }
+  .unit-row .u-meta{ font-size:12px; color:var(--text2); min-width:110px; }
+
+  .plan-wrap{ position:relative; width:100%; border-radius:10px; overflow:hidden; border:1px solid var(--border); background:#fafafa; }
+  .plan-wrap img{ display:block; width:100%; height:auto; }
+  .plan-box{
+    position:absolute; border-radius:5px; border:2px solid rgba(0,0,0,.25); cursor:pointer;
+    display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:800; color:#111;
+    text-shadow:0 1px 1px rgba(255,255,255,.6);
+  }
+  .plan-box.hl{ box-shadow:0 0 0 3px var(--wait); border-color:var(--wait); }
+
+  .compare-chip{ display:inline-flex; align-items:center; gap:6px; background:#eef2ff; color:#3730a3; border-radius:20px; padding:4px 10px 4px 12px; font-size:12px; font-weight:600; }
+  .compare-chip button{ border:none; background:none; cursor:pointer; color:#3730a3; font-size:14px; line-height:1; padding:0; }
+  .compare-card{ border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin-bottom:8px; }
+  .compare-card .name{ font-weight:700; font-size:14px; }
+  .compare-card .addr{ font-size:12px; color:var(--text2); margin-bottom:6px; }
+  .compare-card .stats{ display:flex; gap:16px; font-size:12px; }
+  .compare-card .stats b{ color:var(--green-fg); }
+
+  .addon-row{ display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid var(--border); }
+  .addon-row:last-child{ border-bottom:none; }
+  .addon-row label{ flex:1; font-size:14px; cursor:pointer; }
+  .addon-row input[type=number]{ width:90px; }
+  .addon-check-list{ list-style:none; margin:0; padding:0; }
+  .addon-check-list li{ padding:5px 0; font-size:14px; }
+
+  .total-line{ display:flex; justify-content:space-between; font-size:14px; padding:6px 0; }
+  .total-line.grand{ font-weight:800; font-size:16px; border-top:1px solid var(--border); margin-top:6px; padding-top:10px; }
+
+  .muted{ color:var(--text2); font-size:13px; }
+  .hint{ font-size:12px; color:var(--text2); margin-top:6px; }
+
+  @media (max-width: 720px){ header.topbar .brand{ font-size:14px; } }
+</style>
+</head>
+<body>
+
+<div id="auth-screen">
+  <div class="auth-card">
+    <h1>Cubework Tour Board</h1>
+    <p class="sub">Staff sign-in required.</p>
+    <input id="auth-email" type="text" placeholder="Email" autocomplete="username">
+    <input id="auth-pass" type="password" placeholder="Password" autocomplete="current-password">
+    <button onclick="doEmailSignIn()">Sign in</button>
+    <div id="auth-msg"></div>
+  </div>
+</div>
+
+<div id="app">
+  <header class="topbar">
+    <div class="brand">Cubework <span>Tour Board</span></div>
+    <button id="mode-toggle-btn" class="mode-btn prep" onclick="toggleMode()">🔒 Prep Mode</button>
+    <div class="topbar-spacer"></div>
+    <div id="topbar-extra"></div>
+  </header>
+  <div id="root"></div>
+</div>
+
+<script type="module">
+import { initializeApp }
+  from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { getFirestore, collection, doc, getDoc, setDoc, deleteDoc, onSnapshot }
+  from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { getStorage, ref, uploadBytes, getDownloadURL }
+  from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js';
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
+  from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
+
+// Same do-or-wait Firebase project as index.html — this page reads live
+// availability data and writes to two NEW collections (tour_sessions,
+// tour_floorplans), both of which fall under firestore.rules' existing
+// catch-all `match /{document=**} { allow read, write: if isAllowed(); }`
+// rule — no rules change needed. Deliberately NOT reusing the Avail-only
+// restricted role: this tool involves real pricing entry, so it's gated to
+// the same full-access 3-email allowlist only.
+const firebaseConfig = {
+  apiKey:            "AIzaSyBQ-1dSWkXnh5Ju2lVKsUieCx3r-lZc08U",
+  authDomain:        "do-or-wait.firebaseapp.com",
+  projectId:         "do-or-wait",
+  storageBucket:     "do-or-wait.firebasestorage.app",
+  appId:             "1:502204732668:web:f6f11cc3b28288dc39f379"
+};
+const fbApp   = initializeApp(firebaseConfig);
+const db      = getFirestore(fbApp);
+const storage = getStorage(fbApp);
+const auth    = getAuth(fbApp);
+
+const ALLOWED_EMAILS = [
+  'jchoustin91@gmail.com',
+  'justin.cho@cubework.com',
+  'cubeworkautomation@gmail.com'
+];
+
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ── AUTH ──────────────────────────────────────────────────────────────
+function authFail(e){
+  const m = document.getElementById('auth-msg'); const c = String((e && (e.code || e.message)) || e);
+  if (!m) return;
+  if (c.includes('wrong-password') || c.includes('invalid-credential')) m.textContent = 'Wrong email or password.';
+  else if (c.includes('user-not-found')) m.textContent = 'No account for that email.';
+  else if (c.includes('too-many-requests')) m.textContent = 'Too many attempts — wait a moment and try again.';
+  else m.textContent = 'Sign-in failed: ' + c;
+}
+window.doEmailSignIn = function(){
+  const email = (document.getElementById('auth-email') || {}).value || '';
+  const pass  = (document.getElementById('auth-pass')  || {}).value || '';
+  if (!email || !pass) { const m = document.getElementById('auth-msg'); if (m) m.textContent = 'Enter your email and password.'; return; }
+  signInWithEmailAndPassword(auth, email.trim().toLowerCase(), pass).catch(authFail);
+};
+window.doSignOut = function(){ signOut(auth); };
+
+let _authReady = false;
+onAuthStateChanged(auth, user => {
+  const appEl = document.getElementById('app');
+  const authEl = document.getElementById('auth-screen');
+  const email = ((user && user.email) || '').toLowerCase();
+  if (user && ALLOWED_EMAILS.includes(email)) {
+    authEl.style.display = 'none';
+    appEl.style.display = '';
+    if (!_authReady) { _authReady = true; startLiveData(); }
+  } else {
+    if (user) {
+      const m = document.getElementById('auth-msg');
+      if (m) m.textContent = (email || 'That account') + ' isn’t authorized for the Tour Board.';
+      signOut(auth);
+    }
+    appEl.style.display = 'none';
+    authEl.style.display = 'flex';
+  }
+});
+
+// ── ADD-ONS (labels only — same categories Rate Bands uses) ─────────
+const ADDONS = [
+  ['dock', 'Dock Package'],
+  ['cubicle_desk', 'Cubicle / Desk'],
+  ['virtual_office', 'Virtual Office'],
+  ['truck_container_pkg', 'Truck / Container Package'],
+  ['sm_vehicle_pkg', 'Small Vehicle Package'],
+  ['whse_wifi', 'Warehouse WiFi'],
+  ['event_space', 'Event Space'],
+  ['conf_room', 'Conference Room']
+];
+
+// ── STATE ─────────────────────────────────────────────────────────────
+const availMap = {};                 // propId -> availability doc (live)
+let tourSession = defaultSession();
+let floorplanMap = {};                // propId -> tour_floorplans doc (or undefined = not loaded, null = none)
+let unsubFloorplan = null;
+let fpEditing = false;
+let fpDraft = null;                   // { imageUrl, storagePath, boxes:[{unitId,x,y,w,h}] }
+let fpPlaceUnit = '';
+let fpUploading = false;
+
+function defaultSession(){
+  return { mode:'prep', customerName:'', primaryProp:'', compareProps:[], highlighted:{}, addons:{}, pricing:{ rate:'', term:'', discount:'', notes:'' } };
+}
+
+function startLiveData(){
+  onSnapshot(collection(db, 'availability'), snap => {
+    snap.forEach(d => { availMap[d.id] = d.data(); });
+    snap.docChanges().forEach(c => { if (c.type === 'removed') delete availMap[c.doc.id]; });
+    render();
+  });
+  onSnapshot(doc(db, 'tour_sessions', 'current'), snap => {
+    if (snap.exists()) {
+      const d = snap.data();
+      tourSession = Object.assign(defaultSession(), d, {
+        compareProps: d.compareProps || [],
+        highlighted: d.highlighted || {},
+        addons: d.addons || {},
+        pricing: Object.assign({ rate:'', term:'', discount:'', notes:'' }, d.pricing || {})
+      });
+      watchFloorplan(tourSession.primaryProp);
+    }
+    render();
+  });
+}
+
+function saveSession(){
+  setDoc(doc(db, 'tour_sessions', 'current'), Object.assign({}, tourSession, { updatedAt: new Date().toISOString() }), { merge: false }).catch(e => console.warn('save session', e));
+}
+
+function watchFloorplan(propId){
+  if (unsubFloorplan) { unsubFloorplan(); unsubFloorplan = null; }
+  if (!propId) { render(); return; }
+  unsubFloorplan = onSnapshot(doc(db, 'tour_floorplans', propId), snap => {
+    floorplanMap[propId] = snap.exists() ? snap.data() : null;
+    render();
+  });
+}
+
+// ── HELPERS ───────────────────────────────────────────────────────────
+function fmtSf(n){ n = Number(n) || 0; return n ? n.toLocaleString() + ' sf' : '—'; }
+function unitStatus(u){ return u.hold ? 'hold' : (u.available || u.hold) ? 'available' : 'occupied'; }
+const PILLS = {
+  available: ['var(--green-bg)', 'var(--green-fg)', 'Available'],
+  occupied:  ['var(--gray-bg)',  'var(--gray-fg)',  'Occupied'],
+  hold:      ['var(--amber-bg)', 'var(--amber-fg)', 'Hold']
+};
+function statusPillHtml(status){
+  const [bg, fg, lbl] = PILLS[status] || PILLS.occupied;
+  return `<span class="pill" style="background:${bg};color:${fg};">${lbl}</span>`;
+}
+function findUnit(propId, unitId){
+  const d = availMap[propId]; if (!d) return null;
+  return (d.units || []).find(u => String(u.unit || '').trim() === String(unitId).trim()) || null;
+}
+function sortedPropIds(){
+  return Object.keys(availMap).sort((a, b) => String(availMap[a].property || a).localeCompare(String(availMap[b].property || b)));
+}
+function isHighlighted(propId, unitId){
+  return ((tourSession.highlighted || {})[propId] || []).includes(unitId);
+}
+
+// ── ACTIONS (exposed on window — inline handlers) ────────────────────
+window.toggleMode = function(){
+  tourSession.mode = tourSession.mode === 'prep' ? 'customer' : 'prep';
+  if (tourSession.mode === 'customer') { fpEditing = false; fpDraft = null; }
+  saveSession(); render();
+};
+window.setCustomerName = function(v){ tourSession.customerName = v; saveSession(); };
+window.setPrimaryProp = function(propId){
+  tourSession.primaryProp = propId;
+  fpEditing = false; fpDraft = null;
+  saveSession(); watchFloorplan(propId);
+};
+window.addCompareProp = function(propId){
+  if (!propId || propId === tourSession.primaryProp) return;
+  if (!tourSession.compareProps.includes(propId)) tourSession.compareProps.push(propId);
+  saveSession(); render();
+};
+window.removeCompareProp = function(propId){
+  tourSession.compareProps = tourSession.compareProps.filter(p => p !== propId);
+  saveSession(); render();
+};
+window.toggleHighlight = function(propId, unitId){
+  const arr = tourSession.highlighted[propId] || (tourSession.highlighted[propId] = []);
+  const i = arr.indexOf(unitId);
+  if (i >= 0) arr.splice(i, 1); else arr.push(unitId);
+  saveSession(); render();
+};
+window.toggleAddon = function(key){
+  const a = tourSession.addons[key] || (tourSession.addons[key] = { checked:false, price:'' });
+  a.checked = !a.checked;
+  saveSession(); render();
+};
+window.setAddonPrice = function(key, val){
+  const a = tourSession.addons[key] || (tourSession.addons[key] = { checked:true, price:'' });
+  a.price = val;
+  saveSession();
+};
+window.setPricingField = function(field, val){
+  tourSession.pricing[field] = val;
+  saveSession();
+};
+window.newSession = function(){
+  if (!confirm('Start a new tour session? This clears the current property, selections, add-ons, pricing and notes.')) return;
+  tourSession = defaultSession();
+  fpEditing = false; fpDraft = null;
+  saveSession(); watchFloorplan(''); render();
+};
+
+// Floorplan editor
+window.startFpEdit = function(){
+  const propId = tourSession.primaryProp; if (!propId) return;
+  const existing = floorplanMap[propId];
+  fpDraft = existing ? JSON.parse(JSON.stringify(existing)) : { imageUrl:'', storagePath:'', boxes:[] };
+  fpEditing = true;
+  fpPlaceUnit = nextUnplacedUnit(propId);
+  render();
+};
+window.cancelFpEdit = function(){ fpEditing = false; fpDraft = null; render(); };
+window.setPlaceUnit = function(v){ fpPlaceUnit = v; };
+function nextUnplacedUnit(propId){
+  const placed = new Set((fpDraft ? fpDraft.boxes : []).map(b => b.unitId));
+  const units = (availMap[propId] && availMap[propId].units) || [];
+  const remaining = units.filter(u => !placed.has(u.unit));
+  return remaining.length ? remaining[0].unit : '';
+}
+window.uploadPlanImage = async function(input){
+  const file = input.files && input.files[0]; if (!file) return;
+  if (!/^image\//.test(file.type)) { alert('Please choose an image file (PNG/JPG).'); return; }
+  const propId = tourSession.primaryProp; if (!propId) return;
+  fpUploading = true; render();
+  try {
+    const ext = (file.name.split('.').pop() || 'png').toLowerCase();
+    // Reuses the already-permitted files/ Storage prefix (see Future Plan
+    // feature note in do_or_wait/CLAUDE.md — a new prefix hits storage/unauthorized).
+    const path = `files/tour-floorplan-${propId}-${Date.now()}.${ext}`;
+    const sref = ref(storage, path);
+    await uploadBytes(sref, file);
+    const url = await getDownloadURL(sref);
+    fpDraft.imageUrl = url;
+    fpDraft.storagePath = path;
+  } catch (e) {
+    alert('Upload failed: ' + (e && e.message || e));
+  }
+  fpUploading = false; render();
+};
+window.onPlanClick = function(e){
+  if (!fpEditing || !fpDraft) return;
+  if (!fpDraft.imageUrl) return;
+  if (!fpPlaceUnit) { alert('Every unit is already placed. Pick one to move, or remove a box first.'); return; }
+  const rect = e.currentTarget.getBoundingClientRect();
+  const w = 9, h = 7;
+  let x = ((e.clientX - rect.left) / rect.width) * 100 - w / 2;
+  let y = ((e.clientY - rect.top) / rect.height) * 100 - h / 2;
+  x = Math.max(0, Math.min(100 - w, x));
+  y = Math.max(0, Math.min(100 - h, y));
+  fpDraft.boxes.push({ unitId: fpPlaceUnit, x, y, w, h });
+  fpPlaceUnit = nextUnplacedUnit(tourSession.primaryProp);
+  render();
+};
+window.removeFpBox = function(e, idx){
+  e.stopPropagation();
+  if (!fpEditing || !fpDraft) return;
+  fpDraft.boxes.splice(idx, 1);
+  fpPlaceUnit = nextUnplacedUnit(tourSession.primaryProp);
+  render();
+};
+window.saveFpLayout = async function(){
+  const propId = tourSession.primaryProp; if (!propId || !fpDraft) return;
+  if (!fpDraft.imageUrl) { alert('Upload a site plan image first.'); return; }
+  await setDoc(doc(db, 'tour_floorplans', propId), Object.assign({}, fpDraft, { updatedAt: new Date().toISOString() }));
+  fpEditing = false; fpDraft = null; render();
+};
+window.removeFpPlan = async function(){
+  const propId = tourSession.primaryProp; if (!propId) return;
+  if (!confirm('Remove the mapped site plan for this property? (The unit list fallback will show instead. This does not affect live availability data.)')) return;
+  await deleteDoc(doc(db, 'tour_floorplans', propId));
+  fpEditing = false; fpDraft = null; render();
+};
+
+// ── RENDER ────────────────────────────────────────────────────────────
+function render(){
+  const isPrep = tourSession.mode === 'prep';
+  const btn = document.getElementById('mode-toggle-btn');
+  if (btn) {
+    btn.className = 'mode-btn ' + (isPrep ? 'prep' : 'customer');
+    btn.textContent = isPrep ? '🔒 Prep Mode' : '👁 Customer View';
+  }
+  document.getElementById('topbar-extra').innerHTML = isPrep
+    ? `<button class="btn small" onclick="newSession()">＋ New session</button> <button class="btn small" onclick="doSignOut()">Sign out</button>`
+    : `<button class="btn small" onclick="doSignOut()">Sign out</button>`;
+
+  const root = document.getElementById('root');
+  root.innerHTML = renderCustomerNameRow(isPrep) + renderPropertyPicker() + renderPrimaryPanel() + renderComparePanel(isPrep) + renderAddonsPanel(isPrep) + (isPrep ? renderPricingPanel() : '');
+}
+
+function renderCustomerNameRow(isPrep){
+  if (!isPrep) return '';
+  return `<div class="card">
+    <div class="row">
+      <label class="field-label" style="margin:0;">Customer / company (private, for your reference)</label>
+    </div>
+    <input type="text" style="width:100%;max-width:360px;" placeholder="e.g. Acme Logistics" value="${esc(tourSession.customerName)}" onchange="setCustomerName(this.value)">
+  </div>`;
+}
+
+function renderPropertyPicker(){
+  const ids = sortedPropIds();
+  if (!ids.length) return `<div class="card muted">No synced properties yet.</div>`;
+  const opts = `<option value="">— choose a property —</option>` + ids.map(id => `<option value="${id}" ${tourSession.primaryProp === id ? 'selected' : ''}>${esc(availMap[id].property || id)}</option>`).join('');
+  return `<div class="card">
+    <h2>Property</h2>
+    <select onchange="setPrimaryProp(this.value)">${opts}</select>
+  </div>`;
+}
+
+function renderPrimaryPanel(){
+  const propId = tourSession.primaryProp;
+  if (!propId) return '';
+  const isPrep = tourSession.mode === 'prep';
+  const d = availMap[propId] || {};
+  const fp = floorplanMap[propId];
+
+  let inner = '';
+  if (fpEditing && isPrep) {
+    inner = renderFpEditor(propId);
+  } else if (fp) {
+    inner = renderPlanView(propId, fp);
+  } else {
+    inner = renderGridView(propId, d);
+  }
+
+  const editControls = (isPrep && !fpEditing)
+    ? (fp
+        ? `<div class="row" style="margin-top:10px;"><button class="btn small" onclick="startFpEdit()">✏️ Edit site plan</button><button class="btn small danger" onclick="removeFpPlan()">🗑 Remove site plan</button></div>`
+        : `<div class="row" style="margin-top:10px;"><button class="btn small" onclick="startFpEdit()">🗺️ Add a site plan for this property</button></div>`)
+    : '';
+
+  return `<div class="card">
+    <h2>${esc(d.property || propId)}${d.address ? ' <span class="muted" style="text-transform:none;letter-spacing:normal;">— ' + esc(d.address) + '</span>' : ''}</h2>
+    ${inner}
+    ${editControls}
+    <div class="hint">Click a unit ${fp ? 'on the plan ' : ''}to highlight it while you talk through options.</div>
+  </div>`;
+}
+
+function renderPlanView(propId, fp){
+  const boxes = (fp.boxes || []).map(b => {
+    const u = findUnit(propId, b.unitId);
+    const status = u ? unitStatus(u) : 'occupied';
+    const [bg] = PILLS[status] || PILLS.occupied;
+    const hl = isHighlighted(propId, b.unitId) ? ' hl' : '';
+    return `<div class="plan-box${hl}" style="left:${b.x}%;top:${b.y}%;width:${b.w}%;height:${b.h}%;background:${bg};" onclick="toggleHighlight('${esc(propId)}','${esc(b.unitId)}')" title="${esc(b.unitId)} — ${status}">${esc(b.unitId)}</div>`;
+  }).join('');
+  return `<div class="plan-wrap"><img src="${esc(fp.imageUrl)}" alt="Site plan">${boxes}</div>`;
+}
+
+function renderFpEditor(propId){
+  const units = (availMap[propId] && availMap[propId].units) || [];
+  const placed = new Set((fpDraft.boxes || []).map(b => b.unitId));
+  const remaining = units.filter(u => !placed.has(u.unit));
+  const unitOpts = remaining.map(u => `<option value="${esc(u.unit)}" ${fpPlaceUnit === u.unit ? 'selected' : ''}>${esc(u.unit)} · ${fmtSf(u.sf)} · ${esc(u.type || '')}</option>`).join('');
+
+  const uploadRow = `<div class="row" style="margin-bottom:10px;">
+    <input type="file" accept="image/*" onchange="uploadPlanImage(this)">
+    ${fpUploading ? '<span class="muted">Uploading…</span>' : ''}
+  </div>`;
+
+  if (!fpDraft.imageUrl) {
+    return uploadRow + `<div class="muted">Upload the site plan image to start placing units.</div>
+      <div class="row" style="margin-top:10px;"><button class="btn small" onclick="cancelFpEdit()">Cancel</button></div>`;
+  }
+
+  const boxes = (fpDraft.boxes || []).map((b, idx) => {
+    const u = findUnit(propId, b.unitId);
+    const status = u ? unitStatus(u) : 'occupied';
+    const [bg] = PILLS[status] || PILLS.occupied;
+    return `<div class="plan-box" style="left:${b.x}%;top:${b.y}%;width:${b.w}%;height:${b.h}%;background:${bg};" onclick="removeFpBox(event,${idx})" title="Click to remove">${esc(b.unitId)}</div>`;
+  }).join('');
+
+  return `${uploadRow}
+    <div class="row" style="margin-bottom:8px;">
+      <label class="field-label" style="margin:0;">Place next unit:</label>
+      <select onchange="setPlaceUnit(this.value)">${unitOpts || '<option value="">All units placed</option>'}</select>
+    </div>
+    <div class="plan-wrap" onclick="onPlanClick(event)">
+      <img src="${esc(fpDraft.imageUrl)}" alt="Site plan">
+      ${boxes}
+    </div>
+    <div class="hint">Click anywhere on the plan to drop a box for the selected unit. Click an existing box to remove it.</div>
+    <div class="row" style="margin-top:10px;">
+      <button class="btn primary small" onclick="saveFpLayout()">💾 Save layout</button>
+      <button class="btn small" onclick="cancelFpEdit()">Cancel</button>
+    </div>`;
+}
+
+function renderGridView(propId, d){
+  const units = d.units || [];
+  if (!units.length) return `<div class="muted">No unit data synced for this property yet.</div>`;
+  const types = ['WH', 'OFFICE', 'DOCK', 'TRAILER', 'PARKING'];
+  const groups = types.map(t => ({ t, list: units.filter(u => (u.type || '').toUpperCase() === t) })).filter(g => g.list.length);
+  const others = units.filter(u => !types.includes((u.type || '').toUpperCase()));
+  if (others.length) groups.push({ t: 'Other', list: others });
+  return groups.map(g => `
+    <div style="margin-bottom:10px;">
+      <div class="muted" style="font-weight:700;margin-bottom:4px;">${esc(g.t)}</div>
+      ${g.list.map(u => {
+        const status = unitStatus(u);
+        const hl = isHighlighted(propId, u.unit) ? ' hl' : '';
+        return `<div class="unit-row${hl}" onclick="toggleHighlight('${esc(propId)}','${esc(u.unit)}')">
+          <span class="u-id">${esc(u.unit)}</span>
+          <span class="u-meta">${fmtSf(u.sf)}</span>
+          ${statusPillHtml(status)}
+        </div>`;
+      }).join('')}
+    </div>`).join('');
+}
+
+function renderComparePanel(isPrep){
+  const ids = sortedPropIds().filter(id => id !== tourSession.primaryProp && !tourSession.compareProps.includes(id));
+  const addRow = isPrep && ids.length
+    ? `<select onchange="if(this.value){addCompareProp(this.value); this.value='';}">
+        <option value="">＋ Add a comparison property…</option>
+        ${ids.map(id => `<option value="${id}">${esc(availMap[id].property || id)}</option>`).join('')}
+      </select>`
+    : '';
+
+  const cards = tourSession.compareProps.map(id => {
+    const d = availMap[id]; if (!d) return '';
+    const whSf = (d.wh && d.wh.avail_sf) || 0;
+    const offSf = (d.office && d.office.avail_sf) || 0;
+    const removeBtn = isPrep ? `<button class="btn small danger" onclick="removeCompareProp('${esc(id)}')">Remove</button>` : '';
+    return `<div class="compare-card">
+      <div class="name">${esc(d.property || id)}</div>
+      <div class="addr">${esc(d.address || '')}</div>
+      <div class="stats"><span>Warehouse: <b>${fmtSf(whSf)}</b></span><span>Office: <b>${fmtSf(offSf)}</b></span></div>
+      ${isPrep ? `<div style="margin-top:8px;">${removeBtn}</div>` : ''}
+    </div>`;
+  }).join('');
+
+  if (!isPrep && !tourSession.compareProps.length) return '';
+  return `<div class="card">
+    <h2>Other locations</h2>
+    ${addRow}
+    <div style="margin-top:${addRow ? '10px' : '0'};">${cards || (isPrep ? '<div class="muted">None added yet.</div>' : '')}</div>
+  </div>`;
+}
+
+function addonsSubtotal(){
+  return ADDONS.reduce((sum, [key]) => {
+    const a = tourSession.addons[key];
+    return sum + (a && a.checked ? (Number(a.price) || 0) : 0);
+  }, 0);
+}
+
+function renderAddonsPanel(isPrep){
+  const checkedAny = ADDONS.some(([key]) => tourSession.addons[key] && tourSession.addons[key].checked);
+  if (!isPrep) {
+    if (!checkedAny) return '';
+    return `<div class="card">
+      <h2>Included add-ons</h2>
+      <ul class="addon-check-list">
+        ${ADDONS.filter(([key]) => tourSession.addons[key] && tourSession.addons[key].checked)
+          .map(([, label]) => `<li>✓ ${esc(label)}</li>`).join('')}
+      </ul>
+    </div>`;
+  }
+  return `<div class="card">
+    <h2>Add-ons</h2>
+    ${ADDONS.map(([key, label]) => {
+      const a = tourSession.addons[key] || { checked:false, price:'' };
+      return `<div class="addon-row">
+        <input type="checkbox" ${a.checked ? 'checked' : ''} onchange="toggleAddon('${key}')">
+        <label onclick="toggleAddon('${key}')">${esc(label)}</label>
+        ${a.checked ? `<input type="number" placeholder="$/mo" value="${esc(a.price)}" oninput="setAddonPrice('${key}', this.value)">` : ''}
+      </div>`;
+    }).join('')}
+    <div class="total-line" style="margin-top:8px;"><span>Add-ons subtotal</span><span>$${addonsSubtotal().toLocaleString()}/mo</span></div>
+  </div>`;
+}
+
+function renderPricingPanel(){
+  const p = tourSession.pricing;
+  const rate = Number(p.rate) || 0;
+  const total = rate + addonsSubtotal();
+  return `<div class="card" style="border-color:#fde68a;background:#fffbeb;">
+    <h2 style="color:#92400e;">🔒 Pricing — private, never shown in Customer View</h2>
+    <div class="row" style="margin-bottom:10px;">
+      <div>
+        <label class="field-label">Monthly rate</label>
+        <input type="number" placeholder="$/mo" value="${esc(p.rate)}" oninput="setPricingField('rate', this.value)">
+      </div>
+      <div>
+        <label class="field-label">Term</label>
+        <select onchange="setPricingField('term', this.value)">
+          <option value="" ${!p.term ? 'selected' : ''}>—</option>
+          ${['Month-to-month', '3 months', '6 months', '12 months', 'Custom'].map(t => `<option value="${t}" ${p.term === t ? 'selected' : ''}>${t}</option>`).join('')}
+        </select>
+      </div>
+      <div style="flex:1;min-width:180px;">
+        <label class="field-label">Discount / promo</label>
+        <input type="text" style="width:100%;" placeholder="e.g. 10% off first 6mo" value="${esc(p.discount)}" onchange="setPricingField('discount', this.value)">
+      </div>
+    </div>
+    <div class="total-line"><span>Base rate</span><span>$${rate.toLocaleString()}/mo</span></div>
+    <div class="total-line"><span>Add-ons</span><span>$${addonsSubtotal().toLocaleString()}/mo</span></div>
+    <div class="total-line grand"><span>Total</span><span>$${total.toLocaleString()}/mo</span></div>
+    <label class="field-label" style="margin-top:14px;">Private notes</label>
+    <textarea onchange="setPricingField('notes', this.value)">${esc(p.notes)}</textarea>
+  </div>`;
+}
+
+render();
+</script>
+</body>
+</html>
