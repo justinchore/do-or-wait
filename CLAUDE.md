@@ -1410,3 +1410,44 @@ Two quick follow-ups from Justin: drop the Discount/promo field entirely (unused
 **To deploy:** `git push` the updated `tour.html`. No Firestore/Storage/n8n changes.
 
 **New files:** none. **Changed files:** `do_or_wait/tour.html`, `CLAUDE.md` (this section).
+
+---
+
+## 2026-07-25 (cont.) — Firebase Storage rules were far more restrictive than documented; fixed
+
+Justin tried uploading Ontario Airport's site plan image in `tour.html` and got `storage/unauthorized`. **This was NOT a tour.html bug** — diagnosed live (via Claude in Chrome, executing real `uploadBytes` calls against the actual page) that even a brand-new, generic test filename under the exact `files/` prefix — the one this doc had documented since the 2026-07-09 Future Plan session as "already-permitted, no Storage rules change needed" — failed identically for a properly signed-in, allowlisted account (`jchoustin91@gmail.com`, valid token confirmed).
+
+**Root cause: the actually-published Storage rules only ever granted `users/{uid}/{allPaths=**}`** (a per-user namespace nothing in this app uses — `index.html`'s own `ref(storage, ...)` calls are all `files/...` or `audio/...`, never `users/{uid}/...`). There was no rule at all for `files/` or `audio/`, so every write there fell through to Storage's default deny. **This means the Future Plan PDF upload, file attachments, and voice notes may have been silently broken in production this whole time** — the 2026-07-09 CLAUDE.md note claiming `files/` was already open was wrong (or the rules were tightened at some point after that session and never re-verified). Confirmed the actual published rules by having Justin paste them directly, rather than guessing from this doc's own (incorrect) prior claim — the same "verify the real live state before trusting a repo/doc claim" discipline already applied elsewhere in this project (e.g. the 2026-07-23 workflow 25/23 live-vs-repo diffs).
+
+**Fix — published Storage rules now explicitly grant `files/` and `audio/` to the allowed staff accounts**, mirroring Firestore's `isAllowed()` allowlist pattern but **deliberately narrower — 2 accounts, not 3.** Justin's call: Storage doesn't need to include `cubeworkautomation@gmail.com` (one of the 3 Firestore-allowed emails) — an intentional asymmetry between Firestore (3 accounts) and Storage (2 accounts), not a bug. Live rules now:
+```
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /users/{uid}/{allPaths=**} {
+      allow read, write: if request.auth.uid == uid;
+    }
+    match /files/{allPaths=**} {
+      allow read, write: if request.auth != null
+        && request.auth.token.email.lower() in [
+          'jchoustin91@gmail.com',
+          'justin.cho@cubework.com'
+        ];
+    }
+    match /audio/{allPaths=**} {
+      allow read, write: if request.auth != null
+        && request.auth.token.email.lower() in [
+          'jchoustin91@gmail.com',
+          'justin.cho@cubework.com'
+        ];
+    }
+  }
+}
+```
+Published and confirmed live — re-ran the same live `uploadBytes` diagnostic against `files/` after Justin published, got a real success (upload + download URL + cleanup all worked). Storage Rules aren't checked into this repo (edited by hand in the Firebase console, same as before) — this block is kept here as the source-of-truth record of what's actually live, since the 2026-07-09 note turned out to be exactly the kind of stale/unverified claim this project has been burned by before.
+
+**Correction to the 2026-07-09 Future Plan session's claim:** that section says "no Storage rules change needed... reusing the already-permitted files/ prefix" — that was incorrect (or became incorrect later). If Future Plan/file-attachment/voice-note uploads were quietly failing before this fix, they should work now that `files/`/`audio/` are explicitly granted.
+
+**Not yet re-verified:** whether Future Plan PDF upload and note file/voice attachments were actually broken in practice before this fix, or just theoretically exposed to the same gap — worth a quick real test next time either feature is used, now that the rule is fixed either way.
+
+**New files:** none. **Changed files:** none in-repo (Storage rules live only in the Firebase console). `CLAUDE.md` (this section).
