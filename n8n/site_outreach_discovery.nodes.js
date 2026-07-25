@@ -34,8 +34,14 @@ const address = b.address || '';
 if (!propId) throw new Error('Missing body.propId');
 if (!address) throw new Error('Missing body.address');
 
+// 'importer' (bare word) was changed to 'import export company' 2026-07-23 —
+// on Google Maps, "importer" reads heavily as SoCal car-import/JDM-parts
+// culture (used car dealers, auto parts stores), not trade/logistics
+// importers. A real Ontario test batch on 'importer' came back ~30% noise
+// (used car dealers, an auto parts store, a flag store, a government export
+// office) — see CATEGORY_DENYLIST below for the second half of this fix.
 const DEFAULT_CATEGORIES = [
-  'importer', 'distribution company', 'wholesale distributor', '3PL logistics company',
+  'import export company', 'distribution company', 'wholesale distributor', '3PL logistics company',
   'freight forwarder', 'ecommerce fulfillment center', 'trucking company', 'manufacturer',
   'moving and storage company'
 ];
@@ -185,7 +191,26 @@ function pickContact(leads) {
   return leads.find(l => l && l.email) || leads[0];
 }
 
+// Category denylist (added 2026-07-23) — Google Maps' own category
+// classification for a "importer"/"import export company" style keyword
+// search still lets some clearly irrelevant business types through (real
+// examples from a live Ontario test): car dealers and auto parts stores
+// (SoCal's JDM/import-tuner car culture collides with the word "import"),
+// flag stores, and government offices. Substring match against
+// primary_category, case-insensitive. Never touches all_categories or
+// anything else — a row is dropped from the accumulator entirely if its
+// primary_category matches, so it's never written to Firestore at all.
+const CATEGORY_DENYLIST = [
+  'car dealer', 'auto parts store', 'auto repair', 'car wash', 'car rental',
+  'government office', 'flag store'
+];
+function isDenylisted(category) {
+  const c = String(category || '').toLowerCase();
+  return CATEGORY_DENYLIST.some(bad => c.includes(bad));
+}
+
 for (const row of rowsIn) {
+  if (isDenylisted(row.primary_category)) continue; // e.g. "Used car dealer", "Auto parts store" — not a real warehouse-space prospect
   const contact = pickContact(row.leads_enrichment);
   ws.rows.push({
     place_cid: row.place_id || row.data_id || null,

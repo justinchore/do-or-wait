@@ -1,0 +1,167 @@
+{
+  "name": "CW — 28. Contact Enrichment Test Bench (UpLead)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "contact-enrich-uplead-test",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "cw-28-001",
+      "name": "Test webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "contact-enrich-uplead-test"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Test-bench input for UpLead: {domain|website, job_function?, job_sub_function?,\n// management_level?, title?, num_results?, count_only?}. Pure sandbox -- writes\n// NOTHING to Firestore, not wired into workflows 25/26. Verified against real\n// UpLead docs (docs.uplead.com) 2026-07-23 before building, same discipline as\n// every other integration in this project (CoreClaw, PDL).\n//\n// WHY UPLEAD, AFTER PDL (added 2026-07-23): PDL's contact fields (work_email,\n// mobile_phone, phone_numbers) came back masked as a literal boolean `true`\n// even on the paid Person Enrichment endpoint, despite those being documented\n// Base-schema fields -- a dead end that neither PDL's public docs nor field-\n// bundle docs explain. Justin's call: abandon PDL for CONTACT enrichment (it\n// may still be fine for general people/company background info, just not for\n// getting a reachable email/phone). UpLead's Prospector API returns FULLY\n// UNMASKED contact data directly in the search response (real `email`,\n// `email_status`, `phone_number`, `mobile_directdial`) -- no separate paid\n// reveal step like PDL needed. It also has a `job_function` filter (with\n// \"human resources\" as its own distinct value from \"operations\"/\n// \"manufacturing\") that PDL's seniority-only `job_title_levels` couldn't\n// offer -- directly solving the \"don't want to end up contacting HR\" problem\n// Justin hit with PDL's Coastal Pacific test (which returned an HR Manager\n// alongside two better-fit candidates).\n//\n// NO FREE PREVIEW ON A NORMAL ACCOUNT: UpLead's docs DO describe a masked\n// preview endpoint (`/v2/prospector-preview`, returns just name/title/company,\n// no contact info) but its own docs say \"Only for resellers\" -- not available\n// on a normal self-serve account. So unlike PDL's search-then-reveal design,\n// there is no zero-cost way to browse candidates before they're pulled and\n// billed. Justin's explicit call: fine, as long as the data quality is good --\n// just keep num_results capped low so cost stays predictable (his words:\n// \"keep that cap low\").\n//\n// COST CONTROL: `num_results` is hard-capped at MAX_RESULTS regardless of what\n// the caller requests (UpLead bills per contact RETURNED, same as PDL's\n// Person Search billing model -- see docs.uplead.com \"Prospector API\").\n// Defaults to DEFAULT_RESULTS if not specified. A `count_only:true` flag runs\n// the free/uncosted count-only mode instead (UpLead's own `count_only` param)\n// so total match volume can be checked before deciding how many to actually\n// pull.\nconst MAX_RESULTS = 5;\nconst DEFAULT_RESULTS = 2;\nconst b = $json.body || $json || {};\nlet website = (b.domain || b.website || '').trim();\n// Same protocol/www/path stripping this project already uses for CoreClaw and\n// PDL website fields (see openNPModal in index.html).\nlet domain = website.replace(/^https?:\\/\\//i, '').replace(/^www\\./i, '').split('/')[0].trim();\nif (!domain) {\n  throw new Error('Test input needs a domain (or website) to search on.');\n}\nlet numResults = parseInt(b.num_results, 10);\nif (!Number.isFinite(numResults) || numResults < 1) numResults = DEFAULT_RESULTS;\nif (numResults > MAX_RESULTS) numResults = MAX_RESULTS;\nreturn [{ json: {\n  domain,\n  job_function: (b.job_function || '').trim(),\n  job_sub_function: (b.job_sub_function || '').trim(),\n  management_level: (b.management_level || '').trim(),\n  title: (b.title || '').trim(),\n  num_results: numResults,\n  count_only: !!b.count_only\n} }];"
+      },
+      "id": "cw-28-002",
+      "name": "Parse test input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Builds the query string by hand (rather than n8n's query-parameters UI)\n// so optional/blank fields are cleanly omitted instead of being sent as\n// empty-string params, which UpLead's API may reject or mis-handle. Every\n// field here is a real, docs-confirmed Prospector API parameter (see\n// docs.uplead.com \"Prospector API\" -> Parameters table): domain (required),\n// job_function, job_sub_function, management_level, title (all optional\n// string filters), per_page (bounded 1-100, we cap far lower for cost\n// control), page, count_only.\nconst ctx = $json;\nconst parts = [];\nfunction add(key, val) {\n  if (val === undefined || val === null || val === '') return;\n  parts.push(encodeURIComponent(key) + '=' + encodeURIComponent(val));\n}\nadd('domain', ctx.domain);\nadd('job_function', ctx.job_function);\nadd('job_sub_function', ctx.job_sub_function);\nadd('management_level', ctx.management_level);\nadd('title', ctx.title);\nif (ctx.count_only) {\n  add('count_only', 'true');\n} else {\n  add('per_page', ctx.num_results);\n  add('page', 1);\n}\nreturn [{ json: { ...ctx, qs: parts.join('&') } }];"
+      },
+      "id": "cw-28-003",
+      "name": "Build UpLead query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.uplead.com/v2/prospector-search?' + $json.qs }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "continueOnFail": true
+        }
+      },
+      "id": "cw-28-004",
+      "name": "UpLead: Prospector search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ],
+      "continueOnFail": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "UpLead API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Shapes a compact, side-by-side-comparable test result -- same purpose as\n// wf27's \"Build test response\" for PDL, adapted for UpLead's response shape\n// (docs.uplead.com \"Prospector API\" -> example response). Nothing written to\n// Firestore. UpLead's contacts come back FULLY UNMASKED already (real email/\n// phone strings, not booleans), so unlike wf27 there's no separate reveal\n// step or `id`-for-later-reveal field needed here -- what you see in this\n// response IS the real, usable contact.\nconst ctx = $('Build UpLead query').first().json;\nconst resp = $json || {};\nconst hadData = !!(resp && resp.data);\nif (!hadData) {\n  return [{ json: {\n    provider: 'uplead',\n    error: true,\n    raw: resp,\n    note: 'UpLead API call did not return the expected {data:...} shape -- likely a 400 (bad params)/401 (bad API key)/403 (no active subscription)/429 (rate limited). See \"raw\" for the actual response.'\n  } }];\n}\nconst rows = (resp.data && Array.isArray(resp.data.results)) ? resp.data.results : [];\nconst meta = (resp.data && resp.data.meta) ? resp.data.meta : {};\nconst countOnlyResult = (resp.data && typeof resp.data.count === 'number') ? resp.data.count : null;\nconst credits = (resp.userInfo && typeof resp.userInfo.availableCredits === 'number') ? resp.userInfo.availableCredits : null;\nconst candidates = rows.map(r => ({\n  id: r.id || null,\n  full_name: [r.first_name, r.last_name].filter(Boolean).join(' ') || null,\n  title: r.title || null,\n  job_function: r.job_function || null,\n  job_sub_function: r.job_sub_function || null,\n  management_level: r.management_level || null,\n  email: r.email || null,\n  email_status: r.email_status || null,\n  has_valid_email: r.email_status === 'valid',\n  phone_number: r.phone_number || null,\n  mobile_directdial: r.mobile_directdial || null,\n  linkedin_url: r.linkedin_url || null,\n  company_name: r.company_name || null,\n  industry: r.industry || null\n}));\nreturn [{ json: {\n  provider: 'uplead',\n  tested_business: { domain: ctx.domain, job_function: ctx.job_function, job_sub_function: ctx.job_sub_function, management_level: ctx.management_level, title: ctx.title },\n  count_only_result: countOnlyResult,\n  total_matches: (typeof meta.total === 'number') ? meta.total : null,\n  candidates_returned: candidates.length,\n  available_credits: credits,\n  candidates,\n  note: ctx.count_only\n    ? 'count_only run -- no contacts were pulled or billed, this just reports total_matches (see count_only_result).'\n    : (candidates.length === 0 ? 'No contacts matched this domain/job_function/management_level combination -- try loosening job_function or dropping management_level.' : undefined)\n} }];"
+      },
+      "id": "cw-28-005",
+      "name": "Build test response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "cw-28-006",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Test webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse test input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse test input": {
+      "main": [
+        [
+          {
+            "node": "Build UpLead query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build UpLead query": {
+      "main": [
+        [
+          {
+            "node": "UpLead: Prospector search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "UpLead: Prospector search": {
+      "main": [
+        [
+          {
+            "node": "Build test response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build test response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Los_Angeles"
+  },
+  "versionId": "cw-workflow-028"
+}

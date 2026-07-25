@@ -56,6 +56,20 @@
 // retroactively surface - same "starts tracking from when it goes live, not
 // before" limitation as every other monitor in this project (e.g. the
 // Follow-up Scanner, workflow 6).
+//
+// EXTENDED 2026-07-23 to also watch site_outreach (Nearby Prospects, n8n
+// workflow 25/26) - a third collection alongside outreach/property_outreach,
+// ahead of the Ontario Airport engagement pilot needing reply visibility.
+// Same "Has any new mail?" true branch now also fans out to a third Firestore
+// runQuery HTTP node ("Query site_outreach by sender" - plain HTTP node, no
+// Code, identical shape to "Query outreach by sender"/"Query property_outreach
+// by sender" except it filters on the `contact_email` field, not `email` -
+// site_outreach's contact fields are all contact_* per CoreClaw's enrichment
+// shape). "Match + build items" (below) decodes and matches that third
+// result set too, and a third "Has site_outreach items?" IF -> "POST
+// site_outreach writer" pair (plain HTTP nodes, same bulk_update-via-
+// workflow-20 pattern) completes the mirror. No new Code-node logic beyond
+// what's already inline in "Match + build items" below.
 // ─────────────────────────────────────────────────────────────────────────
 
 // ===== NODE "Get scan window" ===============================================
@@ -123,9 +137,9 @@ sd2.last_scan_iso = new Date(new Date(nowIso2).getTime() - OVERLAP_MIN * 60 * 10
 return [{ json: { saved: true, next_scan_from: sd2.last_scan_iso } }];
 
 
-// ===== NODE "Match + build items" (fed from "Query outreach by sender", after the "Has any new mail?" IF true branch) ====
-// Both runQuery calls (the two HTTP nodes querying outreach and
-// property_outreach by sender address) may come back as either ONE item
+// ===== NODE "Match + build items" (fed from all three "Query ... by sender" nodes, after the "Has any new mail?" IF true branch) ====
+// The three runQuery calls (HTTP nodes querying outreach, property_outreach,
+// and site_outreach by sender address) may each come back as either ONE item
 // whose json is the raw response array, or (n8n's usual auto-behavior for a
 // top-level JSON array response) one item PER array element - collectAll()
 // below handles either shape. Firestore's runQuery response is a stream of
@@ -167,8 +181,27 @@ function extractMatches(rows) {
 const senderMap2 = $('Extract distinct senders').first().json.senderMap || {};
 const outreachRows = collectAll('Query outreach by sender');
 const poRows = collectAll('Query property_outreach by sender');
+const soRows = collectAll('Query site_outreach by sender');
 const outreachMatches = extractMatches(outreachRows);
 const poMatches = extractMatches(poRows);
+// site_outreach docs key their contact under contact_email, not email -
+// extractMatches() only ever reads f.email, so build a tiny local matcher for
+// the contact_email field rather than complicating the shared helper for a
+// one-off field-name difference (see the site_outreach/{id} schema in
+// CLAUDE.md - its contact fields are all contact_* per CoreClaw's enrichment
+// shape, unlike outreach/property_outreach's plain `email` field).
+function extractMatchesSO(rows) {
+  const out = [];
+  for (const row of (rows || [])) {
+    const d = row && row.document; if (!d) continue;
+    const f = d.fields || {};
+    const email = decode(f.contact_email); if (!email) continue;
+    const id = (d.name || '').split('/').pop();
+    out.push({ id, email: String(email).toLowerCase() });
+  }
+  return out;
+}
+const soMatches = extractMatchesSO(soRows);
 const nowIso3 = new Date().toISOString();
 function toItems(matches) {
   return matches.map(m => {
@@ -186,7 +219,9 @@ function toItems(matches) {
 }
 const outreachItems = toItems(outreachMatches);
 const propertyOutreachItems = toItems(poMatches);
+const siteOutreachItems = toItems(soMatches);
 return [{ json: {
-  outreachItems, propertyOutreachItems,
-  outreachCount: outreachItems.length, propertyOutreachCount: propertyOutreachItems.length
+  outreachItems, propertyOutreachItems, siteOutreachItems,
+  outreachCount: outreachItems.length, propertyOutreachCount: propertyOutreachItems.length,
+  siteOutreachCount: siteOutreachItems.length
 } }];

@@ -1,0 +1,1 @@
+{"scraper_slug":"01KPD6M5YQADCQKGVKPDZVYC63","version":"v1.2.7","is_async":true,"input":{"parameters":{"system":{"cpus":0.125,"memory":512,"execute_limit_time_seconds":1800,"max_total_charge":0,"max_total_traffic":0,"proxy_region":"US"},"custom":{"keywords":[{"keyword":"importer"}],"base_location":"Ontario,USA","max_results":1,"max_leads_per_place":2}}}}

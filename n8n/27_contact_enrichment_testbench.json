@@ -1,0 +1,340 @@
+{
+  "name": "CW \u2014 27. Contact Enrichment Test Bench (PDL)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "contact-enrich-test",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "cw-27-001",
+      "name": "Test webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "contact-enrich-test"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Test-bench input: {name, website, city, state, category} to search, OR\n// {reveal_id} to reveal one specific candidate's full contact info (email,\n// phone) that a prior search call returned masked. This is a pure sandbox\n// rig -- nothing here is written to Firestore, and it's not wired into the\n// real site_outreach discovery/research pipeline (workflows 25/26). It\n// exists to let Justin try real Ontario Airport (or any) businesses against\n// People Data Labs before deciding whether PDL's hit rate/email quality is\n// good enough to wire into the real pipeline as a CoreClaw contact-\n// enrichment replacement.\n//\n// SEARCH-THEN-REVEAL DESIGN (added 2026-07-23, cont. #4): the first real\n// test run showed PDL's Person Search returns contact fields (work_email,\n// mobile_phone, phone_numbers) masked down to a boolean `true` (\"yes, this\n// exists\") rather than the actual value on this plan -- confirmed against\n// PDL's real docs, not guessed: the Person Search API's `data[]` items each\n// carry a real, reusable `id` (docs.peopledatalabs.com/docs/output-response-\n// person-search-api), and that same id is exactly what the separate Person\n// Enrichment API's `pdl_id` parameter expects (docs.peopledatalabs.com/docs/\n// input-parameters-person-enrichment-api) to do a one-to-one match and\n// return the full, unmasked record. Justin's explicit call: this two-step\n// shape is a FEATURE, not a bug -- he wants the same control Apollo's old\n// search-then-reveal flow gave (wf12's People Search + wf16a's Phone\n// Reveal): see every masked candidate for free from Person Search, then\n// only pay the separate per-match Enrichment cost for the ONE candidate he\n// actually wants to contact, instead of PDL silently billing every returned\n// search candidate for full reveal.\nconst b = $json.body || $json || {};\nconst name = (b.name || '').trim();\nlet website = (b.website || '').trim();\n// Strip protocol/www/path down to a bare registrable domain, same\n// normalization CoreClaw-facing code in this project already does for\n// website fields (see openNPModal's website link handling in index.html).\nlet domain = '';\nif (website) {\n  domain = website.replace(/^https?:\\/\\//i, '').replace(/^www\\./i, '').split('/')[0].trim();\n}\nconst revealId = (b.reveal_id || '').trim();\nif (!revealId && !name && !domain) {\n  throw new Error('Test input needs at least a name or a website/domain to search on (or a reveal_id from a prior search result to reveal that one candidate).');\n}\nreturn [{ json: {\n  name, domain,\n  city: (b.city || '').trim(),\n  state: (b.state || '').trim(),\n  category: (b.category || '').trim(),\n  reveal_id: revealId\n} }];"
+      },
+      "id": "cw-27-002",
+      "name": "Parse test input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.reveal_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cw-27-008",
+      "name": "Check reveal mode",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.peopledatalabs.com/v5/person/enrich",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "pdl_id",
+              "value": "={{ $json.reveal_id }}"
+            }
+          ]
+        },
+        "options": {
+          "continueOnFail": true
+        }
+      },
+      "id": "cw-27-009",
+      "name": "PDL: Reveal contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        160
+      ],
+      "continueOnFail": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "PDL API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Shapes the reveal-mode response -- one specific candidate's full,\n// unmasked contact info (real email/phone, not the boolean presence flags\n// Person Search returns). Nothing written to Firestore, same as every other\n// node in this test bench.\nconst resp = $json || {};\nconst person = (resp && resp.status === 200) ? (resp.data || resp) : null;\nfunction pickEmail(r) {\n  if (!r) return null;\n  if (r.work_email) return r.work_email;\n  const emails = Array.isArray(r.emails) ? r.emails : [];\n  const withAddr = emails.find(e => e && e.address);\n  return withAddr ? withAddr.address : (r.recommended_personal_email || null);\n}\nfunction pickPhone(r) {\n  if (!r) return null;\n  if (r.mobile_phone) return r.mobile_phone;\n  const phones = Array.isArray(r.phone_numbers) ? r.phone_numbers : [];\n  return phones.length ? phones[0] : null;\n}\nreturn [{ json: {\n  provider: 'pdl',\n  mode: 'reveal',\n  found: !!person,\n  likelihood: (typeof resp.likelihood === 'number') ? resp.likelihood : null,\n  full_name: person ? (person.full_name || null) : null,\n  job_title: person ? (person.job_title || null) : null,\n  email: pickEmail(person),\n  phone: pickPhone(person),\n  linkedin_url: person ? (person.linkedin_url || null) : null,\n  job_last_verified: person ? (person.job_last_verified || null) : null,\n  note: person ? undefined : 'No match found for this reveal_id -- double check it was copied from a real candidate\\'s \"id\" field in a prior search response.'\n} }];"
+      },
+      "id": "cw-27-010",
+      "name": "Build reveal response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.peopledatalabs.com/v5/company/enrich",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "website",
+              "value": "={{ $json.domain }}"
+            },
+            {
+              "name": "min_likelihood",
+              "value": "4"
+            }
+          ]
+        },
+        "options": {
+          "continueOnFail": true
+        }
+      },
+      "id": "cw-27-003",
+      "name": "PDL: Company size lookup",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "continueOnFail": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "PDL API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Derive a job_title_levels target list from the company's PDL size bucket --\n// this is the \"filters for positions depending on the size of the company\"\n// behavior Justin asked to replicate from the old Apollo pipeline (wf12).\n// PDL's canonical size buckets: 1-10, 11-50, 51-200, 201-500, 501-1000,\n// 1001-5000, 5001-10000, 10001+ (see docs.peopledatalabs.com/docs/company-sizes,\n// confirmed 2026-07-23). At a small owner-operated SoCal shop, the real\n// decision-maker is often literally titled \"Owner\" or \"General Manager,\" not\n// a formal C-suite -- so SMALL includes 'manager', not just 'owner'/'cxo'.\nconst TIERS = {\n  SMALL: ['owner', 'cxo', 'manager', 'partner'],\n  MID:   ['manager', 'director', 'cxo'],\n  LARGE: ['director', 'vp', 'cxo'],\n  // Used when PDL has no company record at all for this website (common for\n  // very small/low-web-presence businesses -- exactly the segment CoreClaw's\n  // LinkedIn-sourced contacts were already weakest on) or size come back\n  // blank. Broad, so the Person Search below still has something to prefer.\n  UNKNOWN: ['owner', 'cxo', 'manager', 'director']\n};\nfunction sizeToTier(size) {\n  if (!size) return 'UNKNOWN';\n  if (size === '1-10' || size === '11-50') return 'SMALL';\n  if (size === '51-200' || size === '201-500') return 'MID';\n  return 'LARGE'; // 501-1000 / 1001-5000 / 5001-10000 / 10001+\n}\nconst resp = $json || {};\n// Company Enrichment returns a single object (status 200 + fields at top\n// level) on a match, or a non-200 status (e.g. 404) when nothing matched --\n// continueOnFail is set on that node, so a miss lands here as an error-ish\n// item rather than throwing; handle both shapes defensively.\nconst company = (resp && resp.status === 200) ? resp : null;\nconst size = company ? (company.size || null) : null;\nconst tierName = sizeToTier(size);\nreturn [{ json: {\n  ...($('Parse test input').first().json),\n  company_found: !!company,\n  company_size: size,\n  company_employee_count: company ? (company.employee_count || null) : null,\n  tier_name: tierName,\n  tier_levels: TIERS[tierName]\n} }];"
+      },
+      "id": "cw-27-004",
+      "name": "Pick title tier",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.peopledatalabs.com/v5/person/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: { bool: { must: [ { term: { job_company_website: $json.domain } } ], should: [ { terms: { job_title_levels: $json.tier_levels } } ] } }, size: 3, dataset: 'email', pretty: false }) }}",
+        "options": {
+          "continueOnFail": true
+        }
+      },
+      "id": "cw-27-005",
+      "name": "PDL: Person search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        0
+      ],
+      "continueOnFail": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "PDL API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Shapes a compact, side-by-side-comparable test result. Nothing is written\n// to Firestore -- this is purely for Justin to eyeball in the webhook\n// response (or in n8n's execution log) while evaluating PDL.\nconst ctx = $('Pick title tier').first().json;\nconst resp = $json || {};\nconst rows = (resp && Array.isArray(resp.data)) ? resp.data : [];\nfunction pickEmail(r) {\n  if (r.work_email) return r.work_email;\n  const emails = Array.isArray(r.emails) ? r.emails : [];\n  const withAddr = emails.find(e => e && e.address);\n  return withAddr ? withAddr.address : (r.recommended_personal_email || null);\n}\nconst candidates = rows.map(r => ({\n  id: r.id || null,\n  full_name: r.full_name || null,\n  job_title: r.job_title || null,\n  job_title_levels: r.job_title_levels || [],\n  email: pickEmail(r),\n  has_email: !!pickEmail(r),\n  mobile_phone: r.mobile_phone || null,\n  phone_numbers: r.phone_numbers || [],\n  linkedin_url: r.linkedin_url || null,\n  job_last_verified: r.job_last_verified || null,\n  num_sources: r.num_sources || null\n}));\nreturn [{ json: {\n  provider: 'pdl',\n  tested_business: { name: ctx.name, domain: ctx.domain, city: ctx.city, state: ctx.state, category: ctx.category },\n  company_lookup: { found: ctx.company_found, size: ctx.company_size, employee_count: ctx.company_employee_count },\n  title_tier_used: ctx.tier_name,\n  title_levels_searched: ctx.tier_levels,\n  total_matches_in_pdl: (resp && typeof resp.total === 'number') ? resp.total : null,\n  candidates_returned: candidates.length,\n  candidates,\n  how_to_reveal: candidates.length > 0 ? 'Search results are masked (has_email/mobile_phone show presence only, not the real value) -- pick ONE candidate\\'s \"id\" and POST {reveal_id: \"<that id>\"} to this same webhook to reveal just that person\\'s real email/phone. This is deliberate, same as Apollo\\'s old search-then-reveal flow: you only pay the separate per-match reveal cost for the person you actually want.' : undefined,\n  note: candidates.length === 0\n    ? 'No person records matched -- either PDL has no coverage for this business, or the job_company_website term filter did not match (double-check the domain PDL has on file vs. the website you tested with).'\n    : (candidates.every(c => !c.has_email) ? 'Matches found but none carried a usable email in this response -- consider whether the dataset=email param is actually narrowing results as intended.' : undefined)\n} }];"
+      },
+      "id": "cw-27-006",
+      "name": "Build test response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "cw-27-007",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Test webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse test input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse test input": {
+      "main": [
+        [
+          {
+            "node": "Check reveal mode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check reveal mode": {
+      "main": [
+        [
+          {
+            "node": "PDL: Reveal contact",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "PDL: Company size lookup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PDL: Reveal contact": {
+      "main": [
+        [
+          {
+            "node": "Build reveal response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build reveal response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PDL: Company size lookup": {
+      "main": [
+        [
+          {
+            "node": "Pick title tier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick title tier": {
+      "main": [
+        [
+          {
+            "node": "PDL: Person search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PDL: Person search": {
+      "main": [
+        [
+          {
+            "node": "Build test response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build test response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Los_Angeles"
+  },
+  "versionId": "cw-workflow-027"
+}

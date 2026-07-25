@@ -1,5 +1,5 @@
 {
-  "name": "CW — 23. Outreach Reply Scanner",
+  "name": "CW \u2014 23. Outreach Reply Scanner",
   "nodes": [
     {
       "parameters": {
@@ -42,7 +42,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Bounded cold-start: the very first run only looks back 24h (not the whole\n// mailbox history) so this workflow never has to wade through years of old\n// mail. Every run after that resumes exactly where the last one left off,\n// persisted in this workflow's own static data — same mechanism workflow 18\n// uses for its tab accumulator. Fed by BOTH the cron trigger and the manual\n// \"Check now\" webhook — either path starts from here identically.\nconst sd = $getWorkflowStaticData('global');\nconst now = new Date();\nlet sinceIso = sd.last_scan_iso;\nif (!sinceIso) {\n  sinceIso = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();\n}\nreturn [{ json: { sinceIso, nowIso: now.toISOString() } }];"
+        "jsCode": "// Bounded cold-start: the very first run only looks back 24h (not the whole\n// mailbox history) so this workflow never has to wade through years of old\n// mail. Every run after that resumes exactly where the last one left off,\n// persisted in this workflow's own static data \u2014 same mechanism workflow 18\n// uses for its tab accumulator. Fed by BOTH the cron trigger and the manual\n// \"Check now\" webhook \u2014 either path starts from here identically.\nconst sd = $getWorkflowStaticData('global');\nconst now = new Date();\nlet sinceIso = sd.last_scan_iso;\nif (!sinceIso) {\n  sinceIso = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();\n}\nreturn [{ json: { sinceIso, nowIso: now.toISOString() } }];"
       },
       "id": "cw-23-002",
       "name": "Get scan window",
@@ -240,7 +240,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Both runQuery calls above may come back as either ONE item whose json is\n// the raw response array, or (n8n's usual auto-behavior for a top-level JSON\n// array response) one item PER array element - collectAll() below handles\n// either shape so this doesn't silently drop rows depending on which one\n// n8n chose. Firestore's runQuery response is a stream of RunQueryResponse\n// objects; entries with no actual match just don't carry a document field.\nfunction collectAll(nodeName) {\n  const items = $(nodeName).all();\n  const out = [];\n  for (const it of items) {\n    const j = it.json;\n    if (Array.isArray(j)) out.push(...j); else out.push(j);\n  }\n  return out;\n}\nfunction decode(v) {\n  if (v == null) return null;\n  if ('stringValue' in v) return v.stringValue;\n  if ('integerValue' in v) return parseInt(v.integerValue, 10);\n  if ('doubleValue' in v) return v.doubleValue;\n  if ('booleanValue' in v) return v.booleanValue;\n  if ('nullValue' in v) return null;\n  if ('arrayValue' in v) return (v.arrayValue.values || []).map(decode);\n  if ('mapValue' in v) { const o = {}; for (const k in (v.mapValue.fields || {})) o[k] = decode(v.mapValue.fields[k]); return o; }\n  return null;\n}\nfunction extractMatches(rows) {\n  const out = [];\n  for (const row of (rows || [])) {\n    const d = row && row.document; if (!d) continue;\n    const f = d.fields || {};\n    const email = decode(f.email); if (!email) continue;\n    const id = (d.name || '').split('/').pop();\n    out.push({ id, email: String(email).toLowerCase() });\n  }\n  return out;\n}\nconst senderMap = $('Extract distinct senders').first().json.senderMap || {};\nconst outreachRows = collectAll('Query outreach by sender');\nconst poRows = collectAll('Query property_outreach by sender');\nconst outreachMatches = extractMatches(outreachRows);\nconst poMatches = extractMatches(poRows);\nconst nowIso = new Date().toISOString();\nfunction toItems(matches) {\n  return matches.map(m => {\n    const info = senderMap[m.email] || {};\n    return { id: m.id, fields: {\n      reply_detected: true,\n      reply_detected_at: nowIso,\n      reply_received_at: info.receivedAt || '',\n      reply_subject: info.subject || '',\n      reply_snippet: info.bodyPreview || '',\n      reply_web_link: info.webLink || '',\n      reply_seen: false\n    } };\n  });\n}\nconst outreachItems = toItems(outreachMatches);\nconst propertyOutreachItems = toItems(poMatches);\nreturn [{ json: {\n  outreachItems, propertyOutreachItems,\n  outreachCount: outreachItems.length, propertyOutreachCount: propertyOutreachItems.length\n} }];"
+        "jsCode": "// Both runQuery calls above may come back as either ONE item whose json is\n// the raw response array, or (n8n's usual auto-behavior for a top-level JSON\n// array response) one item PER array element - collectAll() below handles\n// either shape so this doesn't silently drop rows depending on which one\n// n8n chose. Firestore's runQuery response is a stream of RunQueryResponse\n// objects; entries with no actual match just don't carry a document field.\nfunction collectAll(nodeName) {\n  const items = $(nodeName).all();\n  const out = [];\n  for (const it of items) {\n    const j = it.json;\n    if (Array.isArray(j)) out.push(...j); else out.push(j);\n  }\n  return out;\n}\nfunction decode(v) {\n  if (v == null) return null;\n  if ('stringValue' in v) return v.stringValue;\n  if ('integerValue' in v) return parseInt(v.integerValue, 10);\n  if ('doubleValue' in v) return v.doubleValue;\n  if ('booleanValue' in v) return v.booleanValue;\n  if ('nullValue' in v) return null;\n  if ('arrayValue' in v) return (v.arrayValue.values || []).map(decode);\n  if ('mapValue' in v) { const o = {}; for (const k in (v.mapValue.fields || {})) o[k] = decode(v.mapValue.fields[k]); return o; }\n  return null;\n}\nfunction extractMatches(rows) {\n  const out = [];\n  for (const row of (rows || [])) {\n    const d = row && row.document; if (!d) continue;\n    const f = d.fields || {};\n    const email = decode(f.email); if (!email) continue;\n    const id = (d.name || '').split('/').pop();\n    out.push({ id, email: String(email).toLowerCase() });\n  }\n  return out;\n}\nconst senderMap = $('Extract distinct senders').first().json.senderMap || {};\nconst outreachRows = collectAll('Query outreach by sender');\nconst poRows = collectAll('Query property_outreach by sender');\nconst soRows = collectAll('Query site_outreach by sender');\nconst outreachMatches = extractMatches(outreachRows);\nconst poMatches = extractMatches(poRows);\n// site_outreach docs key their contact under contact_email, not email \u2014 extractMatches()\n// only ever reads f.email, so build a tiny local matcher for the contact_email field\n// rather than complicating the shared helper for a one-off field-name difference.\nfunction extractMatchesSO(rows) {\n  const out = [];\n  for (const row of (rows || [])) {\n    const d = row && row.document; if (!d) continue;\n    const f = d.fields || {};\n    const email = decode(f.contact_email); if (!email) continue;\n    const id = (d.name || '').split('/').pop();\n    out.push({ id, email: String(email).toLowerCase() });\n  }\n  return out;\n}\nconst soMatches = extractMatchesSO(soRows);\nconst nowIso = new Date().toISOString();\nfunction toItems(matches) {\n  return matches.map(m => {\n    const info = senderMap[m.email] || {};\n    return { id: m.id, fields: {\n      reply_detected: true,\n      reply_detected_at: nowIso,\n      reply_received_at: info.receivedAt || '',\n      reply_subject: info.subject || '',\n      reply_snippet: info.bodyPreview || '',\n      reply_web_link: info.webLink || '',\n      reply_seen: false\n    } };\n  });\n}\nconst outreachItems = toItems(outreachMatches);\nconst propertyOutreachItems = toItems(poMatches);\nconst siteOutreachItems = toItems(soMatches);\nreturn [{ json: {\n  outreachItems, propertyOutreachItems, siteOutreachItems,\n  outreachCount: outreachItems.length, propertyOutreachCount: propertyOutreachItems.length,\n  siteOutreachCount: siteOutreachItems.length\n} }];"
       },
       "id": "cw-23-009",
       "name": "Match + build items",
@@ -350,6 +350,82 @@
         1960,
         160
       ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents:runQuery",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ structuredQuery: { from: [{ collectionId: 'site_outreach' }], where: { fieldFilter: { field: { fieldPath: 'contact_email' }, op: 'IN', value: { arrayValue: { values: $json.values.map(v => ({ stringValue: v })) } } } }, limit: 50 } }) }}",
+        "options": {}
+      },
+      "id": "cw-23-017",
+      "name": "Query site_outreach by sender",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1300,
+        440
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "7IVvQuErxEJPoaMY",
+          "name": "Firebase_SDK_do_or_wait"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond1",
+              "leftValue": "={{ $json.siteOutreachCount }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cw-23-018",
+      "name": "Has site_outreach items?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1740,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ailinker.item.com/webhook/firestore-write",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ collection: 'site_outreach', action: 'bulk_update', items: $json.siteOutreachItems }) }}",
+        "options": {}
+      },
+      "id": "cw-23-019",
+      "name": "POST site_outreach writer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1960,
+        380
+      ]
     }
   ],
   "connections": {
@@ -441,6 +517,11 @@
             "node": "Query property_outreach by sender",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Query site_outreach by sender",
+            "type": "main",
+            "index": 0
           }
         ],
         []
@@ -469,6 +550,11 @@
             "node": "Has property_outreach items?",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Has site_outreach items?",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -490,6 +576,29 @@
         [
           {
             "node": "POST property_outreach writer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Query site_outreach by sender": {
+      "main": [
+        [
+          {
+            "node": "Match + build items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has site_outreach items?": {
+      "main": [
+        [
+          {
+            "node": "POST site_outreach writer",
             "type": "main",
             "index": 0
           }

@@ -1150,10 +1150,19 @@
           <option value="bad_number">Bad number</option>
           <option value="do_not_call">Do not call</option>
           <option value="promoted">Promoted</option>
+          <option value="replied">Replied</option>
           <option value="archived">Archived</option>
         </select>
         <span id="np-meta" style="font-size:12px;color:var(--text2);"></span>
+        <button id="np-reply-check-btn" onclick="checkOutreachRepliesNow('np-reply-check-btn', event)" title="Run the reply scanner now instead of waiting for its next 2-hour check"
+               style="font-size:12px;border:1px solid var(--border);border-radius:8px;padding:6px 10px;cursor:pointer;background:var(--surface);color:var(--text);">⟳ Check now</button>
       </div>
+
+      <!-- Reply reminder banner (site_outreach businesses the mailbox scanner
+           detected an inbound reply from — see n8n workflow 23, Outreach Reply
+           Scanner, extended 2026-07-23 to watch this collection alongside
+           Outreach and Property Outreach) -->
+      <div id="np-reply-banner" style="display:none; margin-bottom:14px;"></div>
 
       <!-- Discover a site — works even before any records exist for that
            property (picks any known Avail location by id/address). Each
@@ -7262,11 +7271,45 @@ function notInterestedTwiceNP(r){ return Array.isArray(r.attempts) && r.attempts
 function renderNearbyProspects(){
   const host = document.getElementById('np-content'); if(!host) return;
   const showingArchived = npStatus === 'archived';
+  const showingReplied  = npStatus === 'replied';
   // Default missing fields at read time (records come straight off an n8n
   // bulk_update — see workflow 25 — and status/archived/attempts may be absent
   // on a never-touched record): status→'not_contacted', archived→false,
   // attempts→[]. discovered_at falls back to last_seen_at wherever it's shown.
   const all = npRows().filter(r => showingArchived ? !!r.archived : !r.archived);
+
+  // Reply banner + tab badge — same flag-only pattern as Outreach/Prop Outreach
+  // (see n8n workflow 23, Outreach Reply Scanner, extended 2026-07-23 to watch
+  // site_outreach alongside the other two collections). Never auto-promotes;
+  // just surfaces "go look". Matches on contact_email since that's the field
+  // this collection's reply-detection actually keys on (see the writer note
+  // in outreach_reply_scanner.nodes.js).
+  const npRepliedUnseen = all.filter(r => r.reply_detected && !r.reply_seen);
+  const npTab = document.querySelector('.tab-btn[data-tab="nearbyprospects"]');
+  if (npTab) {
+    npTab.innerHTML = npRepliedUnseen.length
+      ? `📍 Nearby Prospects <span class="tab-badge">${npRepliedUnseen.length}</span>`
+      : '📍 Nearby Prospects';
+  }
+  const npRBanner = document.getElementById('np-reply-banner');
+  if (npRBanner) {
+    if (npRepliedUnseen.length && npStatus !== 'replied') {
+      const names = npRepliedUnseen.slice(0, 3).map(r => esc(r.name || 'a business')).join(', ');
+      const more  = npRepliedUnseen.length > 3 ? ` +${npRepliedUnseen.length - 3} more` : '';
+      npRBanner.style.display = 'block';
+      npRBanner.innerHTML = `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;border:1.5px dashed #2563eb;background:rgba(37,99,235,.07);border-radius:12px;padding:11px 15px;">
+          <span style="font-size:20px;line-height:1;">📩</span>
+          <div style="flex:1;min-width:180px;font-size:13px;color:var(--text);">
+            <b>${npRepliedUnseen.length} prospect${npRepliedUnseen.length !== 1 ? 's' : ''}</b> replied
+            <span style="color:var(--text2);"> — ${names}${more}</span>
+          </div>
+          <button onclick="setNPStatus('replied')" style="font-size:12px;font-weight:700;border:none;background:#2563eb;color:#fff;border-radius:8px;padding:6px 13px;cursor:pointer;">Review replies →</button>
+        </div>`;
+    } else {
+      npRBanner.style.display = 'none';
+      npRBanner.innerHTML = '';
+    }
+  }
 
   const statusSel = document.getElementById('np-status');
   if(statusSel) statusSel.value = npStatus;
@@ -7304,7 +7347,8 @@ function renderNearbyProspects(){
   let rows = all;
   if(npLocation!=='all') rows = rows.filter(r=>r.location===npLocation);
   if(npCategory!=='all') rows = rows.filter(r=>r.search_category===npCategory);
-  if(!showingArchived && npStatus!=='all') rows = rows.filter(r=>(r.status||'not_contacted')===npStatus);
+  if(!showingArchived && !showingReplied && npStatus!=='all') rows = rows.filter(r=>(r.status||'not_contacted')===npStatus);
+  if(showingReplied) rows = rows.filter(r=>r.reply_detected);
   if(npSearch) rows = rows.filter(r => [r.name,r.address,r.notes,r.contact_name,r.google_category].some(x=>String(x||'').toLowerCase().includes(npSearch)));
 
   const meta = document.getElementById('np-meta');
@@ -7325,7 +7369,8 @@ function renderNearbyProspects(){
       const body = rows2.map(r=>{
         const status = r.status || 'not_contacted';
         const badge = `<span style="font-size:10px;font-weight:600;border-radius:10px;padding:2px 8px;white-space:nowrap;${NP_STATUS_COLOR[status]||''}">${esc(NP_STATUS_LABEL[status]||status)}</span>` +
-          (r.archived ? ` <span style="font-size:10px;font-weight:600;border-radius:10px;padding:2px 8px;white-space:nowrap;background:#f3f4f6;color:#6b7280;">🗄 Archived</span>` : '');
+          (r.archived ? ` <span style="font-size:10px;font-weight:600;border-radius:10px;padding:2px 8px;white-space:nowrap;background:#f3f4f6;color:#6b7280;">🗄 Archived</span>` : '') +
+          (r.reply_detected ? ` <span title="${r.reply_snippet ? esc(r.reply_snippet) : 'Replied'}" style="font-size:10px;font-weight:600;border-radius:10px;padding:2px 8px;white-space:nowrap;background:${r.reply_seen?'#e0e7ff':'#dbeafe'};color:${r.reply_seen?'#3730a3':'#1e40af'};">📩 ${r.reply_seen?'Replied':'Replied · new'}</span>` : '');
         const attempts = Array.isArray(r.attempts) ? r.attempts.length : 0;
         const contactCell = r.contact_name
           ? `${esc(r.contact_name||'')}${r.contact_title?' · '+esc(r.contact_title):''}`
@@ -7467,6 +7512,21 @@ function openNPModal(id){
         ? `${renderResearchBrief(r.research_brief)}${(()=>{const rd=fmtResearchDate(r.researched_at);return rd?`<div style="font-size:11px;color:var(--text2);margin-top:6px;">Researched ${rd}</div>`:'';})()}`
         : `<div style="color:var(--text2);font-size:13px;margin-top:4px;">Pull live web research on this business and draft a personalized cold email. Takes ~15s.</div>`}
     </div>`;
+  // Reply detected by n8n workflow 23 (Outreach Reply Scanner, extended
+  // 2026-07-23 to also watch site_outreach) — flag + info only, never
+  // auto-promotes. Same rendering pattern as Outreach's/Prop Outreach's
+  // replyBlock; matches on contact_email since that's this collection's
+  // actual contact field.
+  const npReplyDate = r.reply_received_at ? new Date(r.reply_received_at) : null;
+  const npReplyBlock = r.reply_detected ? `<div style="margin-top:14px;border:1.5px solid #2563eb;background:rgba(37,99,235,.06);border-radius:10px;padding:12px 14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#1e40af;">📩 Replied${npReplyDate && !isNaN(npReplyDate.getTime()) ? ' · ' + npReplyDate.toLocaleString() : ''}</div>
+        ${r.reply_seen ? '<span style="font-size:11px;color:var(--text2);">✓ Reviewed</span>' : `<button onclick="markNPReplySeen('${id}',event)" style="font-size:11px;font-weight:700;border:none;background:#2563eb;color:#fff;border-radius:7px;padding:4px 10px;cursor:pointer;">Mark reviewed</button>`}
+      </div>
+      ${r.reply_subject ? `<div style="font-size:13px;font-weight:600;margin-top:6px;">${esc(r.reply_subject)}</div>` : ''}
+      ${r.reply_snippet ? `<div style="font-size:13px;color:var(--text2);margin-top:2px;">${esc(r.reply_snippet)}</div>` : ''}
+      ${r.reply_web_link ? `<a href="${esc(fixThreadUrl(r.reply_web_link))}" target="_blank" rel="noopener" style="font-size:12px;${LINK}display:inline-block;margin-top:8px;">Open thread ↗</a>` : ''}
+    </div>` : '';
   const npVlist=Array.isArray(r.email_variants)?r.email_variants.filter(v=>v&&(v.subject||v.body)):[];
   const npVi=npVlist.length?Math.min(Math.max(npVariant[id]||0,0),npVlist.length-1):0;
   const npAv=npVlist.length?npVlist[npVi]:{subject:r.email_subject||'',body:r.email_body||''};
@@ -7506,6 +7566,7 @@ function openNPModal(id){
       <span style="font-size:12px;color:#6b7280;">🗄 Archived${notInterestedTwiceNP(r)?' — declined twice':''}</span>
       <button onclick="setNPArchived('${id}',false,event)" style="font-size:12px;padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);cursor:pointer;">↩ Restore</button>
     </div>` : ''}
+    ${npReplyBlock}
     <div style="margin-top:14px;display:flex;gap:6px;flex-wrap:wrap;">
       ${r.website?`<a href="${esc(r.website)}" target="_blank" rel="noopener" style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;color:#0969da;text-decoration:none;">🌐 Website</a>`:''}
       ${r.phone?`<a href="tel:${esc((r.phone||'').replace(/[^0-9+]/g,''))}" style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);text-decoration:none;">📞 ${esc(r.phone)}</a>`:''}
@@ -7555,6 +7616,15 @@ async function saveNPNotes(id, val){
   if(!id) return;
   try { await setDoc(doc(db,'site_outreach',id), { notes: val, updatedAt: new Date().toISOString() }, { merge:true }); }
   catch(e){ console.warn('saveNPNotes', e); }
+}
+
+// Acknowledge a detected reply (clears the tab badge/banner count for this
+// business without losing the historical reply_detected flag) — same
+// "mark seen, keep the record" pattern as markOutreachReplySeen/markPOReplySeen.
+async function markNPReplySeen(id, e){
+  if(e) e.stopPropagation();
+  if(!id) return;
+  try { await setDoc(doc(db,'site_outreach',id), { reply_seen: true }, { merge:true }); } catch(err){ console.warn('markNPReplySeen', err); }
 }
 
 async function logNPAttempt(id, outcome, e){
@@ -7957,6 +8027,7 @@ window.closeNPModal        = closeNPModal;
 window.npModalBgClick      = npModalBgClick;
 window.saveNPStatus        = saveNPStatus;
 window.saveNPNotes         = saveNPNotes;
+window.markNPReplySeen     = markNPReplySeen;
 window.logNPAttempt        = logNPAttempt;
 window.setNPArchived       = setNPArchived;
 window.promoteNPToLead     = promoteNPToLead;
