@@ -54,6 +54,17 @@
   textarea{ width:100%; min-height:70px; resize:vertical; }
   label.field-label{ font-size:12px; color:var(--text2); display:block; margin-bottom:4px; }
 
+  .sec{ border:1px solid var(--border); border-radius:8px; overflow:hidden; margin-bottom:8px; }
+  .sec-hd{
+    display:flex; align-items:center; justify-content:space-between; padding:12px 12px; cursor:pointer;
+    background:#fafafa; font-weight:700; font-size:13px; min-height:44px;
+  }
+  .sec-hd:hover{ background:#f3f4f6; }
+  .sec-hd-right{ font-weight:400; font-size:12px; color:var(--text2); display:flex; align-items:center; gap:8px; }
+  .sec-chevron{ display:inline-block; transition:transform .15s; }
+  .sec-chevron.open{ transform:rotate(180deg); }
+  .sec-body{ padding:8px; }
+
   .pill{ font-size:11px; padding:2px 9px; border-radius:20px; font-weight:600; white-space:nowrap; }
   .unit-row{
     display:flex; align-items:center; gap:10px; padding:9px 11px; border:1px solid var(--border); border-radius:8px; margin-bottom:6px;
@@ -217,9 +228,10 @@ let fpEditing = false;
 let fpDraft = null;                   // { imageUrl, storagePath, boxes:[{unitId,x,y,w,h}] }
 let fpPlaceUnit = '';
 let fpUploading = false;
+const expandedSections = new Set(); // 'propId::TYPE' — local UI state, collapsed by default
 
 function defaultSession(){
-  return { customerName:'', primaryProp:'', compareProps:[], highlighted:{}, addons:{}, pricing:{ rate:'', sf:'', term:'', discount:'', notes:'' } };
+  return { customerName:'', primaryProp:'', compareProps:[], highlighted:{}, addons:{}, pricing:{ rate:'', sf:'', term:'', notes:'' } };
 }
 
 function startLiveData(){
@@ -235,7 +247,7 @@ function startLiveData(){
         compareProps: d.compareProps || [],
         highlighted: d.highlighted || {},
         addons: d.addons || {},
-        pricing: Object.assign({ rate:'', sf:'', term:'', discount:'', notes:'' }, d.pricing || {})
+        pricing: Object.assign({ rate:'', sf:'', term:'', notes:'' }, d.pricing || {})
       });
       watchFloorplan(tourSession.primaryProp);
     }
@@ -310,6 +322,10 @@ window.toggleHighlight = function(propId, unitId){
     if (totalSf > 0) tourSession.pricing.sf = totalSf;
   }
   saveSession(); render();
+};
+window.toggleSection = function(key){
+  if (expandedSections.has(key)) expandedSections.delete(key); else expandedSections.add(key);
+  render();
 };
 window.toggleAddon = function(key){
   const a = tourSession.addons[key] || (tourSession.addons[key] = { checked:false, price:'' });
@@ -517,19 +533,27 @@ function renderGridView(propId, d){
   const groups = types.map(t => ({ t, list: units.filter(u => (u.type || '').toUpperCase() === t) })).filter(g => g.list.length);
   const others = units.filter(u => !types.includes((u.type || '').toUpperCase()));
   if (others.length) groups.push({ t: 'Other', list: others });
-  return groups.map(g => `
-    <div style="margin-bottom:10px;">
-      <div class="muted" style="font-weight:700;margin-bottom:4px;">${esc(g.t)}</div>
-      ${g.list.map(u => {
-        const status = unitStatus(u);
-        const hl = isHighlighted(propId, u.unit) ? ' hl' : '';
-        return `<div class="unit-row${hl}" onclick="toggleHighlight('${esc(propId)}','${esc(u.unit)}')">
-          <span class="u-id">${esc(u.unit)}</span>
-          <span class="u-meta">${fmtSf(u.sf)}</span>
-          ${statusPillHtml(status)}
-        </div>`;
-      }).join('')}
-    </div>`).join('');
+  return groups.map(g => {
+    const key = propId + '::' + g.t;
+    const open = expandedSections.has(key);
+    const availCount = g.list.filter(u => unitStatus(u) !== 'occupied').length;
+    const rows = g.list.map(u => {
+      const status = unitStatus(u);
+      const hl = isHighlighted(propId, u.unit) ? ' hl' : '';
+      return `<div class="unit-row${hl}" onclick="toggleHighlight('${esc(propId)}','${esc(u.unit)}')">
+        <span class="u-id">${esc(u.unit)}</span>
+        <span class="u-meta">${fmtSf(u.sf)}</span>
+        ${statusPillHtml(status)}
+      </div>`;
+    }).join('');
+    return `<div class="sec">
+      <div class="sec-hd" onclick="toggleSection('${esc(key)}')">
+        <span>${esc(g.t)}</span>
+        <span class="sec-hd-right">${availCount} of ${g.list.length} available <span class="sec-chevron${open ? ' open' : ''}">▾</span></span>
+      </div>
+      ${open ? `<div class="sec-body">${rows}</div>` : ''}
+    </div>`;
+  }).join('');
 }
 
 function renderComparePanel(){
@@ -605,10 +629,6 @@ function renderPricingPanel(){
           <option value="" ${!p.term ? 'selected' : ''}>—</option>
           ${['Month-to-month', '3 months', '6 months', '12 months', 'Custom'].map(t => `<option value="${t}" ${p.term === t ? 'selected' : ''}>${t}</option>`).join('')}
         </select>
-      </div>
-      <div style="flex:1;min-width:180px;">
-        <label class="field-label">Discount / promo</label>
-        <input type="text" style="width:100%;" placeholder="e.g. 10% off first 6mo" value="${esc(p.discount)}" onchange="setPricingField('discount', this.value)">
       </div>
     </div>
     <div class="hint" style="margin:-4px 0 10px;">Square footage fills in automatically when you click a unit above — still fine to type over it.</div>

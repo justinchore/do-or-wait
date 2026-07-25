@@ -1396,3 +1396,17 @@ Justin's ask: replace notepad + calculator for the post-tour numbers conversatio
 **To deploy:** `git push` the updated `tour.html`. Same as before — no Firestore rules, no Storage rules, no n8n involved.
 
 **New files:** none. **Changed files:** `do_or_wait/tour.html`, `CLAUDE.md` (this section).
+
+---
+
+## 2026-07-25 — `tour.html`: dropped Discount field, collapsible availability sections
+
+Two quick follow-ups from Justin: drop the Discount/promo field entirely (unused in practice), and make each availability section (WH/Office/Dock/Trailer/Parking/Other) collapsible — a property with a lot of units was forcing a long scroll to get to the pricing panel below.
+
+- **Discount removed** from `tourSession.pricing` (state, defaults, and the render panel) — `pricing` is now just `{rate, sf, term, notes}`.
+- **Collapsible sections (`renderGridView`)** — each unit-type group is now its own bordered row with a clickable header (`toggleSection(key)`, `key = propId::TYPE`) showing a live "N of M available" count and a chevron; the actual unit list only renders when expanded. **Collapsed by default** (`expandedSections` is a plain in-memory `Set`, not persisted to Firestore — same "local UI-only state" treatment as `fpEditing`, resets on reload, which is fine for this). This only applies to the plain-grid fallback view — the mapped site-plan view is a single image, not a list, so there was nothing to collapse there.
+- Validated the same way as every prior pass on this file: `node --check` on the extracted module script, HTML tag-balance check, and a grep confirming zero leftover `discount` references and every inline handler still resolving to a `window.*` exposure.
+
+**To deploy:** `git push` the updated `tour.html`. No Firestore/Storage/n8n changes.
+
+**New files:** none. **Changed files:** `do_or_wait/tour.html`, `CLAUDE.md` (this section).
