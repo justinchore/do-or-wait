@@ -1451,3 +1451,51 @@ Published and confirmed live — re-ran the same live `uploadBytes` diagnostic a
 **Not yet re-verified:** whether Future Plan PDF upload and note file/voice attachments were actually broken in practice before this fix, or just theoretically exposed to the same gap — worth a quick real test next time either feature is used, now that the rule is fixed either way.
 
 **New files:** none. **Changed files:** none in-repo (Storage rules live only in the Firebase console). `CLAUDE.md` (this section).
+
+---
+
+## 2026-07-26 — 📐 Tour Board link added to the main tab bar
+
+`index.html`'s tab bar gained a plain link to the new standalone `tour.html` (see the 2026-07-24/2026-07-25 sessions above for that tool's own build history): `<a class="tab-btn" href="tour.html" target="_blank" rel="noopener" style="text-decoration:none;display:inline-flex;align-items:center;" title="Opens the standalone post-tour numbers page in a new tab">📐 Tour Board ↗</a>`, inserted right after the 🤖 Assistant tab button. Deliberately a plain `<a>`, not a `data-tab` button — `tour.html` is its own file/page (own auth gate, no shared tab-bar state), so this just opens it in a new tab rather than trying to route it through `switchTab()`. **Automatically hidden for Lucy's Avail-only restricted role** — `lockToAvailReadOnly()` only re-shows `.tab-btn` elements matching `data-tab="avail"`/`data-tab="roster"`, and this link has no `data-tab` attribute at all, so it's excluded the same way every other non-Avail/non-Roster tab is, with zero extra gating code needed.
+
+**To deploy:** `git push` the updated `index.html`.
+
+**New files:** none. **Changed files:** `index.html` (tab bar), `CLAUDE.md` (this section).
+
+---
+
+## 2026-07-27 — Auto-log follow-up # + sent email content on the Leads tab
+
+Justin's ask: when a follow-up email actually gets sent from a lead card, automatically log to that lead which follow-up number it is and the full content of the email that went out — rather than the send leaving no trace at all. Confirmed scope directly with Justin (I'd raised whether Space Match re-engagement emails, and the Outreach/Prop Outreach/Nearby Prospects tabs' own drafted-email buttons, should get the same treatment — 7 "opens a pre-filled draft" buttons exist across the app in total): **"I don't think we need it for any outreach stuff... let's keep the auto logger strictly on followups that happen in the main leads tab."** So this is scoped to exactly the two real follow-up send paths on Leads — the cycled templates (Nudge/Random value/Break-up/stage-specific) and the Claude-generated draft (workflow 17) — and deliberately excludes Space Match (a distinct dead-lead re-engagement feature, not a "follow-up" in the app's own vocabulary) and every cold-outreach draft button on Outreach/Prop Outreach/Nearby Prospects (separate collections, out of scope).
+
+**Implementation (`index.html`):** a new shared helper, `logFollowupSent(lead, {subject, body, label})`, appends a normal lead thread entry — `{id, type:'wait', kind:'email', dir:'out', text:'✉️ Follow-up #N sent — <label>', followupNum:N, done:false, notes:[{id,type:'text',text:'Subject: ...\n\n...body...'}], createdAt}` — using the **existing** `entries[]`/`notes[]` schema and rendering (`renderEntry`/`renderNote`, text-note type) rather than inventing new UI: the full subject+body shows as a normal attached text note under the new entry, viewable/deletable the same way any other note is. `nextFollowupNum(lead)` computes N as `max(existing followupNum values) + 1` (starts at 1 for a lead with none), so numbering survives entries being added out of order or from other sources.
+
+Because the entry's `kind` is `'email'`/`dir` is `'out'` — the same contact-counting category `logTouch` already uses for 📞/💬 — this also fixes a real side effect Justin hadn't explicitly asked for but that follows directly from the schema: **sending a follow-up now resets the lead's "cold" follow-up-due clock** (`contactInfo()`/`isFollowupDue()` already treat any `kind:'email'` entry as real contact). Before this change, sending a follow-up left zero trace, so the lead looked exactly as cold a minute after the email went out as before it.
+
+**Wired into the two send functions themselves** (the single choke point each already has, including for the daily follow-up queue's Send button, which calls these same functions) rather than at each call site:
+- `openFollowupEmail(leadId, e)` — logs with `label` = whichever template's own `label` field `followupMsgFor()` already returns (First touch/Check-in/Post-tour/Proposal nudge/Nudge/Random value/Break-up).
+- `openGeneratedFollowupEmail(leadId, e)` — logs with a label derived from the draft's existing `source` field (`'Generated, from thread'` / `'Generated, from notes'` / `'Generated, from thread + notes'`).
+
+**Validated:** extracted the new logic into a stub harness and ran it with `node` (not just `--check`) against 5 real scenarios — a fresh lead's first follow-up numbers as #1; a lead with unrelated prior entries (a call, an internal note with no `followupNum`) still numbers its first real follow-up as #1 rather than inheriting an unrelated count; two follow-ups sent to the same lead over time correctly number #1 then #2; all three generated-draft source labels (and the no-source fallback) render correctly; and `persistItem` is called exactly once per send. Also ran a full `node --check` on the entire extracted module script after the edit — parses clean.
+
+**To deploy:** `git push` the updated `index.html`.
+
+**New files:** none. **Changed files:** `index.html` (`logFollowupSent`, `nextFollowupNum`, `openFollowupEmail`, `openGeneratedFollowupEmail`), `CLAUDE.md` (this section).
+
+---
+
+## 2026-07-27 (cont.) — `tour.html`: sync button + SharePoint/blueprint reference links on the primary property
+
+Justin's ask: "need a sync button as well as sharepoint, blueprint links for avail" — the primary-property panel in `tour.html` (the interactive site plan / unit grid used during the numbers conversation) had no way to pull fresh availability data or jump to reference documents without leaving the page.
+
+**Sync button.** Added `window.triggerAvailSync(propId)`, hitting the exact same `${PROXY}/webhook/availability-sync` endpoint (n8n workflow 4/5) the main `index.html` app's per-location ⟳ button already uses — same request shape (`POST {propId}`), same 30s auto-reset-on-timeout behavior. No new sync path: this writes back to the same `availability/{propId}` Firestore doc `tour.html` already listens to live, so the panel just re-renders itself once n8n's write lands, no extra wiring needed on the read side.
+
+**SharePoint link.** `renderPrimaryPanel()` now renders a "📄 SharePoint" button using `d.sharepoint_url` — the exact same field already present on every `availability/{propId}` doc (populated by the Add Location flow, same field `index.html`'s own floor-plan section links out to). No new data plumbing, just a render addition.
+
+**"Blueprint" corrected — it's the Yardi link, not the PDF drawings.** First pass built a whole new asset pipeline (8 blueprint PDFs converted to JPG, copied into `do_or_wait/blueprints/`, a `BLUEPRINT_MAP` propId→file lookup) assuming "blueprint" meant the physical site-plan drawing. Justin corrected: "When I said blueprint links — I meant the yardi one not the pdfs." Checked `index.html` itself for confirmation before rebuilding anything — its own `renderLocCard` quick-links row already labels `d.yardi_url` as **"Blueprint ↗"** (line ~4847: `d.yardi_url ? ...>Blueprint ↗</a> : ''`), so "Blueprint" has been this app's own established name for the Yardi Deal Manager floorplan link all along; the correction just aligns `tour.html` with vocabulary the rest of the app already uses. Fixed: removed `BLUEPRINT_MAP` entirely, removed the copied JPGs from `do_or_wait/blueprints/` (dead files once unlinked, per this project's usual cleanup convention — used `allow_cowork_file_delete` since the connected folder blocks direct deletion), and `renderPrimaryPanel()`'s link row now renders `d.yardi_url` labeled "📐 Blueprint" — same field, same label as `index.html`'s own quick-links row, just reusing the field this app already has rather than any new asset pipeline. This covers **every** synced property automatically (whichever ones have a `yardi_url` on file), not just the 7 the PDF approach was limited to.
+
+**Validated:** extracted the module script and ran `node --check` (clean) after both the original build and the correction, parsed the full HTML with Python's `html.parser` to confirm every tag is still balanced (clean), grepped for zero leftover `BLUEPRINT_MAP`/`blueprints/` references after the correction, and grep-confirmed `triggerAvailSync` resolves from its `onclick` to the `window.triggerAvailSync` exposure.
+
+**To deploy:** `git push` the updated `tour.html` — no new binary assets this time (the blueprint-JPG folder from the first pass was removed, not shipped).
+
+**New files:** none. **Changed files:** `tour.html` (`PROXY`/`AVAIL_WEBHOOK` constants, `triggerAvailSync`, `renderPrimaryPanel`'s link row using `d.sharepoint_url`/`d.yardi_url`), `CLAUDE.md` (this section).

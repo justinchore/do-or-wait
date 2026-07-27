@@ -207,6 +207,14 @@ onAuthStateChanged(auth, user => {
   }
 });
 
+// ── Sync + reference links (added 2026-07-27) ──────────────────────
+// Same Cloudflare Worker + n8n availability-sync webhook the main do-or-wait
+// app's ⟳ button uses (workflow 4/5) — re-syncing here pulls fresh SharePoint
+// data into the SAME `availability/{propId}` doc this page already reads live,
+// so there's no separate sync path to maintain.
+const PROXY        = 'https://plain-credit-5962.jchoustin91.workers.dev';
+const AVAIL_WEBHOOK = `${PROXY}/webhook/availability-sync`;
+
 // ── ADD-ONS (labels only — same categories Rate Bands uses) ─────────
 const ADDONS = [
   ['dock', 'Dock Package'],
@@ -341,6 +349,29 @@ window.setPricingField = function(field, val){
   tourSession.pricing[field] = val;
   saveSession();
 };
+// Re-sync availability for the primary property from SharePoint (same webhook
+// the main app's ⟳ button hits) — the availability listener already running on
+// this page picks up the write-back and re-renders on its own, no extra wiring.
+window.triggerAvailSync = async function(propId){
+  if (!propId) return;
+  const btn = document.getElementById(`tour-sync-${propId}`);
+  if (btn) { btn.textContent = '⟳ Syncing…'; btn.disabled = true; }
+  const resetBtn = () => { if (btn) { btn.textContent = '⟳ Sync now'; btn.disabled = false; } };
+  const timeout = setTimeout(resetBtn, 30000); // always reset after 30s, same as the main app
+  try {
+    await fetch(AVAIL_WEBHOOK, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ propId })
+    });
+  } catch (e) {
+    clearTimeout(timeout);
+    console.error('Sync trigger failed:', e);
+    if (btn) { btn.textContent = '⚠ Sync failed'; btn.disabled = false; }
+    setTimeout(resetBtn, 3000);
+  }
+};
+
 window.newSession = function(){
   if (!confirm('Start a new tour session? This clears the current property, selections, add-ons, pricing and notes.')) return;
   tourSession = defaultSession();
@@ -468,8 +499,20 @@ function renderPrimaryPanel(){
         : `<div class="row" style="margin-top:10px;"><button class="btn small" onclick="startFpEdit()">🗺️ Add a site plan for this property</button></div>`)
     : '';
 
+  // "Blueprint" here = the Yardi Deal Manager floorplan link (d.yardi_url) —
+  // same field, same label ("Blueprint ↗") the main index.html app already
+  // uses for this exact link (see its renderLocCard quick-links row). Not the
+  // PDF site-plan drawings — that was a misread on the first pass of this
+  // feature, corrected 2026-07-27.
+  const linkRow = `<div class="row" style="margin-bottom:12px;">
+    <button class="btn small" id="tour-sync-${esc(propId)}" onclick="triggerAvailSync('${esc(propId)}')">⟳ Sync now</button>
+    ${d.sharepoint_url ? `<a class="btn small" href="${esc(d.sharepoint_url)}" target="_blank" rel="noopener" style="text-decoration:none;">📄 SharePoint</a>` : ''}
+    ${d.yardi_url ? `<a class="btn small" href="${esc(d.yardi_url)}" target="_blank" rel="noopener" style="text-decoration:none;">📐 Blueprint</a>` : ''}
+  </div>`;
+
   return `<div class="card">
     <h2>${esc(d.property || propId)}${d.address ? ' <span class="muted" style="text-transform:none;letter-spacing:normal;">— ' + esc(d.address) + '</span>' : ''}</h2>
+    ${linkRow}
     ${inner}
     ${editControls}
     <div class="hint">Click a unit ${fp ? 'on the plan ' : ''}to highlight it — the square footage below fills in automatically.</div>

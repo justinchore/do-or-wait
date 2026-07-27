@@ -3548,6 +3548,8 @@ function openGeneratedFollowupEmail(leadId, e) {
   const lead = leads.find(l => l.id === leadId);
   const d = lead && lead.followup_draft;
   if (!lead || !lead.email || !d) return;
+  const sourceLabel = d.source === 'thread' ? 'Generated, from thread' : d.source === 'thread+notes' ? 'Generated, from thread + notes' : 'Generated, from notes';
+  logFollowupSent(lead, { subject: d.subject || '', body: d.body || '', label: sourceLabel });
   window.location.href = `mailto:${encodeURIComponent(lead.email)}?subject=${encodeURIComponent(d.subject || '')}&body=${encodeURIComponent(d.body || '')}`;
 }
 async function copyGeneratedFollowupMsg(leadId, e) {
@@ -4075,11 +4077,46 @@ function pickFollowupTpl(leadId, idx, e) {
   renderFuqCard();
 }
 
+// Auto-log a sent follow-up: which follow-up # this is for the lead, plus the
+// exact subject/body that went out — added 2026-07-27 per Justin's ask ("I want
+// the lead to be automatically updated with which followup # it is, and the
+// contents of the email sent"). Deliberately scoped to ONLY the two real
+// follow-up send paths (cycled templates + the Claude-generated draft) — not
+// Space Match (a distinct re-engagement feature, not a "follow-up") and not
+// Outreach/Prop Outreach/Nearby Prospects (separate collections/tabs, out of
+// scope per Justin's explicit "keep it strictly on followups in the main leads
+// tab"). Logs as a normal kind:'email'/dir:'out' thread entry (same category
+// logTouch already uses for 📞/💬), so this also fixes a real side effect: a
+// sent follow-up now resets the lead's "cold" follow-up-due clock, since
+// contactInfo() already treats any kind:'email' entry as real contact — sending
+// a follow-up previously left NO trace at all, so the lead looked just as cold
+// a minute after you emailed it as before.
+function nextFollowupNum(lead) {
+  const nums = (lead.entries || []).map(e => Number(e.followupNum) || 0).filter(n => n > 0);
+  return nums.length ? Math.max(...nums) + 1 : 1;
+}
+function logFollowupSent(lead, { subject, body, label }) {
+  const num = nextFollowupNum(lead);
+  const entry = {
+    id: 'e' + Date.now(), type: 'wait', kind: 'email', dir: 'out',
+    text: `✉️ Follow-up #${num} sent${label ? ' — ' + label : ''}`,
+    followupNum: num, done: false,
+    notes: [{ id: 'n' + Date.now(), type: 'text', text: `Subject: ${subject}\n\n${body}` }],
+    createdAt: new Date().toISOString()
+  };
+  lead.entries = [...(lead.entries || []), entry];
+  lead.updatedAt = new Date().toISOString();
+  expandedLeadIds.clear(); expandedLeadIds.add(lead.id);
+  renderLeadsSection();
+  persistItem(lead, 'leads');   // mailto: doesn't unload the page, so this write completes
+}
+
 function openFollowupEmail(leadId, e) {
   if (e) e.stopPropagation();
   const lead = leads.find(l => l.id === leadId);
   if (!lead || !lead.email) return;
   const msg = followupMsgFor(lead);
+  logFollowupSent(lead, { subject: msg.subject, body: msg.body, label: msg.label });
   window.location.href =
     `mailto:${encodeURIComponent(lead.email)}?subject=${encodeURIComponent(msg.subject)}&body=${encodeURIComponent(msg.body)}`;
 }
