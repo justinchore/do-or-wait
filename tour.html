@@ -84,13 +84,25 @@
   }
   .plan-box.hl{ box-shadow:0 0 0 3px var(--wait); border-color:var(--wait); }
 
-  .compare-chip{ display:inline-flex; align-items:center; gap:6px; background:#eef2ff; color:#3730a3; border-radius:20px; padding:4px 10px 4px 12px; font-size:12px; font-weight:600; }
-  .compare-chip button{ border:none; background:none; cursor:pointer; color:#3730a3; font-size:14px; line-height:1; padding:0; }
-  .compare-card{ border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin-bottom:8px; }
-  .compare-card .name{ font-weight:700; font-size:14px; }
-  .compare-card .addr{ font-size:12px; color:var(--text2); margin-bottom:6px; }
-  .compare-card .stats{ display:flex; gap:16px; font-size:12px; }
-  .compare-card .stats b{ color:var(--green-fg); }
+  /* ── Configurator layout (added 2026-07-27, cont.) ─────────────────
+     Two-column layout: tabbed content (Units / Site plan / Compare
+     locations) on the left, a sticky "Deal summary" pricing panel on
+     the right — replaces the old always-stacked card list. */
+  .tb-grid{ display:grid; grid-template-columns:minmax(0,1.6fr) minmax(0,1fr); gap:16px; align-items:start; }
+  @media (max-width:780px){ .tb-grid{ grid-template-columns:1fr; } .tb-sidebar{ position:static; } }
+  .tb-tab{ border:1px solid var(--border); background:#fff; border-radius:8px; padding:8px 16px; font-size:13px; cursor:pointer; font-family:inherit; color:var(--text2); min-height:40px; }
+  .tb-tab:hover{ background:var(--bg); }
+  .tb-tab.active{ background:var(--text); color:#fff; border-color:var(--text); font-weight:700; }
+  .tb-sidebar{ background:#f0f9ff; border:1px solid #bae6fd; border-radius:var(--radius); padding:18px; position:sticky; top:70px; }
+  .tb-sidebar h2{ color:#075985; }
+  .tb-cmp-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; }
+  .tb-cmp-card{ border:1px solid var(--border); border-radius:10px; padding:12px 14px; position:relative; background:#fff; }
+  .tb-cmp-card.primary{ border:2px solid var(--wait); }
+  .tb-cmp-badge{ position:absolute; top:8px; right:8px; background:var(--wait); color:#fff; font-size:10px; font-weight:700; padding:2px 9px; border-radius:20px; }
+  .tb-cmp-card .name{ font-weight:700; font-size:14px; padding-right:60px; }
+  .tb-cmp-card .addr{ font-size:12px; color:var(--text2); margin-bottom:2px; }
+  .tb-bar{ height:6px; border-radius:3px; background:var(--bg); margin:4px 0; overflow:hidden; }
+  .tb-bar-fill{ height:100%; border-radius:3px; }
 
   .addon-row{ display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border); }
   .addon-row:last-child{ border-bottom:none; }
@@ -237,6 +249,7 @@ let fpDraft = null;                   // { imageUrl, storagePath, boxes:[{unitId
 let fpPlaceUnit = '';
 let fpUploading = false;
 const expandedSections = new Set(); // 'propId::TYPE' — local UI state, collapsed by default
+let activeTab = 'units'; // 'units' | 'plan' | 'compare' — local UI state, not persisted (same class as fpEditing/expandedSections)
 
 function defaultSession(){
   return { customerName:'', primaryProp:'', compareProps:[], highlighted:{}, addons:{}, pricing:{ rate:'', sf:'', term:'', notes:'' } };
@@ -304,8 +317,10 @@ window.setCustomerName = function(v){ tourSession.customerName = v; saveSession(
 window.setPrimaryProp = function(propId){
   tourSession.primaryProp = propId;
   fpEditing = false; fpDraft = null;
+  activeTab = 'units';
   saveSession(); watchFloorplan(propId);
 };
+window.setTab = function(t){ activeTab = t; render(); };
 window.addCompareProp = function(propId){
   if (!propId || propId === tourSession.primaryProp) return;
   if (!tourSession.compareProps.includes(propId)) tourSession.compareProps.push(propId);
@@ -376,6 +391,7 @@ window.newSession = function(){
   if (!confirm('Start a new tour session? This clears the current property, selections, add-ons, pricing and notes.')) return;
   tourSession = defaultSession();
   fpEditing = false; fpDraft = null;
+  activeTab = 'units';
   saveSession(); watchFloorplan(''); render();
 };
 
@@ -386,6 +402,7 @@ window.startFpEdit = function(){
   fpDraft = existing ? JSON.parse(JSON.stringify(existing)) : { imageUrl:'', storagePath:'', boxes:[] };
   fpEditing = true;
   fpPlaceUnit = nextUnplacedUnit(propId);
+  activeTab = 'plan';
   render();
 };
 window.cancelFpEdit = function(){ fpEditing = false; fpDraft = null; render(); };
@@ -456,7 +473,7 @@ function render(){
     `<button class="btn small" onclick="newSession()">＋ New session</button> <button class="btn small" onclick="doSignOut()">Sign out</button>`;
 
   const root = document.getElementById('root');
-  root.innerHTML = renderCustomerNameRow() + renderPropertyPicker() + renderPrimaryPanel() + renderComparePanel() + renderAddonsPanel() + renderPricingPanel();
+  root.innerHTML = renderCustomerNameRow() + renderPropertyPicker() + renderPrimaryLayout();
 }
 
 function renderCustomerNameRow(){
@@ -478,19 +495,67 @@ function renderPropertyPicker(){
   </div>`;
 }
 
-function renderPrimaryPanel(){
+// Property header (name/address + sync/reference links) + the two-column
+// configurator layout: tabbed content (Units / Site plan / Compare locations)
+// on the left, the sticky Deal summary pricing panel on the right.
+function renderPrimaryLayout(){
   const propId = tourSession.primaryProp;
   if (!propId) return '';
   const d = availMap[propId] || {};
-  const fp = floorplanMap[propId];
+  return `
+    ${renderPropHeader(propId, d)}
+    <div class="tb-grid">
+      <div class="card">
+        ${renderTabBar()}
+        ${renderTabContent(propId, d)}
+      </div>
+      ${renderDealSummary()}
+    </div>`;
+}
 
-  let inner = '';
+function renderPropHeader(propId, d){
+  // "Blueprint" here = the Yardi Deal Manager floorplan link (d.yardi_url) —
+  // same field, same label ("Blueprint ↗") the main index.html app already
+  // uses for this exact link (see its renderLocCard quick-links row). Not a
+  // PDF site-plan drawing — that was a misread on an earlier pass of this
+  // feature, corrected 2026-07-27.
+  const linkRow = `<div class="row">
+    <button class="btn small" id="tour-sync-${esc(propId)}" onclick="triggerAvailSync('${esc(propId)}')">⟳ Sync now</button>
+    ${d.sharepoint_url ? `<a class="btn small" href="${esc(d.sharepoint_url)}" target="_blank" rel="noopener" style="text-decoration:none;">📄 SharePoint</a>` : ''}
+    ${d.yardi_url ? `<a class="btn small" href="${esc(d.yardi_url)}" target="_blank" rel="noopener" style="text-decoration:none;">📐 Blueprint</a>` : ''}
+  </div>`;
+  return `<div class="card">
+    <h2 style="margin-bottom:8px;">${esc(d.property || propId)}${d.address ? ' <span class="muted" style="text-transform:none;letter-spacing:normal;">— ' + esc(d.address) + '</span>' : ''}</h2>
+    ${linkRow}
+  </div>`;
+}
+
+function renderTabBar(){
+  const tabs = [['units', 'Units'], ['plan', 'Site plan'], ['compare', 'Compare locations']];
+  return `<div class="row" style="margin-bottom:16px;">
+    ${tabs.map(([key, label]) => `<button class="tb-tab${activeTab === key ? ' active' : ''}" onclick="setTab('${key}')">${label}</button>`).join('')}
+  </div>`;
+}
+
+function renderTabContent(propId, d){
+  if (activeTab === 'compare') return renderCompareTab();
+  if (activeTab === 'plan') return renderPlanTab(propId, d);
+  return renderUnitsTab(propId, d);
+}
+
+function renderUnitsTab(propId, d){
+  return renderGridView(propId, d) + `<div class="hint">Click a unit to highlight it — the square footage in Deal summary fills in automatically.</div>`;
+}
+
+function renderPlanTab(propId, d){
+  const fp = floorplanMap[propId];
+  let inner;
   if (fpEditing) {
     inner = renderFpEditor(propId);
   } else if (fp) {
-    inner = renderPlanView(propId, fp);
+    inner = renderPlanView(propId, fp) + `<div class="hint">Click a unit on the plan to highlight it — the square footage in Deal summary fills in automatically.</div>`;
   } else {
-    inner = renderGridView(propId, d);
+    inner = `<div class="muted" style="margin-bottom:4px;">No site plan mapped yet for this property.</div>`;
   }
 
   const editControls = !fpEditing
@@ -499,24 +564,43 @@ function renderPrimaryPanel(){
         : `<div class="row" style="margin-top:10px;"><button class="btn small" onclick="startFpEdit()">🗺️ Add a site plan for this property</button></div>`)
     : '';
 
-  // "Blueprint" here = the Yardi Deal Manager floorplan link (d.yardi_url) —
-  // same field, same label ("Blueprint ↗") the main index.html app already
-  // uses for this exact link (see its renderLocCard quick-links row). Not the
-  // PDF site-plan drawings — that was a misread on the first pass of this
-  // feature, corrected 2026-07-27.
-  const linkRow = `<div class="row" style="margin-bottom:12px;">
-    <button class="btn small" id="tour-sync-${esc(propId)}" onclick="triggerAvailSync('${esc(propId)}')">⟳ Sync now</button>
-    ${d.sharepoint_url ? `<a class="btn small" href="${esc(d.sharepoint_url)}" target="_blank" rel="noopener" style="text-decoration:none;">📄 SharePoint</a>` : ''}
-    ${d.yardi_url ? `<a class="btn small" href="${esc(d.yardi_url)}" target="_blank" rel="noopener" style="text-decoration:none;">📐 Blueprint</a>` : ''}
-  </div>`;
+  return inner + editControls;
+}
 
-  return `<div class="card">
-    <h2>${esc(d.property || propId)}${d.address ? ' <span class="muted" style="text-transform:none;letter-spacing:normal;">— ' + esc(d.address) + '</span>' : ''}</h2>
-    ${linkRow}
-    ${inner}
-    ${editControls}
-    <div class="hint">Click a unit ${fp ? 'on the plan ' : ''}to highlight it — the square footage below fills in automatically.</div>
-  </div>`;
+function renderCompareTab(){
+  const primaryId = tourSession.primaryProp;
+  const ids = [primaryId, ...tourSession.compareProps].filter(id => id && availMap[id]);
+  const availIds = sortedPropIds().filter(id => id !== primaryId && !tourSession.compareProps.includes(id));
+  const addRow = availIds.length
+    ? `<select onchange="if(this.value){addCompareProp(this.value); this.value='';}" style="margin-bottom:12px;">
+        <option value="">＋ Add a comparison property…</option>
+        ${availIds.map(id => `<option value="${id}">${esc(availMap[id].property || id)}</option>`).join('')}
+      </select>`
+    : '';
+
+  const maxWh  = Math.max(1, ...ids.map(id => (availMap[id].wh && availMap[id].wh.avail_sf) || 0));
+  const maxOff = Math.max(1, ...ids.map(id => (availMap[id].office && availMap[id].office.avail_sf) || 0));
+
+  const cards = ids.map(id => {
+    const d = availMap[id];
+    const whSf  = (d.wh && d.wh.avail_sf) || 0;
+    const offSf = (d.office && d.office.avail_sf) || 0;
+    const isPrimary = id === primaryId;
+    return `<div class="tb-cmp-card${isPrimary ? ' primary' : ''}">
+      ${isPrimary ? '<div class="tb-cmp-badge">Primary</div>' : ''}
+      <div class="name">${esc(d.property || id)}</div>
+      <div class="addr">${esc(d.address || '')}</div>
+      <div class="muted" style="margin-top:8px;">Warehouse avail</div>
+      <div class="tb-bar"><div class="tb-bar-fill" style="width:${Math.round(whSf / maxWh * 100)}%;background:var(--wait);"></div></div>
+      <div style="font-weight:700;font-size:13px;margin-bottom:8px;">${fmtSf(whSf)}</div>
+      <div class="muted">Office avail</div>
+      <div class="tb-bar"><div class="tb-bar-fill" style="width:${Math.round(offSf / maxOff * 100)}%;background:var(--do);"></div></div>
+      <div style="font-weight:700;font-size:13px;">${fmtSf(offSf)}</div>
+      ${!isPrimary ? `<div style="margin-top:10px;"><button class="btn small danger" onclick="removeCompareProp('${esc(id)}')">Remove</button></div>` : ''}
+    </div>`;
+  }).join('');
+
+  return `${addRow}<div class="tb-cmp-grid">${cards || '<div class="muted">No comparison properties added yet.</div>'}</div>`;
 }
 
 function renderPlanView(propId, fp){
@@ -599,34 +683,6 @@ function renderGridView(propId, d){
   }).join('');
 }
 
-function renderComparePanel(){
-  const ids = sortedPropIds().filter(id => id !== tourSession.primaryProp && !tourSession.compareProps.includes(id));
-  const addRow = ids.length
-    ? `<select onchange="if(this.value){addCompareProp(this.value); this.value='';}">
-        <option value="">＋ Add a comparison property…</option>
-        ${ids.map(id => `<option value="${id}">${esc(availMap[id].property || id)}</option>`).join('')}
-      </select>`
-    : '';
-
-  const cards = tourSession.compareProps.map(id => {
-    const d = availMap[id]; if (!d) return '';
-    const whSf = (d.wh && d.wh.avail_sf) || 0;
-    const offSf = (d.office && d.office.avail_sf) || 0;
-    return `<div class="compare-card">
-      <div class="name">${esc(d.property || id)}</div>
-      <div class="addr">${esc(d.address || '')}</div>
-      <div class="stats"><span>Warehouse: <b>${fmtSf(whSf)}</b></span><span>Office: <b>${fmtSf(offSf)}</b></span></div>
-      <div style="margin-top:8px;"><button class="btn small danger" onclick="removeCompareProp('${esc(id)}')">Remove</button></div>
-    </div>`;
-  }).join('');
-
-  return `<div class="card">
-    <h2>Other locations</h2>
-    ${addRow}
-    <div style="margin-top:${addRow ? '10px' : '0'};">${cards || '<div class="muted">None added yet.</div>'}</div>
-  </div>`;
-}
-
 function addonsSubtotal(){
   return ADDONS.reduce((sum, [key]) => {
     const a = tourSession.addons[key];
@@ -634,9 +690,50 @@ function addonsSubtotal(){
   }, 0);
 }
 
-function renderAddonsPanel(){
-  return `<div class="card">
-    <h2>Add-ons</h2>
+// The currently-highlighted units on the primary property, for the "N units ·
+// X sf" readout at the top of Deal summary — a live reflection of whatever's
+// clicked in the Units or Site plan tab.
+function selectedUnitsSummary(){
+  const propId = tourSession.primaryProp;
+  const ids = (tourSession.highlighted[propId] || []);
+  let sf = 0;
+  ids.forEach(uid => { const u = findUnit(propId, uid); if (u) sf += Number(u.sf) || 0; });
+  return { names: ids, sf };
+}
+
+// Sticky right-hand panel combining what used to be three separate stacked
+// cards (Other locations / Add-ons / Pricing) into one live-updating "deal
+// summary" — always visible next to whichever tab (Units/Site plan/Compare)
+// is open on the left, since the price is what's being built the whole time.
+function renderDealSummary(){
+  const p = tourSession.pricing;
+  const rate = Number(p.rate) || 0;
+  const sf = Number(p.sf) || 0;
+  const baseRent = Math.round(rate * sf);
+  const addons = addonsSubtotal();
+  const total = baseRent + addons;
+  const sel = selectedUnitsSummary();
+
+  return `<div class="tb-sidebar">
+    <h2 style="margin-top:0;">Deal summary</h2>
+    <div class="muted" style="margin-bottom:12px;">${sel.names.length ? esc(sel.names.join(', ')) + ' · ' + fmtSf(sel.sf) : 'No units selected yet'}</div>
+    <div class="row" style="margin-bottom:10px;">
+      <div style="flex:1;">
+        <label class="field-label">Rate ($/sf/mo)</label>
+        <input type="number" step="0.01" placeholder="$/sf" style="width:100%;" value="${esc(p.rate)}" oninput="setPricingField('rate', this.value)">
+      </div>
+      <div style="flex:1;">
+        <label class="field-label">Square footage</label>
+        <input type="number" placeholder="sf" style="width:100%;" value="${esc(p.sf)}" oninput="setPricingField('sf', this.value)">
+      </div>
+    </div>
+    <label class="field-label">Term</label>
+    <select style="width:100%;margin-bottom:4px;" onchange="setPricingField('term', this.value)">
+      <option value="" ${!p.term ? 'selected' : ''}>—</option>
+      ${['Month-to-month', '3 months', '6 months', '12 months', 'Custom'].map(t => `<option value="${t}" ${p.term === t ? 'selected' : ''}>${t}</option>`).join('')}
+    </select>
+    <div class="hint" style="margin:0 0 10px;">Square footage fills in automatically when you click a unit — still fine to type over it.</div>
+    <div style="border-top:1px solid var(--border); margin:10px 0;"></div>
     ${ADDONS.map(([key, label]) => {
       const a = tourSession.addons[key] || { checked:false, price:'' };
       return `<div class="addon-row">
@@ -645,38 +742,10 @@ function renderAddonsPanel(){
         ${a.checked ? `<input type="number" placeholder="$/mo" value="${esc(a.price)}" oninput="setAddonPrice('${key}', this.value)">` : ''}
       </div>`;
     }).join('')}
-    <div class="total-line" style="margin-top:8px;"><span>Add-ons subtotal</span><span>$${addonsSubtotal().toLocaleString()}/mo</span></div>
-  </div>`;
-}
-
-function renderPricingPanel(){
-  const p = tourSession.pricing;
-  const rate = Number(p.rate) || 0;
-  const sf = Number(p.sf) || 0;
-  const baseRent = Math.round(rate * sf);
-  const total = baseRent + addonsSubtotal();
-  return `<div class="card" style="border-color:#bae6fd;background:#f0f9ff;">
-    <h2 style="color:#075985;">Pricing</h2>
-    <div class="row" style="margin-bottom:10px;">
-      <div>
-        <label class="field-label">Rate ($/sf/mo)</label>
-        <input type="number" step="0.01" placeholder="$/sf" value="${esc(p.rate)}" oninput="setPricingField('rate', this.value)">
-      </div>
-      <div>
-        <label class="field-label">Square footage</label>
-        <input type="number" placeholder="sf" value="${esc(p.sf)}" oninput="setPricingField('sf', this.value)">
-      </div>
-      <div>
-        <label class="field-label">Term</label>
-        <select onchange="setPricingField('term', this.value)">
-          <option value="" ${!p.term ? 'selected' : ''}>—</option>
-          ${['Month-to-month', '3 months', '6 months', '12 months', 'Custom'].map(t => `<option value="${t}" ${p.term === t ? 'selected' : ''}>${t}</option>`).join('')}
-        </select>
-      </div>
-    </div>
-    <div class="hint" style="margin:-4px 0 10px;">Square footage fills in automatically when you click a unit above — still fine to type over it.</div>
+    <div class="total-line" style="margin-top:8px;"><span>Add-ons subtotal</span><span>$${addons.toLocaleString()}/mo</span></div>
+    <div style="border-top:1px solid var(--border); margin:10px 0;"></div>
     <div class="total-line"><span>Base rent (rate × sf)</span><span>$${baseRent.toLocaleString()}/mo</span></div>
-    <div class="total-line"><span>Add-ons</span><span>$${addonsSubtotal().toLocaleString()}/mo</span></div>
+    <div class="total-line"><span>Add-ons</span><span>$${addons.toLocaleString()}/mo</span></div>
     <div class="total-line grand"><span>Total</span><span>$${total.toLocaleString()}/mo</span></div>
     <label class="field-label" style="margin-top:14px;">Notes</label>
     <textarea onchange="setPricingField('notes', this.value)">${esc(p.notes)}</textarea>
