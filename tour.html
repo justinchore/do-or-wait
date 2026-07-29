@@ -646,11 +646,11 @@ function renderCommuteModal(){
       <p class="muted" style="margin-bottom:16px;">Rough drive time and mileage to <strong>${esc(propName)}</strong>. Free, approximate — not a live-traffic estimate.</p>
       <div class="field">
         <label>Address 1</label>
-        <input type="text" value="${esc(tourSession.commuteAddr1 || '')}" placeholder="e.g. 123 Main St, Los Angeles, CA" oninput="setCommuteAddr(1, this.value)">
+        <input type="text" value="${esc(tourSession.commuteAddr1 || '')}" placeholder="e.g. 123 Main St, Los Angeles, CA" onchange="setCommuteAddr(1, this.value)">
       </div>
       <div class="field">
         <label>Address 2 (optional)</label>
-        <input type="text" value="${esc(tourSession.commuteAddr2 || '')}" placeholder="e.g. 456 Oak Ave, Anaheim, CA" oninput="setCommuteAddr(2, this.value)">
+        <input type="text" value="${esc(tourSession.commuteAddr2 || '')}" placeholder="e.g. 456 Oak Ave, Anaheim, CA" onchange="setCommuteAddr(2, this.value)">
       </div>
       <div class="row" style="margin:12px 0;">
         <button class="btn primary" ${commuteLoading ? 'disabled' : ''} onclick="computeCommute()">${commuteLoading ? 'Looking up…' : 'Get directions'}</button>
