@@ -17,7 +17,11 @@
     --do: #f59e0b; --wait: #3b82f6;
     --bg: #0b1220; --card: #0f172a; --surface2: #1e293b;
     --text: #e2e8f0; --text2: #94a3b8; --border: #263349;
-    --green-bg:#134e2e; --green-fg:#4ade80;
+    /* Cubework's real brand green (#38D430 — same hex used as the "every line
+       is green" accent in the main app's document house style), added
+       2026-07-27 (cont. #6) as a touch of brand green alongside the amber/
+       orange accent, on top of the "Available" pill it already anchored. */
+    --green-bg:#123018; --green-fg:#38D430;
     --gray-bg:#1e293b;  --gray-fg:#cbd5e1;
     --amber-bg:#3a2a10; --amber-fg:#fbbf24;
     --radius: 12px;
@@ -43,7 +47,7 @@
 
   header.topbar{
     position:sticky; top:0; z-index:20; background:var(--bg); padding:14px 0 10px;
-    display:flex; align-items:center; gap:12px; flex-wrap:wrap; border-bottom:1px solid var(--border); margin-bottom:16px;
+    display:flex; align-items:center; gap:12px; flex-wrap:wrap; border-bottom:2px solid var(--green-fg); margin-bottom:16px;
   }
   header.topbar .brand{ font-weight:800; font-size:16px; letter-spacing:-.01em; }
   header.topbar .brand span{ color:var(--do); }
@@ -135,7 +139,7 @@
   .addon-check-list li{ padding:5px 0; font-size:14px; }
 
   .total-line{ display:flex; justify-content:space-between; font-size:14px; padding:6px 0; }
-  .total-line.grand{ font-weight:800; font-size:16px; border-top:1px solid var(--border); margin-top:6px; padding-top:10px; color:var(--do); }
+  .total-line.grand{ font-weight:800; font-size:16px; border-top:2px solid var(--green-fg); margin-top:6px; padding-top:10px; color:var(--do); }
 
   .muted{ color:var(--text2); font-size:13px; }
   .hint{ font-size:12px; color:var(--text2); margin-top:6px; }
@@ -942,11 +946,11 @@ function renderDealSummary(){
     <div class="row" style="margin-bottom:10px;">
       <div style="flex:1;">
         <label class="field-label">Rate ($/sf/mo)</label>
-        <input type="number" step="0.01" placeholder="$/sf" style="width:100%;" value="${esc(p.rate)}" oninput="setPricingField('rate', this.value)">
+        <input type="number" step="0.01" placeholder="$/sf" style="width:100%;" value="${esc(p.rate)}" onchange="setPricingField('rate', this.value)">
       </div>
       <div style="flex:1;">
         <label class="field-label">Square footage</label>
-        <input type="number" placeholder="sf" style="width:100%;" value="${esc(p.sf)}" oninput="setPricingField('sf', this.value)">
+        <input type="number" placeholder="sf" style="width:100%;" value="${esc(p.sf)}" onchange="setPricingField('sf', this.value)">
       </div>
     </div>
     <label class="field-label">Term</label>
@@ -961,7 +965,7 @@ function renderDealSummary(){
       return `<div class="addon-row">
         <input type="checkbox" ${a.checked ? 'checked' : ''} onchange="toggleAddon('${key}')">
         <label onclick="toggleAddon('${key}')">${esc(label)}</label>
-        ${a.checked ? `<input type="number" placeholder="$/mo" value="${esc(a.price)}" oninput="setAddonPrice('${key}', this.value)">` : ''}
+        ${a.checked ? `<input type="number" placeholder="$/mo" value="${esc(a.price)}" onchange="setAddonPrice('${key}', this.value)">` : ''}
       </div>`;
     }).join('')}
     <div class="total-line" style="margin-top:8px;"><span>Add-ons subtotal</span><span>$${addons.toLocaleString()}/mo</span></div>
