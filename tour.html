@@ -640,7 +640,7 @@ function renderCommuteModal(){
   const propId = tourSession.primaryProp;
   const d = availMap[propId] || {};
   const propName = d.property || propId || 'this property';
-  return `<div class="overlay" onclick="if(event.target===this) closeCommuteModal()">
+  return `<div class="overlay" onmousedown="window._cmDownTarget=event.target" onclick="if(event.target===this && window._cmDownTarget===this) closeCommuteModal()">
     <div class="modal">
       <h2 style="margin-bottom:4px;">🗺️ Commute check</h2>
       <p class="muted" style="margin-bottom:16px;">Rough drive time and mileage to <strong>${esc(propName)}</strong>. Free, approximate — not a live-traffic estimate.</p>
