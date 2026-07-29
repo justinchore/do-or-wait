@@ -6,11 +6,20 @@
 <title>Cubework — Tour Board</title>
 <style>
   :root{
-    --do: #e85d04; --wait: #0077b6;
-    --bg: #f3f4f6; --card: #ffffff; --text: #111827; --text2: #6b7280; --border: #e5e7eb;
-    --green-bg:#dcfce7; --green-fg:#166534;
-    --gray-bg:#f3f4f6;  --gray-fg:#4b5563;
-    --amber-bg:#ffedd5; --amber-fg:#9a3412;
+    /* "A1 — navy and amber" dark theme, picked 2026-07-27 after a few rounds
+       of color-scheme review. --do is the amber brand/action accent (was
+       Cubework's orange); --wait is a brighter blue reserved for selection
+       rings and the "primary property" badge, so it stays visually distinct
+       from the amber accent. --surface2 is a raised-element fill (unit rows,
+       tabs, chips, inputs) one step lighter than --card, which itself sits
+       one step lighter than the page --bg — three layers of depth instead of
+       one flat white everywhere. */
+    --do: #f59e0b; --wait: #3b82f6;
+    --bg: #0b1220; --card: #0f172a; --surface2: #1e293b;
+    --text: #e2e8f0; --text2: #94a3b8; --border: #263349;
+    --green-bg:#134e2e; --green-fg:#4ade80;
+    --gray-bg:#1e293b;  --gray-fg:#cbd5e1;
+    --amber-bg:#3a2a10; --amber-fg:#fbbf24;
     --radius: 12px;
   }
   * { box-sizing: border-box; }
@@ -23,12 +32,12 @@
   #auth-screen{
     display:flex; align-items:center; justify-content:center; min-height:100vh; padding:24px;
   }
-  .auth-card{ background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:32px; width:340px; box-shadow:0 4px 24px rgba(0,0,0,.06); }
+  .auth-card{ background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:32px; width:340px; box-shadow:0 4px 24px rgba(0,0,0,.5); }
   .auth-card h1{ font-size:20px; margin:0 0 4px; }
   .auth-card p.sub{ color:var(--text2); font-size:13px; margin:0 0 20px; }
-  .auth-card input{ width:100%; padding:13px 12px; border:1px solid var(--border); border-radius:8px; font-size:16px; margin-bottom:10px; font-family:inherit; min-height:44px; }
-  .auth-card button{ width:100%; padding:13px; border:none; border-radius:8px; background:var(--text); color:#fff; font-size:16px; font-weight:600; cursor:pointer; font-family:inherit; min-height:44px; }
-  #auth-msg{ color:#b91c1c; font-size:13px; margin-top:10px; min-height:16px; }
+  .auth-card input{ width:100%; padding:13px 12px; border:1px solid var(--border); border-radius:8px; font-size:16px; margin-bottom:10px; font-family:inherit; min-height:44px; color:var(--text); background:var(--surface2); }
+  .auth-card button{ width:100%; padding:13px; border:none; border-radius:8px; background:var(--do); color:#1e1300; font-size:16px; font-weight:600; cursor:pointer; font-family:inherit; min-height:44px; }
+  #auth-msg{ color:#fca5a5; font-size:13px; margin-top:10px; min-height:16px; }
 
   #app{ max-width:1100px; margin:0 auto; padding:0 16px 60px; }
 
@@ -37,29 +46,30 @@
     display:flex; align-items:center; gap:12px; flex-wrap:wrap; border-bottom:1px solid var(--border); margin-bottom:16px;
   }
   header.topbar .brand{ font-weight:800; font-size:16px; letter-spacing:-.01em; }
-  header.topbar .brand span{ color:var(--wait); }
+  header.topbar .brand span{ color:var(--do); }
   .topbar-spacer{ flex:1; }
   .btn{ border:1px solid var(--border); background:var(--card); border-radius:8px; padding:9px 14px; font-size:13px; cursor:pointer; font-family:inherit; color:var(--text); min-height:40px; }
-  .btn:hover{ background:var(--bg); }
+  .btn:hover{ background:var(--surface2); }
   .btn.small{ padding:8px 12px; font-size:12px; min-height:36px; }
-  .btn.danger{ color:#b91c1c; border-color:#fecaca; }
-  .btn.primary{ background:var(--wait); color:#fff; border-color:var(--wait); font-weight:700; }
+  .btn.danger{ color:#fca5a5; border-color:#7f1d1d; }
+  .btn.primary{ background:var(--do); color:#1e1300; border-color:var(--do); font-weight:700; }
 
   .card{ background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:18px; margin-bottom:16px; }
   .card h2{ font-size:14px; margin:0 0 12px; text-transform:uppercase; letter-spacing:.03em; color:var(--text2); }
   .row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   select, input[type=text], input[type=number], textarea{
-    border:1px solid var(--border); border-radius:8px; padding:10px 10px; font-size:16px; font-family:inherit; color:var(--text); background:#fff; min-height:44px;
+    border:1px solid var(--border); border-radius:8px; padding:10px 10px; font-size:16px; font-family:inherit; color:var(--text); background:var(--surface2); min-height:44px;
   }
   textarea{ width:100%; min-height:70px; resize:vertical; }
   label.field-label{ font-size:12px; color:var(--text2); display:block; margin-bottom:4px; }
+  input[type=checkbox]{ accent-color: var(--do); }
 
   .sec{ border:1px solid var(--border); border-radius:8px; overflow:hidden; margin-bottom:8px; }
   .sec-hd{
     display:flex; align-items:center; justify-content:space-between; padding:12px 12px; cursor:pointer;
-    background:#fafafa; font-weight:700; font-size:13px; min-height:44px;
+    background:var(--surface2); font-weight:700; font-size:13px; min-height:44px;
   }
-  .sec-hd:hover{ background:#f3f4f6; }
+  .sec-hd:hover{ background:#243252; }
   .sec-hd-right{ font-weight:400; font-size:12px; color:var(--text2); display:flex; align-items:center; gap:8px; }
   .sec-chevron{ display:inline-block; transition:transform .15s; }
   .sec-chevron.open{ transform:rotate(180deg); }
@@ -68,19 +78,19 @@
   .pill{ font-size:11px; padding:2px 9px; border-radius:20px; font-weight:600; white-space:nowrap; }
   .unit-row{
     display:flex; align-items:center; gap:10px; padding:9px 11px; border:1px solid var(--border); border-radius:8px; margin-bottom:6px;
-    cursor:pointer; transition:box-shadow .12s, border-color .12s; background:#fff;
+    cursor:pointer; transition:box-shadow .12s, border-color .12s; background:var(--surface2);
   }
-  .unit-row:hover{ border-color:#c7ccd4; }
+  .unit-row:hover{ border-color:#3b4a66; }
   .unit-row.hl{ box-shadow:0 0 0 2px var(--wait) inset; border-color:var(--wait); }
   .unit-row .u-id{ font-weight:700; font-size:13px; min-width:64px; }
   .unit-row .u-meta{ font-size:12px; color:var(--text2); min-width:110px; }
 
-  .plan-wrap{ position:relative; width:100%; border-radius:10px; overflow:hidden; border:1px solid var(--border); background:#fafafa; }
+  .plan-wrap{ position:relative; width:100%; border-radius:10px; overflow:hidden; border:1px solid var(--border); background:var(--surface2); }
   .plan-wrap img{ display:block; width:100%; height:auto; }
   .plan-box{
-    position:absolute; border-radius:5px; border:2px solid rgba(0,0,0,.25); cursor:pointer;
-    display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:800; color:#111;
-    text-shadow:0 1px 1px rgba(255,255,255,.6);
+    position:absolute; border-radius:5px; border:2px solid rgba(0,0,0,.35); cursor:pointer;
+    display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:800; color:#e2e8f0;
+    text-shadow:0 1px 2px rgba(0,0,0,.6);
   }
   .plan-box.hl{ box-shadow:0 0 0 3px var(--wait); border-color:var(--wait); }
 
@@ -90,19 +100,31 @@
      the right — replaces the old always-stacked card list. */
   .tb-grid{ display:grid; grid-template-columns:minmax(0,1.6fr) minmax(0,1fr); gap:16px; align-items:start; }
   @media (max-width:780px){ .tb-grid{ grid-template-columns:1fr; } .tb-sidebar{ position:static; } }
-  .tb-tab{ border:1px solid var(--border); background:#fff; border-radius:8px; padding:8px 16px; font-size:13px; cursor:pointer; font-family:inherit; color:var(--text2); min-height:40px; }
-  .tb-tab:hover{ background:var(--bg); }
-  .tb-tab.active{ background:var(--text); color:#fff; border-color:var(--text); font-weight:700; }
-  .tb-sidebar{ background:#f0f9ff; border:1px solid #bae6fd; border-radius:var(--radius); padding:18px; position:sticky; top:70px; }
-  .tb-sidebar h2{ color:#075985; }
+  .tb-tab{ border:1px solid var(--border); background:var(--surface2); border-radius:8px; padding:8px 16px; font-size:13px; cursor:pointer; font-family:inherit; color:var(--text2); min-height:40px; }
+  .tb-tab:hover{ background:#243252; }
+  .tb-tab.active{ background:var(--do); color:#1e1300; border-color:var(--do); font-weight:700; }
+  .tb-sidebar{ background:#1c1509; border:1px solid #4d3a12; border-radius:var(--radius); padding:18px; position:sticky; top:70px; }
+  .tb-sidebar h2{ color:var(--do); }
   .tb-cmp-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; }
-  .tb-cmp-card{ border:1px solid var(--border); border-radius:10px; padding:12px 14px; position:relative; background:#fff; }
+  .tb-cmp-card{ border:1px solid var(--border); border-radius:10px; padding:12px 14px; position:relative; background:var(--surface2); }
   .tb-cmp-card.primary{ border:2px solid var(--wait); }
   .tb-cmp-badge{ position:absolute; top:8px; right:8px; background:var(--wait); color:#fff; font-size:10px; font-weight:700; padding:2px 9px; border-radius:20px; }
   .tb-cmp-card .name{ font-weight:700; font-size:14px; padding-right:60px; }
   .tb-cmp-card .addr{ font-size:12px; color:var(--text2); margin-bottom:2px; }
   .tb-bar{ height:6px; border-radius:3px; background:var(--bg); margin:4px 0; overflow:hidden; }
   .tb-bar-fill{ height:100%; border-radius:3px; }
+  .tb-chip{ border:1px solid var(--border); background:var(--surface2); border-radius:20px; padding:6px 13px; font-size:12px; cursor:pointer; font-family:inherit; color:var(--text2); }
+  .tb-chip:hover{ border-color:#3b4a66; }
+  .tb-chip.active{ background:var(--wait); color:#fff; border-color:var(--wait); font-weight:700; }
+
+  .overlay{ position:fixed; inset:0; background:rgba(0,0,0,.65); display:flex; align-items:center; justify-content:center; z-index:1000; padding:20px; }
+  .modal{ background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:24px; max-width:560px; width:100%; max-height:88vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,.5); }
+  .field{ margin-bottom:12px; }
+  .field label{ display:block; font-size:12px; color:var(--text2); margin-bottom:4px; }
+  #commute-map{ width:100%; height:260px; border-radius:8px; border:1px solid var(--border); margin-top:8px; }
+  .commute-result{ display:flex; align-items:flex-start; gap:10px; padding:10px 0; border-bottom:1px solid var(--border); }
+  .commute-result:last-child{ border-bottom:none; }
+  .commute-dot{ width:12px; height:12px; border-radius:50%; margin-top:4px; flex-shrink:0; }
 
   .addon-row{ display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border); }
   .addon-row:last-child{ border-bottom:none; }
@@ -113,7 +135,7 @@
   .addon-check-list li{ padding:5px 0; font-size:14px; }
 
   .total-line{ display:flex; justify-content:space-between; font-size:14px; padding:6px 0; }
-  .total-line.grand{ font-weight:800; font-size:16px; border-top:1px solid var(--border); margin-top:6px; padding-top:10px; }
+  .total-line.grand{ font-weight:800; font-size:16px; border-top:1px solid var(--border); margin-top:6px; padding-top:10px; color:var(--do); }
 
   .muted{ color:var(--text2); font-size:13px; }
   .hint{ font-size:12px; color:var(--text2); margin-top:6px; }
@@ -142,6 +164,12 @@
   </header>
   <div id="root"></div>
 </div>
+
+<!-- Leaflet (free, no API key) — powers the Commute modal's map. Loaded as a
+     plain classic script (not a module import) so its global `L` is ready
+     before the deferred module script below runs. -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 
 <script type="module">
 import { initializeApp }
@@ -250,9 +278,22 @@ let fpPlaceUnit = '';
 let fpUploading = false;
 const expandedSections = new Set(); // 'propId::TYPE' — local UI state, collapsed by default
 let activeTab = 'units'; // 'units' | 'plan' | 'compare' — local UI state, not persisted (same class as fpEditing/expandedSections)
+let unitFilter = 'available'; // 'available' | 'hold' | 'occupied' | 'all' — Units tab status filter, local UI state, not persisted
+
+// Commute modal state (added 2026-07-27, cont. #5) — local UI state, not
+// persisted (the two addresses ARE persisted, on tourSession, since they
+// describe the customer and stay relevant across whichever property you're
+// looking at; the computed route/results are property-specific and are
+// cleared whenever the primary property changes).
+let commuteOpen = false;
+let commuteLoading = false;
+let commuteError = '';
+let commuteResults = [];  // [{label, addr, miles, minutes, coords, color}]
+let commuteDest = null;   // {lat, lon} of the current primary property, once geocoded
+let commuteMap = null;    // the live Leaflet map instance, if drawn
 
 function defaultSession(){
-  return { customerName:'', primaryProp:'', compareProps:[], highlighted:{}, addons:{}, pricing:{ rate:'', sf:'', term:'', notes:'' } };
+  return { customerName:'', primaryProp:'', compareProps:[], highlighted:{}, addons:{}, pricing:{ rate:'', sf:'', term:'', notes:'' }, commuteAddr1:'', commuteAddr2:'' };
 }
 
 function startLiveData(){
@@ -317,10 +358,16 @@ window.setCustomerName = function(v){ tourSession.customerName = v; saveSession(
 window.setPrimaryProp = function(propId){
   tourSession.primaryProp = propId;
   fpEditing = false; fpDraft = null;
-  activeTab = 'units';
+  activeTab = 'units'; unitFilter = 'available';
+  clearCommuteResults(); // the destination changed — old results (and any drawn route) no longer apply
   saveSession(); watchFloorplan(propId);
 };
+function clearCommuteResults(){
+  commuteResults = []; commuteDest = null; commuteError = '';
+  if (commuteMap) { commuteMap.remove(); commuteMap = null; }
+}
 window.setTab = function(t){ activeTab = t; render(); };
+window.setUnitFilter = function(f){ unitFilter = f; render(); };
 window.addCompareProp = function(propId){
   if (!propId || propId === tourSession.primaryProp) return;
   if (!tourSession.compareProps.includes(propId)) tourSession.compareProps.push(propId);
@@ -391,9 +438,120 @@ window.newSession = function(){
   if (!confirm('Start a new tour session? This clears the current property, selections, add-ons, pricing and notes.')) return;
   tourSession = defaultSession();
   fpEditing = false; fpDraft = null;
-  activeTab = 'units';
+  activeTab = 'units'; unitFilter = 'available';
+  commuteOpen = false; clearCommuteResults();
   saveSession(); watchFloorplan(''); render();
 };
+
+// ── Commute modal (added 2026-07-27, cont. #5) ────────────────────────
+// Justin's ask: enter up to 2 addresses and see a rough drive-time/mileage
+// check to whichever property is primary right now. Deliberately built on
+// FREE, no-API-key services rather than Google Maps (which needs a billing-
+// enabled Google Cloud project) — Justin explicitly asked for a free option
+// and said "don't need too many details, can be a rough view of the commute":
+//   - Geocoding: OpenStreetMap's Nominatim (nominatim.openstreetmap.org) —
+//     free, no key, but has a usage policy (max ~1 request/sec, no heavy/
+//     commercial bulk use) that this low-volume internal tool respects by
+//     geocoding one address at a time with a short pause between calls.
+//   - Routing: OSRM's public demo server (router.project-osrm.org) — free,
+//     no key, returns real driving distance/duration + route geometry. Its
+//     own docs are explicit that this demo server is "for light/evaluation
+//     use, not guaranteed uptime" — acceptable for a rough sales-conversation
+//     check, but flagged here in case it ever goes down or rate-limits.
+//   - Map rendering: Leaflet + OpenStreetMap tiles (loaded as a classic
+//     script, see the <head> comment) — free, no key.
+window.openCommuteModal = function(){
+  commuteOpen = true; commuteError = '';
+  render();
+};
+window.closeCommuteModal = function(){
+  commuteOpen = false;
+  if (commuteMap) { commuteMap.remove(); commuteMap = null; }
+  render();
+};
+window.setCommuteAddr = function(n, v){
+  tourSession['commuteAddr' + n] = v;
+  saveSession();
+};
+
+async function geocode(address){
+  const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(address);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Couldn’t look up "' + address + '" — try a more specific address.');
+  const data = await res.json();
+  if (!data.length) throw new Error('No match found for "' + address + '" — try a more specific address.');
+  return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+}
+
+async function routeBetween(from, to){
+  const url = `https://router.project-osrm.org/route/v1/driving/${from.lon},${from.lat};${to.lon},${to.lat}?overview=full&geometries=geojson`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('The routing service is unavailable right now — try again in a moment.');
+  const data = await res.json();
+  if (!data.routes || !data.routes.length) throw new Error('No driving route found between those two points.');
+  return data.routes[0];
+}
+
+window.computeCommute = async function(){
+  const propId = tourSession.primaryProp;
+  const d = availMap[propId] || {};
+  if (!d.address) { commuteError = 'This property has no address on file yet.'; render(); return; }
+  const addrs = [tourSession.commuteAddr1, tourSession.commuteAddr2].map(a => (a || '').trim()).filter(Boolean);
+  if (!addrs.length) { commuteError = 'Enter at least one address.'; render(); return; }
+
+  commuteLoading = true; commuteError = ''; commuteResults = []; render();
+  const colors = ['#3b82f6', '#f59e0b'];
+  try {
+    const dest = await geocode(d.address);
+    commuteDest = dest;
+    const results = [];
+    for (let i = 0; i < addrs.length; i++) {
+      if (i > 0) await new Promise(r => setTimeout(r, 350)); // stay well under Nominatim's ~1 req/sec guidance
+      const origin = await geocode(addrs[i]);
+      const route = await routeBetween(origin, dest);
+      results.push({
+        label: 'Address ' + (i + 1), addr: addrs[i],
+        miles: route.distance / 1609.34, minutes: Math.round(route.duration / 60),
+        coords: route.geometry.coordinates, color: colors[i] || '#94a3b8'
+      });
+    }
+    commuteResults = results;
+    commuteLoading = false;
+    render();
+  } catch (e) {
+    commuteLoading = false;
+    commuteError = (e && e.message) || 'Something went wrong getting directions.';
+    commuteDest = null;
+    render();
+  }
+};
+
+// Redraws the Leaflet map after every render() while the modal is open with
+// results ready — render() rebuilds #root's innerHTML wholesale on ANY state
+// change (not just commute-related ones), which would otherwise blow away the
+// map's container div out from under a live Leaflet instance.
+function maybeDrawCommuteMap(){
+  if (!commuteOpen || !commuteResults.length || !commuteDest) return;
+  requestAnimationFrame(drawCommuteMap);
+}
+function drawCommuteMap(){
+  const el = document.getElementById('commute-map');
+  if (!el || typeof L === 'undefined') return;
+  if (commuteMap) { commuteMap.remove(); commuteMap = null; }
+  commuteMap = L.map(el, { zoomControl: false }).setView([commuteDest.lat, commuteDest.lon], 10);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 18, attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(commuteMap);
+  const bounds = [[commuteDest.lat, commuteDest.lon]];
+  L.circleMarker([commuteDest.lat, commuteDest.lon], { radius: 7, color: '#f59e0b', fillColor: '#f59e0b', fillOpacity: 1 })
+    .addTo(commuteMap).bindTooltip('Property');
+  commuteResults.forEach(r => {
+    const latlngs = r.coords.map(c => [c[1], c[0]]); // geojson is [lon,lat] — Leaflet wants [lat,lon]
+    L.polyline(latlngs, { color: r.color, weight: 4 }).addTo(commuteMap);
+    bounds.push(latlngs[0], latlngs[latlngs.length - 1]);
+  });
+  commuteMap.fitBounds(bounds, { padding: [28, 28] });
+}
 
 // Floorplan editor
 window.startFpEdit = function(){
@@ -473,7 +631,48 @@ function render(){
     `<button class="btn small" onclick="newSession()">＋ New session</button> <button class="btn small" onclick="doSignOut()">Sign out</button>`;
 
   const root = document.getElementById('root');
-  root.innerHTML = renderCustomerNameRow() + renderPropertyPicker() + renderPrimaryLayout();
+  root.innerHTML = renderCustomerNameRow() + renderPropertyPicker() + renderPrimaryLayout() + renderCommuteModal();
+  maybeDrawCommuteMap();
+}
+
+function renderCommuteModal(){
+  if (!commuteOpen) return '';
+  const propId = tourSession.primaryProp;
+  const d = availMap[propId] || {};
+  const propName = d.property || propId || 'this property';
+  return `<div class="overlay" onclick="if(event.target===this) closeCommuteModal()">
+    <div class="modal">
+      <h2 style="margin-bottom:4px;">🗺️ Commute check</h2>
+      <p class="muted" style="margin-bottom:16px;">Rough drive time and mileage to <strong>${esc(propName)}</strong>. Free, approximate — not a live-traffic estimate.</p>
+      <div class="field">
+        <label>Address 1</label>
+        <input type="text" value="${esc(tourSession.commuteAddr1 || '')}" placeholder="e.g. 123 Main St, Los Angeles, CA" oninput="setCommuteAddr(1, this.value)">
+      </div>
+      <div class="field">
+        <label>Address 2 (optional)</label>
+        <input type="text" value="${esc(tourSession.commuteAddr2 || '')}" placeholder="e.g. 456 Oak Ave, Anaheim, CA" oninput="setCommuteAddr(2, this.value)">
+      </div>
+      <div class="row" style="margin:12px 0;">
+        <button class="btn primary" ${commuteLoading ? 'disabled' : ''} onclick="computeCommute()">${commuteLoading ? 'Looking up…' : 'Get directions'}</button>
+        <button class="btn small" onclick="closeCommuteModal()">Close</button>
+      </div>
+      ${commuteError ? `<p style="color:#fca5a5;margin-bottom:12px;">⚠ ${esc(commuteError)}</p>` : ''}
+      ${commuteResults.length ? `
+        <div id="commute-map"></div>
+        <div style="margin-top:12px;">
+          ${commuteResults.map(r => `
+            <div class="commute-result">
+              <span class="commute-dot" style="background:${r.color};"></span>
+              <div style="flex:1;">
+                <div><strong>${esc(r.label)}</strong> — ${esc(r.addr)}</div>
+                <div class="muted">${r.miles.toFixed(1)} mi · ${r.minutes} min drive</div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
+    </div>
+  </div>`;
 }
 
 function renderCustomerNameRow(){
@@ -523,6 +722,7 @@ function renderPropHeader(propId, d){
     <button class="btn small" id="tour-sync-${esc(propId)}" onclick="triggerAvailSync('${esc(propId)}')">⟳ Sync now</button>
     ${d.sharepoint_url ? `<a class="btn small" href="${esc(d.sharepoint_url)}" target="_blank" rel="noopener" style="text-decoration:none;">📄 SharePoint</a>` : ''}
     ${d.yardi_url ? `<a class="btn small" href="${esc(d.yardi_url)}" target="_blank" rel="noopener" style="text-decoration:none;">📐 Blueprint</a>` : ''}
+    <button class="btn small" onclick="openCommuteModal()">🗺️ Commute</button>
   </div>`;
   return `<div class="card">
     <h2 style="margin-bottom:8px;">${esc(d.property || propId)}${d.address ? ' <span class="muted" style="text-transform:none;letter-spacing:normal;">— ' + esc(d.address) + '</span>' : ''}</h2>
@@ -544,7 +744,22 @@ function renderTabContent(propId, d){
 }
 
 function renderUnitsTab(propId, d){
-  return renderGridView(propId, d) + `<div class="hint">Click a unit to highlight it — the square footage in Deal summary fills in automatically.</div>`;
+  return renderUnitFilterBar(d) + renderGridView(propId, d) + `<div class="hint">Click a unit to highlight it — the square footage in Deal summary fills in automatically.</div>`;
+}
+
+function renderUnitFilterBar(d){
+  const units = d.units || [];
+  const counts = { available: 0, hold: 0, occupied: 0 };
+  units.forEach(u => { const s = unitStatus(u); counts[s] = (counts[s] || 0) + 1; });
+  const opts = [
+    ['available', 'Available', counts.available],
+    ['hold', 'Hold', counts.hold],
+    ['occupied', 'Occupied', counts.occupied],
+    ['all', 'All', units.length]
+  ];
+  return `<div class="row" style="margin-bottom:12px;">
+    ${opts.map(([key, label, count]) => `<button class="tb-chip${unitFilter === key ? ' active' : ''}" onclick="setUnitFilter('${key}')">${label} (${count})</button>`).join('')}
+  </div>`;
 }
 
 function renderPlanTab(propId, d){
@@ -654,16 +869,23 @@ function renderFpEditor(propId){
 }
 
 function renderGridView(propId, d){
-  const units = d.units || [];
-  if (!units.length) return `<div class="muted">No unit data synced for this property yet.</div>`;
+  const allUnits = d.units || [];
+  if (!allUnits.length) return `<div class="muted">No unit data synced for this property yet.</div>`;
+  const units = unitFilter === 'all' ? allUnits : allUnits.filter(u => unitStatus(u) === unitFilter);
   const types = ['WH', 'OFFICE', 'DOCK', 'TRAILER', 'PARKING'];
   const groups = types.map(t => ({ t, list: units.filter(u => (u.type || '').toUpperCase() === t) })).filter(g => g.list.length);
   const others = units.filter(u => !types.includes((u.type || '').toUpperCase()));
   if (others.length) groups.push({ t: 'Other', list: others });
+  if (!groups.length) return `<div class="muted">No ${unitFilter === 'all' ? '' : unitFilter + ' '}units for this property.</div>`;
   return groups.map(g => {
     const key = propId + '::' + g.t;
     const open = expandedSections.has(key);
-    const availCount = g.list.filter(u => unitStatus(u) !== 'occupied').length;
+    // When "All" is active, keep the original "N of M available" summary; a
+    // specific status filter already scopes g.list to just that status, so a
+    // plain count reads better than a now-redundant "N of N available".
+    const headerRight = unitFilter === 'all'
+      ? `${g.list.filter(u => unitStatus(u) !== 'occupied').length} of ${g.list.length} available`
+      : `${g.list.length} unit${g.list.length !== 1 ? 's' : ''}`;
     const rows = g.list.map(u => {
       const status = unitStatus(u);
       const hl = isHighlighted(propId, u.unit) ? ' hl' : '';
@@ -676,7 +898,7 @@ function renderGridView(propId, d){
     return `<div class="sec">
       <div class="sec-hd" onclick="toggleSection('${esc(key)}')">
         <span>${esc(g.t)}</span>
-        <span class="sec-hd-right">${availCount} of ${g.list.length} available <span class="sec-chevron${open ? ' open' : ''}">▾</span></span>
+        <span class="sec-hd-right">${headerRight} <span class="sec-chevron${open ? ' open' : ''}">▾</span></span>
       </div>
       ${open ? `<div class="sec-body">${rows}</div>` : ''}
     </div>`;
