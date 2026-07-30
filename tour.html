@@ -364,6 +364,12 @@ function isHighlighted(propId, unitId){
 window.setCustomerName = function(v){ tourSession.customerName = v; saveSession(); };
 window.setPrimaryProp = function(propId){
   tourSession.primaryProp = propId;
+  // Drop it from compareProps if it was already sitting there (e.g. it was
+  // added as a comparison property earlier, then later picked as primary) —
+  // otherwise Compare Locations would render the same property as two
+  // separate cards (see the render-side dedupe below for a belt-and-braces
+  // fix on any session that already has this stale state saved).
+  tourSession.compareProps = tourSession.compareProps.filter(p => p !== propId);
   fpEditing = false; fpDraft = null;
   activeTab = 'units'; unitFilter = 'available';
   clearCommuteResults(); // the destination changed — old results (and any drawn route) no longer apply
@@ -803,7 +809,10 @@ function renderPlanTab(propId, d){
 
 function renderCompareTab(){
   const primaryId = tourSession.primaryProp;
-  const ids = [primaryId, ...tourSession.compareProps].filter(id => id && availMap[id]);
+  // Dedupe against primaryId defensively — a session saved before the
+  // setPrimaryProp fix above could still have the primary property sitting
+  // in compareProps too, which would otherwise render it as two identical cards.
+  const ids = [primaryId, ...tourSession.compareProps.filter(id => id !== primaryId)].filter(id => id && availMap[id]);
   const availIds = sortedPropIds().filter(id => id !== primaryId && !tourSession.compareProps.includes(id));
   const addRow = availIds.length
     ? `<select onchange="if(this.value){addCompareProp(this.value); this.value='';}" style="margin-bottom:12px;">

@@ -1632,3 +1632,21 @@ Justin's ask, after trying the Compare Locations tab: "when im in compare mode, 
 **To deploy:** `git push` the updated `tour.html`. No Firestore/Storage/n8n changes.
 
 **New files:** none. **Changed files:** `tour.html` (`tourSession.comparePricing`, `defaultSession()`, `onSnapshot` merge, `window.setComparePricing`, `renderCompareTab()`'s per-card deal block, `.tb-cmp-deal` CSS), `CLAUDE.md` (this section).
+
+---
+
+## 2026-07-28 (cont.) — Compare Locations duplicate-card bug, found via live Chrome check
+
+Justin reported "not seeing a difference" after the per-property deal calculator above was deployed. Verified two things directly against the live GitHub Pages URL (via Claude in Chrome, using an already-authenticated tab) rather than guessing: (1) fetched the deployed `tour.html` with a cache-busting query param and confirmed `setComparePricing`/`tb-cmp-deal`/the new green palette were all actually present in what GitHub Pages was serving — so the deploy itself was NOT stale, ruling out the "GitHub Pages hasn't rebuilt yet" theory; (2) opened the live app, went to Compare Locations, and found a real, reproducible bug: the current primary property ("11179 Banana Fontana") was showing as **two identical cards**, both tagged "Primary," and typing a rate into one instantly changed the other too. This is very likely exactly why the new calculator looked like it "wasn't doing anything different" — two cards for the same property, both showing the same numbers, reads as broken/pointless rather than as a working new feature.
+
+**Root cause:** `window.setPrimaryProp(propId)` never removed `propId` from `tourSession.compareProps` if it happened to already be sitting there (e.g. Justin added a property as a *comparison* first, then later picked that same property as the *primary* one via the property dropdown — a completely normal thing to do, not an edge case). `renderCompareTab()`'s `ids = [primaryId, ...tourSession.compareProps]` then had the same id twice, and since each card's `isPrimary` is computed per-iteration as `id === primaryId`, **both** copies rendered with the "Primary" badge and read from the exact same `tourSession.comparePricing[id]` entry — hence typing in one instantly "changed" the other (it wasn't two cards updating in sync, it was literally one card drawn twice).
+
+**Fix, two layers:**
+1. `setPrimaryProp` now strips the newly-primary property out of `compareProps` the moment it's picked: `tourSession.compareProps = tourSession.compareProps.filter(p => p !== propId);` — stops the duplicate from ever being created going forward.
+2. `renderCompareTab()`'s `ids` construction now also defensively filters `compareProps` against `primaryId` before building the card list — a belt-and-braces fix so any session that was saved *before* this fix (like Justin's live one, which already has this stale state written to Firestore) self-heals the moment the fixed code loads, with no manual cleanup step needed. The stale duplicate id is left sitting harmlessly in the saved `compareProps` array itself (not worth a special migration write); it's simply never surfaced again by anything that reads it.
+
+**Validated:** `node --check` on the extracted module script (clean), Python `html.parser` tag-balance check (clean), and confirmed live in the browser before calling it fixed: typed a rate into the (buggy, pre-fix) duplicate card and watched it mirror onto the other, confirming the same-id-twice diagnosis directly rather than inferring it from code alone.
+
+**To deploy:** `git push` the updated `tour.html`. No Firestore/Storage/n8n changes — the stale `compareProps` entry in Justin's live session doesn't need a manual fix, the render-side dedupe (fix #2) makes it a non-issue automatically on next load.
+
+**New files:** none. **Changed files:** `tour.html` (`setPrimaryProp` compareProps cleanup, `renderCompareTab()`'s `ids` dedupe), `CLAUDE.md` (this section).
