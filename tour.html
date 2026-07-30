@@ -115,6 +115,8 @@
   .tb-cmp-badge{ position:absolute; top:8px; right:8px; background:var(--wait); color:#fff; font-size:10px; font-weight:700; padding:2px 9px; border-radius:20px; }
   .tb-cmp-card .name{ font-weight:700; font-size:14px; padding-right:60px; }
   .tb-cmp-card .addr{ font-size:12px; color:var(--text2); margin-bottom:2px; }
+  .tb-cmp-deal{ border-top:1px solid var(--border); margin-top:10px; padding-top:6px; }
+  .tb-cmp-deal input{ font-size:14px; padding:8px; min-height:38px; }
   .tb-bar{ height:6px; border-radius:3px; background:var(--bg); margin:4px 0; overflow:hidden; }
   .tb-bar-fill{ height:100%; border-radius:3px; }
   .tb-chip{ border:1px solid var(--border); background:var(--surface2); border-radius:20px; padding:6px 13px; font-size:12px; cursor:pointer; font-family:inherit; color:var(--text2); }
@@ -297,7 +299,7 @@ let commuteDest = null;   // {lat, lon} of the current primary property, once ge
 let commuteMap = null;    // the live Leaflet map instance, if drawn
 
 function defaultSession(){
-  return { customerName:'', primaryProp:'', compareProps:[], highlighted:{}, addons:{}, pricing:{ rate:'', sf:'', term:'', notes:'' }, commuteAddr1:'', commuteAddr2:'' };
+  return { customerName:'', primaryProp:'', compareProps:[], highlighted:{}, addons:{}, pricing:{ rate:'', sf:'', term:'', notes:'' }, comparePricing:{}, commuteAddr1:'', commuteAddr2:'' };
 }
 
 function startLiveData(){
@@ -313,7 +315,8 @@ function startLiveData(){
         compareProps: d.compareProps || [],
         highlighted: d.highlighted || {},
         addons: d.addons || {},
-        pricing: Object.assign({ rate:'', sf:'', term:'', notes:'' }, d.pricing || {})
+        pricing: Object.assign({ rate:'', sf:'', term:'', notes:'' }, d.pricing || {}),
+        comparePricing: d.comparePricing || {}
       });
       watchFloorplan(tourSession.primaryProp);
     }
@@ -379,6 +382,18 @@ window.addCompareProp = function(propId){
 };
 window.removeCompareProp = function(propId){
   tourSession.compareProps = tourSession.compareProps.filter(p => p !== propId);
+  saveSession(); render();
+};
+// Per-property mini deal calculator shown on each Compare Locations card —
+// deliberately separate from the shared tourSession.pricing (which drives the
+// Deal Summary sidebar for whichever property is primary). Justin's ask
+// (2026-07-28): when comparing, see each property's availability AND its own
+// rough total, side by side — but skip add-ons/fees in this view since those
+// don't vary much property to property; square footage is what actually
+// differs, so this calc is deliberately just rate x sf, no add-ons, no term.
+window.setComparePricing = function(propId, field, val){
+  const cp = tourSession.comparePricing[propId] || (tourSession.comparePricing[propId] = { rate:'', sf:'' });
+  cp[field] = val;
   saveSession(); render();
 };
 window.toggleHighlight = function(propId, unitId){
@@ -805,6 +820,10 @@ function renderCompareTab(){
     const whSf  = (d.wh && d.wh.avail_sf) || 0;
     const offSf = (d.office && d.office.avail_sf) || 0;
     const isPrimary = id === primaryId;
+    const cp = tourSession.comparePricing[id] || { rate:'', sf:'' };
+    const cpRate = Number(cp.rate) || 0;
+    const cpSf = Number(cp.sf) || 0;
+    const cpTotal = Math.round(cpRate * cpSf);
     return `<div class="tb-cmp-card${isPrimary ? ' primary' : ''}">
       ${isPrimary ? '<div class="tb-cmp-badge">Primary</div>' : ''}
       <div class="name">${esc(d.property || id)}</div>
@@ -815,6 +834,20 @@ function renderCompareTab(){
       <div class="muted">Office avail</div>
       <div class="tb-bar"><div class="tb-bar-fill" style="width:${Math.round(offSf / maxOff * 100)}%;background:var(--do);"></div></div>
       <div style="font-weight:700;font-size:13px;">${fmtSf(offSf)}</div>
+      <div class="tb-cmp-deal">
+        <div class="muted" style="margin-top:10px;">Rough total (sf only, no add-ons/fees)</div>
+        <div class="row" style="gap:8px;margin-top:4px;flex-wrap:nowrap;">
+          <div style="flex:1;min-width:0;">
+            <label class="field-label">Rate ($/sf)</label>
+            <input type="number" step="0.01" placeholder="$/sf" style="width:100%;" value="${esc(cp.rate)}" onchange="setComparePricing('${esc(id)}','rate',this.value)">
+          </div>
+          <div style="flex:1;min-width:0;">
+            <label class="field-label">Square footage</label>
+            <input type="number" placeholder="sf" style="width:100%;" value="${esc(cp.sf)}" onchange="setComparePricing('${esc(id)}','sf',this.value)">
+          </div>
+        </div>
+        <div class="total-line grand" style="margin-top:8px;"><span>Total</span><span>$${cpTotal.toLocaleString()}/mo</span></div>
+      </div>
       ${!isPrimary ? `<div style="margin-top:10px;"><button class="btn small danger" onclick="removeCompareProp('${esc(id)}')">Remove</button></div>` : ''}
     </div>`;
   }).join('');

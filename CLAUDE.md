@@ -1610,3 +1610,25 @@ Three follow-ups from Justin testing the Commute modal, all fixed same pass.
 **To deploy:** `git push` the updated `tour.html`. No Firestore/Storage/n8n changes.
 
 **New files:** none. **Changed files:** `tour.html` (`onchange` swap on the two commute address inputs + rate/sf/add-on price inputs, `window._cmDownTarget` overlay-drag guard, `--green-bg`/`--green-fg` recolored to Cubework's real green, `header.topbar` and `.total-line.grand` border color), `CLAUDE.md` (this section).
+
+---
+
+## 2026-07-28 — `tour.html`: Compare Locations gets its own per-property deal calculator
+
+Justin's ask, after trying the Compare Locations tab: "when im in compare mode, i should see the availability of both places, separately, 2 different deal summaries — granted we can take out the extra fees because thats the same for almost all locations, just for the square footage is main." Before this, each Compare card only showed static warehouse/office avail-sf bars — no way to price anything out per property; the single shared Deal Summary sidebar only ever applies to whichever property is primary. So when comparing two sites, Justin had availability side by side but no way to get a rough number for each without leaving Compare and re-picking the primary property back and forth.
+
+**Design, per his exact wording:** each card in Compare gets its own small, independent deal calculator — Rate ($/sf) and Square footage inputs, computing a Total ($/mo) — deliberately **no add-ons/fees section** in this per-card view (his call: those don't vary much property to property, so they'd just be repeated clutter across every card; square footage is what actually differs and is what matters when sizing up two sites against each other). This is intentionally a separate, simpler calculator from the full Deal Summary sidebar (which still has add-ons, term, and notes for whichever property is actually primary) — not a replacement for it.
+
+**New `tourSession.comparePricing` field** — `{ [propId]: {rate, sf} }`, one entry per property that's ever had a rate/sf typed into its Compare card. Added to `defaultSession()` and merged in the `onSnapshot` listener (`comparePricing: d.comparePricing || {}`) so older sessions without the field don't break. Kept fully separate from the existing `tourSession.pricing` (the primary property's Deal Summary state) — switching which property is primary, or removing/re-adding a comparison property, never touches these per-property numbers; they persist independently per property for as long as the session is open.
+
+**`window.setComparePricing(propId, field, val)`** — new handler, writes into `tourSession.comparePricing[propId]` (creating the `{rate:'', sf:''}` entry on first use), saves, and re-renders. Both new inputs use `onchange` (not `oninput`) from the start, matching the fix already applied elsewhere in this file for the exact same cursor-jump-while-typing bug (every keystroke round-tripping through Firestore's live listener, which rebuilds the whole page).
+
+**`renderCompareTab()`** — each card's existing warehouse/office avail-sf bars are unchanged (that already satisfied "see the availability... separately," since every card already has its own numbers); added a new `.tb-cmp-deal` block right below the bars: a "Rough total (sf only, no add-ons/fees)" label, the Rate/Square footage inputs side by side, and a `Total` line using the same `.total-line.grand` styling (amber figure, green divider line) the main Deal Summary sidebar uses, so it reads as the same kind of number just scoped to one card.
+
+**Validated:** `node --check` on the extracted module script (clean), Python `html.parser` tag-balance check (clean), grep-confirmed `setComparePricing`'s only new inline handler resolves to its `window.*` exposure (and re-confirmed no other handler in the file is unresolved), and a stub-harness functional test of the actual per-property math — a fresh property starts at $0 total, entering rate+sf computes the right total, a second property's numbers are fully independent of the first, and clearing a rate resets that property's total back to $0 without touching any other property's numbers. All 5 assertions passed.
+
+**Not built:** a way to see full unit-level detail (not just the avail-sf bars) per card without leaving Compare — flagged as a possible follow-up if the summary bars ever feel too thin for a real side-by-side conversation, but not asked for this round; Term and Notes are also deliberately absent from the per-card calculator (kept in the main Deal Summary sidebar only), consistent with keeping this view to just the one thing Justin said actually varies (square footage).
+
+**To deploy:** `git push` the updated `tour.html`. No Firestore/Storage/n8n changes.
+
+**New files:** none. **Changed files:** `tour.html` (`tourSession.comparePricing`, `defaultSession()`, `onSnapshot` merge, `window.setComparePricing`, `renderCompareTab()`'s per-card deal block, `.tb-cmp-deal` CSS), `CLAUDE.md` (this section).
