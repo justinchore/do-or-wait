@@ -4583,7 +4583,7 @@ const PRICING_BD_SYNC_WEBHOOK = `${PROXY}/webhook/pricing-bd-sync`; // manual "S
 const ROSTER_SYNC_WEBHOOK = `${PROXY}/webhook/roster-sync`; // manual "Sync now" for the Roster tab (n8n workflow 19)
 const ASSISTANT_CHAT_WEBHOOK = `${PROXY}/webhook/assistant-chat`; // 🤖 Assistant tab: {messages} → Claude (native MCP connector against the do-or-wait Cloud Run server) → {ok,reply,toolsUsed} (n8n workflow 24)
 const OUTREACH_REPLY_SCAN_WEBHOOK = `${PROXY}/webhook/outreach-reply-scan`; // manual "⟳ Check now" on Outreach + Prop Outreach — runs the next reply scan immediately (n8n workflow 23)
-const SITE_OUTREACH_DISCOVER_WEBHOOK = `${PROXY}/webhook/site-outreach-discover`; // 📍 Nearby Prospects "🔎 Discover" button: {propId,address} → CoreClaw Google Maps scrape per category → site_outreach/{cid} (n8n workflow 25)
+const SITE_OUTREACH_DISCOVER_WEBHOOK = `${PROXY}/webhook/site-outreach-discover-zoominfo`; // 📍 Nearby Prospects "🔎 Discover" button: {propId,address} → ZoomInfo free Search Companies per category → site_outreach/{cid} (n8n workflow 30; CoreClaw/workflow 25 retired 2026-08-03)
 const NP_RESEARCH_WEBHOOK = `${PROXY}/webhook/nearby-prospect-research`; // 📍 Nearby Prospects "🔎 Research & draft" — business name/website/category → Claude web research + 4-hook draft, same engine as Outreach's workflow 13 (n8n workflow 26)
 
 // Listen to ALL availability docs (scales to multiple locations)
@@ -7698,7 +7698,8 @@ async function promoteNPToLead(id, e){
   if(!confirm(`Create a lead from "${r.name||'this record'}"?`)) return;
   const leadId = 'l'+Date.now()+Math.floor(Math.random()*100000);
   const contactBits = [r.contact_name, r.contact_title].filter(Boolean).join(', ');
-  const summary = `Promoted from Nearby Prospects (CoreClaw discovery, ${npLocationName(r.location)}, category: ${r.search_category?npCategoryLabel(r.search_category):'—'}).${contactBits?' Contact: '+contactBits+'.':''}${r.notes?' '+r.notes:''}`;
+  const discoverySource = r.source === 'zoominfo' ? 'ZoomInfo discovery' : 'CoreClaw discovery';
+  const summary = `Promoted from Nearby Prospects (${discoverySource}, ${npLocationName(r.location)}, category: ${r.search_category?npCategoryLabel(r.search_category):'—'}).${contactBits?' Contact: '+contactBits+'.':''}${r.notes?' '+r.notes:''}`;
   const lead = {
     id: leadId, archived: false, createdAt: new Date().toISOString(), seq_status: 'active',
     company: r.name||'', contact: r.contact_name||null, email: r.contact_email||null, phone: r.phone||r.contact_phone||null,
@@ -7735,12 +7736,12 @@ async function discoverNearby(propId, btnId, e){
     });
     const text = await res.text().catch(()=>'');
     if(!res.ok){
-      console.error('[site-outreach-discover]', res.status, text);
+      console.error('[site-outreach-discover-zoominfo]', res.status, text);
       if(noteEl) noteEl.textContent = '';
       alert('Discovery failed (HTTP ' + res.status + ').\n' +
         (res.status === 404
-          ? 'The site-outreach-discover webhook isn’t reachable — is n8n workflow 25 imported and Active?'
-          : 'Workflow 25 errored — check its Executions log in n8n.') +
+          ? 'The site-outreach-discover-zoominfo webhook isn’t reachable — is n8n workflow 30 imported and Active?'
+          : 'Workflow 30 errored — check its Executions log in n8n.') +
         (text ? '\n\n' + text.slice(0, 300) : ''));
       return;
     }
