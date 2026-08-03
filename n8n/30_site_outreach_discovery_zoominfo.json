@@ -1,0 +1,184 @@
+{
+  "name": "CW — 30. Site Outreach Discovery (ZoomInfo)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "site-outreach-discover-zoominfo",
+        "responseMode": "responseNode",
+        "options": { "allowedOrigins": "*" }
+      },
+      "id": "cw-30-001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-1344, 80],
+      "webhookId": "site-outreach-discover-zoominfo"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ZoomInfo counterpart to wf25's \"Parse request\" -- same {propId, address}\n// input contract so the app's Discover button can point at either source\n// with the same body shape. Derives a 5-digit zip from the tail of the\n// address (same regex idea as wf25's base_location extraction) since\n// ZoomInfo's Search Companies filters on zipCode + zipCodeRadiusMiles, not\n// a free-text location string.\n//\n// CATEGORY PARITY WITH CoreClaw (deliberate, per testing_plan.md Phase 4):\n// search_category values written to Firestore MUST stay one of the same 9\n// known strings wf25 already uses, because wf26 (Nearby Prospect Research\n// & Draft) keys its fit-tier GROUPS map off exact matches on those 9\n// strings. CATEGORY_KEYWORDS below translates each of those 9 category\n// labels into a real ZoomInfo industryKeywords query under the hood --\n// the label written to Firestore and the search term actually sent to\n// ZoomInfo are deliberately different things.\nconst b = $json.body || {};\nconst propId = b.propId || '';\nconst address = b.address || '';\nif (!propId) throw new Error('Missing body.propId');\nif (!address) throw new Error('Missing body.address');\n\nconst zipMatch = address.match(/(\\d{5})(?:-\\d{4})?\\s*$/);\nconst zipCode = zipMatch ? zipMatch[1] : (b.zip_code || '');\nif (!zipCode) throw new Error('Could not derive a 5-digit zip from address, and no body.zip_code override was given.');\n\nconst radiusMiles = [10, 25, 50, 100, 250].includes(parseInt(b.zip_code_radius_miles, 10))\n  ? parseInt(b.zip_code_radius_miles, 10) : 25;\nconst employeeRangeMax = b.employee_range_max ? String(b.employee_range_max) : '50';\nconst zoominfoContactsMax = b.zoominfo_contacts_max ? String(b.zoominfo_contacts_max) : '8';\n\nconst CATEGORY_KEYWORDS = {\n  'import export company': 'import OR export OR importer OR exporter',\n  'distribution company': 'distribution OR distributor',\n  'wholesale distributor': 'wholesale',\n  '3PL logistics company': '3PL OR logistics OR third party logistics',\n  'freight forwarder': 'freight forwarding OR freight forwarder',\n  'ecommerce fulfillment center': 'ecommerce fulfillment OR fulfillment center OR order fulfillment',\n  'trucking company': 'trucking OR trucking company',\n  'manufacturer': 'manufacturer OR manufacturing',\n  'moving and storage company': 'moving OR storage OR self storage OR moving company'\n};\nconst categories = (Array.isArray(b.categories) && b.categories.length) ? b.categories : Object.keys(CATEGORY_KEYWORDS);\nconst unknown = categories.filter(c => !CATEGORY_KEYWORDS[c]);\nif (unknown.length) throw new Error(`Unknown category label(s): ${unknown.join(', ')}. Must be one of: ${Object.keys(CATEGORY_KEYWORDS).join(', ')}`);\n\nreturn [{ json: { propId, address, zipCode, radiusMiles, employeeRangeMax, zoominfoContactsMax, categories, CATEGORY_KEYWORDS } }];"
+      },
+      "id": "cw-30-002",
+      "name": "Parse request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1120, 80]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Same static-data accumulator pattern as wf25's \"Reset accumulator + fan\n// out categories\" -- one item per category, fed into the batch loop, reset\n// on every fresh webhook call so an errored prior run never leaks in.\nconst ws = $getWorkflowStaticData('global');\nws.rows = [];\nconst ctx = $json;\nreturn (ctx.categories || []).map(cat => ({ json: { ...ctx, category: cat, industryKeywords: ctx.CATEGORY_KEYWORDS[cat] } }));"
+      },
+      "id": "cw-30-003",
+      "name": "Reset accumulator + fan out categories",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-896, 80]
+    },
+    {
+      "parameters": { "options": {} },
+      "id": "cw-30-004",
+      "name": "Batch categories (loop)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [-672, 80]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Real request shape confirmed live 2026-08-03 (workflow 29 test bench):\n// {data:{type:\"CompanySearch\", attributes:{...filters}}}. page[number]/\n// page[size] are URL query params, not body fields. Free endpoint --\n// no credit cost. v1 takes only the first page (page[size]=100) per\n// category; totalResults is still surfaced in the response for visibility\n// if a category has more matches than that -- multi-page looping can be\n// added later if a single Discover run needs the full set.\nconst ctx = $json;\nconst attrs = {\n  zipCode: ctx.zipCode,\n  zipCodeRadiusMiles: ctx.radiusMiles,\n  employeeRangeMax: ctx.employeeRangeMax,\n  zoominfoContactsMax: ctx.zoominfoContactsMax,\n  industryKeywords: ctx.industryKeywords,\n  excludeDefunctCompanies: true\n};\nreturn [{ json: {\n  ...ctx,\n  requestBody: { data: { type: 'CompanySearch', attributes: attrs } }\n} }];"
+      },
+      "id": "cw-30-005",
+      "name": "Build Search Companies body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-448, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.zoominfo.com/gtm/data/v1/companies/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [{ "name": "page[size]", "value": "100" }]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "Content-Type", "value": "application/vnd.api+json" }]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": { "continueOnFail": true }
+      },
+      "id": "cw-30-006",
+      "name": "ZoomInfo: Search Companies",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-224, 0],
+      "continueOnFail": true,
+      "credentials": {
+        "oAuth2Api": { "id": "REPLACE_WITH_CREDENTIAL_ID", "name": "ZoomInfo API" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Tags each result row with the search_category (one of the 9 known\n// CoreClaw-parity strings, NOT the ZoomInfo industryKeywords string used\n// to find it) and appends to the shared static-data accumulator, same\n// convention as wf25's \"Tag + accumulate results\". No contact fields are\n// populated here -- Discover only ever writes name/website/category, per\n// the two-stage Discover(free)/Enrich(paid) split in testing_plan.md Phase\n// 4. This keeps a single accidental click from spending credits.\n//\n// PARSING QUIRK (found 2026-08-03 live in n8n, wf29): ZoomInfo's\n// application/vnd.api+json Content-Type isn't autodetected as JSON by\n// n8n's HTTP Request node, so the real response can arrive as\n// {data: \"<json string>\"} instead of a parsed object. Unwrap that here.\nfunction parseResp(raw) {\n  if (raw && typeof raw.data === 'string') {\n    try { return JSON.parse(raw.data); } catch (e) { return raw; }\n  }\n  return raw;\n}\nconst prev = $('Build Search Companies body').first().json;\nconst resp = parseResp($json || {});\nconst rows = Array.isArray(resp.data) ? resp.data : [];\nconst totalResults = resp.meta && typeof resp.meta.totalResults === 'number' ? resp.meta.totalResults : rows.length;\nconst ws = $getWorkflowStaticData('global');\nws.rows = ws.rows || [];\nfor (const r of rows) {\n  const a = r.attributes || {};\n  if (!r.id) continue; // no stable id to dedupe/write on -- skip\n  ws.rows.push({\n    place_cid: String(r.id),\n    name: a.name || '',\n    website: a.website || '',\n    city: a.city || '',\n    state: a.state || '',\n    search_category: prev.category\n  });\n}\nreturn [{ json: { ...prev, resultCount: rows.length, totalResults } }];"
+      },
+      "id": "cw-30-007",
+      "name": "Tag + accumulate results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Dedupe the FULL cross-category accumulator by place_cid -- first\n// occurrence wins for search_category, same rule as wf25. Runs once, after\n// the category loop's \"done\" output fires.\nconst ws = $getWorkflowStaticData('global');\nconst rows = ws.rows || [];\nconst byId = new Map();\nfor (const r of rows) {\n  if (!byId.has(r.place_cid)) byId.set(r.place_cid, r);\n}\nconst deduped = [...byId.values()];\nws.rows = []; // clear for the next run\nconst req = $('Parse request').first().json;\nreturn [{ json: { propId: req.propId, categoriesRun: (req.categories || []).length, rows: deduped } }];"
+      },
+      "id": "cw-30-008",
+      "name": "Dedupe accumulated rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-672, 320]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the workflow-20 (generic Firestore writer) bulk_update payload --\n// SAME endpoint and SAME action wf25 already uses, so masked-write safety\n// (never bulk_create, only touches the fields listed here, never touches\n// status/notes/attempts/archived/cold_draft on an existing doc) carries\n// over unchanged. source:'zoominfo' distinguishes these rows from the 319\n// legacy CoreClaw rows without needing to touch them at all.\nconst j = $json;\nconst nowIso = new Date().toISOString();\nconst items = (j.rows || []).map(r => ({\n  id: r.place_cid,\n  fields: {\n    location: j.propId,\n    place_cid: r.place_cid,\n    name: r.name,\n    website: r.website,\n    city: r.city,\n    state: r.state,\n    search_category: r.search_category,\n    source: 'zoominfo',\n    last_seen_at: nowIso\n  }\n}));\nreturn [{ json: { propId: j.propId, categoriesRun: j.categoriesRun, discovered: items.length, writerBody: { collection: 'site_outreach', action: 'bulk_update', items } } }];"
+      },
+      "id": "cw-30-009",
+      "name": "Build write payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-448, 320]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ailinker.item.com/webhook/firestore-write",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.writerBody) }}",
+        "options": {}
+      },
+      "id": "cw-30-010",
+      "name": "Write via workflow 20",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-224, 320],
+      "credentials": {
+        "oAuth2Api": { "id": "yA4MMh3TXmKCSDGY", "name": "n8n-cubework" },
+        "googleApi": { "id": "7IVvQuErxEJPoaMY", "name": "Firebase_SDK_do_or_wait" }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const build = $('Build write payload').first().json;\nconst wrote = $json;\nreturn [{ json: { ok: true, propId: build.propId, categoriesRun: build.categoriesRun, discovered: build.discovered, source: 'zoominfo', writerResponse: wrote } }];"
+      },
+      "id": "cw-30-011",
+      "name": "Build response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [0, 320]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, discovered: $json.discovered, categoriesRun: $json.categoriesRun, propId: $json.propId, source: 'zoominfo' }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": { "entries": [{ "name": "Access-Control-Allow-Origin", "value": "*" }] }
+        }
+      },
+      "id": "cw-30-012",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [224, 320]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Parse request", "type": "main", "index": 0 }]] },
+    "Parse request": { "main": [[{ "node": "Reset accumulator + fan out categories", "type": "main", "index": 0 }]] },
+    "Reset accumulator + fan out categories": { "main": [[{ "node": "Batch categories (loop)", "type": "main", "index": 0 }]] },
+    "Batch categories (loop)": {
+      "main": [
+        [{ "node": "Dedupe accumulated rows", "type": "main", "index": 0 }],
+        [{ "node": "Build Search Companies body", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Search Companies body": { "main": [[{ "node": "ZoomInfo: Search Companies", "type": "main", "index": 0 }]] },
+    "ZoomInfo: Search Companies": { "main": [[{ "node": "Tag + accumulate results", "type": "main", "index": 0 }]] },
+    "Tag + accumulate results": { "main": [[{ "node": "Batch categories (loop)", "type": "main", "index": 0 }]] },
+    "Dedupe accumulated rows": { "main": [[{ "node": "Build write payload", "type": "main", "index": 0 }]] },
+    "Build write payload": { "main": [[{ "node": "Write via workflow 20", "type": "main", "index": 0 }]] },
+    "Write via workflow 20": { "main": [[{ "node": "Build response", "type": "main", "index": 0 }]] },
+    "Build response": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1", "availableInMCP": false },
+  "versionId": "cw-workflow-030"
+}

@@ -1,0 +1,419 @@
+{
+  "name": "CW — 29. Contact Enrichment Test Bench (ZoomInfo)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "zoominfo-test",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "cw-29-001",
+      "name": "Test webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "zoominfo-test"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Test-bench input for ZoomInfo: {mode, ...params}. Pure sandbox -- writes\n// NOTHING to Firestore, not wired into workflows 25/26 or site_outreach.\n// Built 2026-08-03 after verifying every endpoint below with real PowerShell\n// calls against the live API (100-credit trial), not from docs alone -- see\n// testing_plan.md in Sales/zoominfo/ for the full verification log. Mirrors\n// the search-then-enrich test bench pattern established in wf27 (PDL) and\n// wf28 (UpLead), but ZoomInfo needs FOUR distinct modes instead of a simple\n// search/reveal split, because ZoomInfo's credit model charges per-endpoint-\n// type the first time a record is touched, then that record is free across\n// every other enrich type for 12 months (\"Under Management\" -- confirmed\n// empirically 2026-08-03: enriching a company then immediately pulling its\n// Corporate Hierarchy charged only 1 total credit, not 2).\n//\n// FOUR MODES, mapped 1:1 to the four credit-relevant checkpoints in the real\n// pipeline (testing_plan.md Phases 0-3):\n//   \"discover\"        -- Search Companies (free, no cap needed on credits,\n//                         only on result size for readability)\n//   \"enrich_company\"   -- Enrich Company + Enrich Corporate Hierarchy\n//                         chained together (1 credit for the company the\n//                         FIRST time it's touched by either; free after)\n//   \"org_chart\"        -- Enrich Org Chart (free once the company is Under\n//                         Management from a prior enrich_company call;\n//                         requires a real `department` value, NOT freeform --\n//                         see Lookup Data /lookup/departments)\n//   \"enrich_contact\"   -- Enrich Contact (1 credit per NEW contact record,\n//                         independent of whether the company itself is\n//                         Under Management -- confirmed empirically: the\n//                         contact and company \"Under Management\" clocks\n//                         are separate)\n//\n// This deliberate 4-mode split matches the real architecture decision\n// already written into testing_plan.md Phase 4 (\"Discover\" free vs.\n// \"Enrich\" paid must be two separate, explicit actions -- ZoomInfo can't\n// use CoreClaw's always-enrich-everything pattern without blowing the\n// credit budget in one click).\nconst b = $json.body || $json || {};\nconst mode = (b.mode || '').trim();\nconst VALID_MODES = ['discover', 'enrich_company', 'org_chart', 'enrich_contact'];\nif (!VALID_MODES.includes(mode)) {\n  throw new Error(`mode must be one of: ${VALID_MODES.join(', ')}. Got: \"${mode}\"`);\n}\n\nconst out = { mode };\n\nif (mode === 'discover') {\n  // Free -- Search Companies. Cap page size for readability only, not cost\n  // (Search Companies charges zero credits regardless of result count --\n  // confirmed 2026-08-03: a live zip+radius test returned 183 real results\n  // at zero credit cost).\n  out.zip_code = (b.zip_code || '').trim();\n  out.zip_code_radius_miles = [10, 25, 50, 100, 250].includes(parseInt(b.zip_code_radius_miles, 10))\n    ? parseInt(b.zip_code_radius_miles, 10) : 25;\n  out.employee_range_max = b.employee_range_max ? String(b.employee_range_max) : '';\n  out.zoominfo_contacts_max = b.zoominfo_contacts_max ? String(b.zoominfo_contacts_max) : '';\n  out.industry_keywords = (b.industry_keywords || '').trim();\n  out.exclude_defunct = b.exclude_defunct !== false; // default true\n  let pageSize = parseInt(b.page_size, 10);\n  if (!Number.isFinite(pageSize) || pageSize < 1) pageSize = 25;\n  if (pageSize > 100) pageSize = 100; // ZoomInfo's own hard max, not a cost cap\n  out.page_size = pageSize;\n  if (!out.zip_code && !out.industry_keywords) {\n    throw new Error('discover mode needs at least zip_code or industry_keywords.');\n  }\n} else if (mode === 'enrich_company') {\n  // Paid (1 credit first touch) -- Enrich Company, then Enrich Corporate\n  // Hierarchy chained on the same matched companyId. Accepts companyId OR\n  // companyName/companyWebsite (ZoomInfo will best-match on the latter, per\n  // docs -- \"the more details you provide the more likely we are to\n  // provide the correct match\").\n  out.company_id = b.company_id ? String(b.company_id).trim() : '';\n  out.company_name = (b.company_name || '').trim();\n  out.company_website = (b.company_website || '').trim();\n  if (!out.company_id && !out.company_name && !out.company_website) {\n    throw new Error('enrich_company mode needs company_id, company_name, or company_website.');\n  }\n} else if (mode === 'org_chart') {\n  // Free IF the company is already Under Management from a prior\n  // enrich_company call on this companyId -- otherwise this is the FIRST\n  // enrich touch on the record and WILL charge a credit. `department` must\n  // be one of the real controlled values from GET /lookup/departments\n  // (confirmed 2026-08-03): C-Suite, Finance, Human Resources, Sales,\n  // Operations, Information Technology, Engineering & Technical, Marketing,\n  // Legal, Medical & Health, Other. Comma-separate multiple.\n  out.company_id = b.company_id ? String(b.company_id).trim() : '';\n  out.department = (b.department || 'C-Suite,Operations').trim();\n  if (!out.company_id) {\n    throw new Error('org_chart mode needs company_id (from a prior discover or enrich_company call).');\n  }\n} else if (mode === 'enrich_contact') {\n  // Paid (1 credit per NEW contact) -- Enrich Contact. Best practice per\n  // ZoomInfo docs and this project's own established pattern (wf27's\n  // search-then-reveal): get personId from a free org_chart call first,\n  // only spend the credit on the ONE person actually worth revealing.\n  out.person_id = b.person_id ? String(b.person_id).trim() : '';\n  out.full_name = (b.full_name || '').trim();\n  out.email_address = (b.email_address || '').trim();\n  if (!out.person_id && !out.full_name && !out.email_address) {\n    throw new Error('enrich_contact mode needs person_id (preferred, from a prior org_chart call), full_name, or email_address.');\n  }\n}\n\nreturn [{ json: out }];"
+      },
+      "id": "cw-29-002",
+      "name": "Parse test input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [
+                  { "leftValue": "={{ $json.mode }}", "rightValue": "discover", "operator": { "type": "string", "operation": "equals" } }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "discover"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [
+                  { "leftValue": "={{ $json.mode }}", "rightValue": "enrich_company", "operator": { "type": "string", "operation": "equals" } }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "enrich_company"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [
+                  { "leftValue": "={{ $json.mode }}", "rightValue": "org_chart", "operator": { "type": "string", "operation": "equals" } }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "org_chart"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [
+                  { "leftValue": "={{ $json.mode }}", "rightValue": "enrich_contact", "operator": { "type": "string", "operation": "equals" } }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "enrich_contact"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cw-29-003",
+      "name": "Route by mode",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [440, 300]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Real request shape confirmed via docs.zoominfo.com OpenAPI spec\n// (searchinterface_searchcompany) 2026-08-03: POST body is\n// {data:{type:\"CompanySearch\", attributes:{...filters}}}, page[number]/\n// page[size]/sort are URL query params, NOT body fields. Free endpoint --\n// no credit cost regardless of result count or page size.\nconst ctx = $json;\nconst attrs = {};\nif (ctx.zip_code) {\n  attrs.zipCode = ctx.zip_code;\n  attrs.zipCodeRadiusMiles = ctx.zip_code_radius_miles;\n}\nif (ctx.employee_range_max) attrs.employeeRangeMax = ctx.employee_range_max;\nif (ctx.zoominfo_contacts_max) attrs.zoominfoContactsMax = ctx.zoominfo_contacts_max;\nif (ctx.industry_keywords) attrs.industryKeywords = ctx.industry_keywords;\nattrs.excludeDefunctCompanies = ctx.exclude_defunct;\nreturn [{ json: {\n  ...ctx,\n  requestBody: { data: { type: 'CompanySearch', attributes: attrs } }\n} }];"
+      },
+      "id": "cw-29-004",
+      "name": "Build Search Companies body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.zoominfo.com/gtm/data/v1/companies/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [{ "name": "page[size]", "value": "={{ $json.page_size }}" }]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "Content-Type", "value": "application/vnd.api+json" }]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": { "continueOnFail": true }
+      },
+      "id": "cw-29-005",
+      "name": "ZoomInfo: Search Companies",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 0],
+      "continueOnFail": true,
+      "credentials": {
+        "oAuth2Api": { "id": "REPLACE_WITH_CREDENTIAL_ID", "name": "ZoomInfo API" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Shapes the discover-mode response. Search Companies only returns basic\n// fields (name, city, state, website, logo, managementStatus) per real\n// verified response shape -- full firmographics/hierarchy need a separate\n// enrich_company call on whichever companyId looks worth spending a credit\n// on. Nothing written to Firestore.\n//\n// PARSING QUIRK (found 2026-08-03 live in n8n): ZoomInfo returns\n// Content-Type: application/vnd.api+json, which n8n's HTTP Request node\n// autodetect does NOT recognize as JSON -- it comes through as\n// {data: \"<the whole real response as a JSON string>\"} instead of a\n// parsed object. parseResp() below unwraps that case; if a node's Response\n// Format is ever explicitly set to JSON, raw.data will already be an\n// array/object and parseResp() is a no-op.\nfunction parseResp(raw) {\n  if (raw && typeof raw.data === 'string') {\n    try { return JSON.parse(raw.data); } catch (e) { return raw; }\n  }\n  return raw;\n}\nconst resp = parseResp($json || {});\nconst rows = Array.isArray(resp.data) ? resp.data : [];\nconst candidates = rows.map(r => ({\n  company_id: r.id || null,\n  name: r.attributes ? (r.attributes.name || null) : null,\n  city: r.attributes ? (r.attributes.city || null) : null,\n  state: r.attributes ? (r.attributes.state || null) : null,\n  website: r.attributes ? (r.attributes.website || null) : null,\n  under_management: r.attributes && r.attributes.managementStatus ? !!r.attributes.managementStatus.underManagement : false\n}));\nreturn [{ json: {\n  provider: 'zoominfo',\n  mode: 'discover',\n  total_results: resp.meta && resp.meta.totalResults ? resp.meta.totalResults : candidates.length,\n  candidates_returned: candidates.length,\n  candidates,\n  credits_spent: 0,\n  note: candidates.length === 0 ? 'No matches -- widen zip_code_radius_miles or drop zoominfo_contacts_max.' : 'Free search only. Pick a company_id worth spending a credit on and call mode=enrich_company next.'\n} }];"
+      },
+      "id": "cw-29-006",
+      "name": "Build discover response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": { "responseCode": 200 }
+      },
+      "id": "cw-29-007",
+      "name": "Respond (discover)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1320, 0]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Real request shape confirmed via docs.zoominfo.com OpenAPI spec\n// (enrichinterface_enrichcompany) 2026-08-03: {data:{type:\"CompanyEnrich\",\n// attributes:{matchCompanyInput:[{companyId|companyName|companyWebsite}],\n// outputFields:[...]}}}. matchCompanyInput.companyId is an INTEGER, not a\n// string -- confirmed against the real schema, cast explicitly below.\n// outputFields chosen from the real Lookup Enrich Fields (entity=company)\n// results verified 2026-08-03, all accessGranted:true on this account.\nconst ctx = $json;\nconst input = {};\nif (ctx.company_id) input.companyId = parseInt(ctx.company_id, 10);\nif (ctx.company_name) input.companyName = ctx.company_name;\nif (ctx.company_website) input.companyWebsite = ctx.company_website;\nconst outputFields = [\n  'id', 'name', 'website', 'phone', 'street', 'city', 'state', 'zipCode', 'country',\n  'employeeCount', 'revenue', 'primaryIndustry', 'subUnitType',\n  'parentId', 'parentName', 'ultimateParentId', 'ultimateParentName',\n  'numberOfContactsInZoomInfo'\n];\nreturn [{ json: {\n  ...ctx,\n  requestBody: { data: { type: 'CompanyEnrich', attributes: { matchCompanyInput: [input], outputFields } } }\n} }];"
+      },
+      "id": "cw-29-008",
+      "name": "Build Enrich Company body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 220]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.zoominfo.com/gtm/data/v1/companies/enrich",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "Content-Type", "value": "application/vnd.api+json" }]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": { "continueOnFail": true }
+      },
+      "id": "cw-29-009",
+      "name": "ZoomInfo: Enrich Company",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 220],
+      "continueOnFail": true,
+      "credentials": {
+        "oAuth2Api": { "id": "REPLACE_WITH_CREDENTIAL_ID", "name": "ZoomInfo API" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pulls the matched companyId out of the Enrich Company result so the\n// chained Corporate Hierarchy call always uses ZoomInfo's real matched ID\n// -- not whatever the caller originally passed in (which might have been a\n// companyName/companyWebsite guess that ZoomInfo best-matched to a\n// different id). If Enrich Company came back NO_MATCH, skip straight to\n// building an error response instead of chaining a hierarchy call for a\n// company that doesn't exist.\n//\n// PARSING QUIRK (found 2026-08-03 live in n8n): ZoomInfo's\n// application/vnd.api+json Content-Type isn't autodetected as JSON by\n// n8n's HTTP Request node, so the real response can arrive as\n// {data: \"<json string>\"} instead of a parsed object. Unwrap that here.\nfunction parseResp(raw) {\n  if (raw && typeof raw.data === 'string') {\n    try { return JSON.parse(raw.data); } catch (e) { return raw; }\n  }\n  return raw;\n}\nconst enrichResp = parseResp($json || {});\nconst row = Array.isArray(enrichResp.data) ? enrichResp.data[0] : null;\nconst matchStatus = row && row.meta ? row.meta.matchStatus : (enrichResp.errors ? 'ERROR' : 'NO_MATCH');\n// BUG FIX 2026-08-03: ZoomInfo's JSON:API responses put `id` at the TOP\n// LEVEL of the resource object (row.id), never inside row.attributes.\n// Reading row.attributes.id silently returned null even on a real\n// FULL_MATCH, which broke this chained Corporate Hierarchy call (sent\n// companyId: NaN) without throwing any visible error -- the resulting\n// null familyTree/parentage looked like \"no hierarchy data\" instead of\n// \"broken request\".\nconst matchedCompanyId = row ? row.id : null;\nreturn [{ json: {\n  enrich_company_raw: enrichResp,\n  match_status: matchStatus,\n  matched_company_id: matchedCompanyId,\n  requestBody: matchedCompanyId ? {\n    data: {\n      type: 'CorporateHierarchyEnrich',\n      attributes: {\n        matchCompanyInput: [{ companyId: parseInt(matchedCompanyId, 10) }],\n        outputFields: ['companyId', 'familyTree', 'parentage']\n      }\n    }\n  } : null\n} }];"
+      },
+      "id": "cw-29-010",
+      "name": "Extract matched companyId",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 220]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.zoominfo.com/gtm/data/v1/companies/corporate-hierarchy/enrich",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "Content-Type", "value": "application/vnd.api+json" }]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": { "continueOnFail": true }
+      },
+      "id": "cw-29-011",
+      "name": "ZoomInfo: Enrich Corporate Hierarchy",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1320, 220],
+      "continueOnFail": true,
+      "credentials": {
+        "oAuth2Api": { "id": "REPLACE_WITH_CREDENTIAL_ID", "name": "ZoomInfo API" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merges Enrich Company + Enrich Corporate Hierarchy into one response.\n// Real-world proof this matters (2026-08-03 live test): DSI Logistics\n// looked like a perfect small-business target by employeeCount alone, but\n// came back subUnitType \"Acquisition\" under ultimateParentName \"AP Moller\n// Group\" (Maersk's parent) -- exactly the trap this hierarchy step exists\n// to catch before wasting an outreach touch on someone with no signing\n// authority. Both calls together should total 1 credit on a first touch\n// (confirmed empirically), 0 on any company already Under Management.\nfunction parseResp(raw) {\n  if (raw && typeof raw.data === 'string') {\n    try { return JSON.parse(raw.data); } catch (e) { return raw; }\n  }\n  return raw;\n}\nconst prev = $('Extract matched companyId').first().json;\nconst enrichRow = Array.isArray(prev.enrich_company_raw.data) ? prev.enrich_company_raw.data[0] : null;\nconst a = enrichRow ? (enrichRow.attributes || {}) : {};\nconst hierarchyResp = parseResp($json || {});\nconst hierarchyRow = Array.isArray(hierarchyResp.data) ? hierarchyResp.data[0] : null;\nconst hAttrs = hierarchyRow && hierarchyRow.type === 'CorporateHierarchy' ? (hierarchyRow.attributes || {}) : null;\nreturn [{ json: {\n  provider: 'zoominfo',\n  mode: 'enrich_company',\n  match_status: prev.match_status,\n  company_id: prev.matched_company_id,\n  name: a.name || null,\n  website: a.website || null,\n  phone: a.phone || null,\n  address: { street: a.street || null, city: a.city || null, state: a.state || null, zipCode: a.zipCode || null, country: a.country || null },\n  employee_count: a.employeeCount || null,\n  revenue: a.revenue || null,\n  primary_industry: a.primaryIndustry || null,\n  sub_unit_type: a.subUnitType || null,\n  parent_name: a.parentName || null,\n  ultimate_parent_name: a.ultimateParentName || null,\n  // subUnitType \"Unspecified\" is one of ZoomInfo's own real enum values\n  // (alongside Location/Division/Acquisition/Subsidiary/FormerNewName) and\n  // MEANS \"no hierarchy classification on file\" -- not \"flagged as a\n  // sub-unit\". Confirmed live 2026-08-03: Coast Fulfillment came back with\n  // subUnitType \"Unspecified\" and both parent fields null, i.e. genuinely\n  // no parent signal, not a subsidiary. Only treat it as a real flag when\n  // subUnitType is a meaningful non-Unspecified value OR a parent name is\n  // actually populated.\n  is_independent: !(a.parentName || a.ultimateParentName) && !(a.subUnitType && a.subUnitType !== 'Unspecified'),\n  corporate_family_tree: hAttrs ? (hAttrs.familyTree || null) : null,\n  corporate_parentage: hAttrs ? (hAttrs.parentage || null) : null,\n  note: prev.match_status !== 'FULL_MATCH' ? `Enrich Company match status was ${prev.match_status} -- no credit charged, but no usable data either.` : ((a.parentName || a.ultimateParentName) || (a.subUnitType && a.subUnitType !== 'Unspecified') ? `Flagged as ${a.subUnitType || 'a sub-unit'} under ${a.ultimateParentName || a.parentName} -- check who actually has signing authority before running org_chart.` : 'No parent flagged -- looks independent, likely has local signing authority.')\n} }];"
+      },
+      "id": "cw-29-012",
+      "name": "Build enrich_company response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 220]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": { "responseCode": 200 }
+      },
+      "id": "cw-29-013",
+      "name": "Respond (enrich_company)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1760, 220]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Real request shape confirmed via docs.zoominfo.com OpenAPI spec\n// (enrichinterface_enrichorgchart) 2026-08-03: {data:{type:\"OrgChartEnrich\",\n// attributes:{companyId:\"<string>\", department:\"<comma-separated string>\"}}}\n// Note companyId is a STRING here (unlike Enrich Company/Corporate\n// Hierarchy where it's an integer) -- confirmed against the real schema,\n// don't cast it. `department` values are a controlled list from\n// GET /lookup/departments, live-verified 2026-08-03.\nconst ctx = $json;\nreturn [{ json: {\n  ...ctx,\n  requestBody: {\n    data: {\n      type: 'OrgChartEnrich',\n      attributes: { companyId: String(ctx.company_id), department: ctx.department }\n    }\n  }\n} }];"
+      },
+      "id": "cw-29-014",
+      "name": "Build Org Chart body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 440]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.zoominfo.com/gtm/data/v1/companies/org-chart/enrich",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "Content-Type", "value": "application/vnd.api+json" }]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": { "continueOnFail": true }
+      },
+      "id": "cw-29-015",
+      "name": "ZoomInfo: Enrich Org Chart",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 440],
+      "continueOnFail": true,
+      "credentials": {
+        "oAuth2Api": { "id": "REPLACE_WITH_CREDENTIAL_ID", "name": "ZoomInfo API" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Shapes the org_chart response. Real verified response (2026-08-03, live\n// test on DSI Logistics/Operations dept) returned 24 contacts with\n// firstName/lastName/title/department/jobFunction/orgChartTier/\n// orgChartSubTier/hasDirectPhone -- but NOT hasEmail, even though the\n// schema documents it. Don't assume hasEmail will be populated; sort\n// candidates by orgChartTier ascending (1 = most senior) to surface the\n// best decision-maker first. Free once the company is Under Management --\n// if this is the FIRST touch on the company, it charges 1 credit instead,\n// same rule as any other enrich endpoint.\n//\n// PARSING QUIRK (found 2026-08-03 live in n8n): ZoomInfo's\n// application/vnd.api+json Content-Type isn't autodetected as JSON by\n// n8n's HTTP Request node, so the real response can arrive as\n// {data: \"<json string>\"} instead of a parsed object. Unwrap that here.\nfunction parseResp(raw) {\n  if (raw && typeof raw.data === 'string') {\n    try { return JSON.parse(raw.data); } catch (e) { return raw; }\n  }\n  return raw;\n}\nconst resp = parseResp($json || {});\nconst rows = Array.isArray(resp.data) ? resp.data : [];\nconst candidates = rows.map(r => {\n  const a = r.attributes || {};\n  return {\n    person_id: r.id || null,\n    full_name: [a.firstName, a.middleName, a.lastName].filter(Boolean).join(' ') || null,\n    title: a.title || null,\n    department: a.department || null,\n    job_function: a.jobFunction || null,\n    org_chart_tier: (typeof a.orgChartTier === 'number') ? a.orgChartTier : null,\n    org_chart_sub_tier: (typeof a.orgChartSubTier === 'number') ? a.orgChartSubTier : null,\n    has_direct_phone: !!a.hasDirectPhone\n  };\n}).sort((x, y) => (x.org_chart_tier ?? 999) - (y.org_chart_tier ?? 999));\nreturn [{ json: {\n  provider: 'zoominfo',\n  mode: 'org_chart',\n  total_results: resp.meta && resp.meta.totalResults ? resp.meta.totalResults : candidates.length,\n  candidates_returned: candidates.length,\n  candidates,\n  note: candidates.length === 0\n    ? 'No contacts in this department at this company -- try a different department value from GET /lookup/departments.'\n    : `Most senior match: ${candidates[0].full_name || '(unnamed)'} (${candidates[0].title || 'no title'}). Pass its person_id into mode=enrich_contact to reveal email/phone -- that WILL spend a credit.`\n} }];"
+      },
+      "id": "cw-29-016",
+      "name": "Build org_chart response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 440]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": { "responseCode": 200 }
+      },
+      "id": "cw-29-017",
+      "name": "Respond (org_chart)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1320, 440]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Real request shape confirmed via docs.zoominfo.com OpenAPI spec\n// (enrichinterface_enrichcontact) 2026-08-03: {data:{type:\"ContactEnrich\",\n// attributes:{matchPersonInput:[{personId|fullName|emailAddress}],\n// outputFields:[...]}}}. matchPersonInput.personId is an INTEGER --\n// confirmed against the real schema. outputFields chosen from the real\n// Lookup Enrich Fields (entity=contact) results verified 2026-08-03, all\n// accessGranted:true on this account. There is no dedicated LinkedIn\n// field -- social URLs come back inside externalUrls, not a separate\n// contact_linkedin-style field (closes an open question from\n// testing_plan.md).\nconst ctx = $json;\nconst input = {};\nif (ctx.person_id) input.personId = parseInt(ctx.person_id, 10);\nif (ctx.full_name) input.fullName = ctx.full_name;\nif (ctx.email_address) input.emailAddress = ctx.email_address;\nconst outputFields = [\n  'id', 'firstName', 'lastName', 'jobTitle', 'managementLevel',\n  'email', 'phone', 'mobilePhone', 'externalUrls', 'contactAccuracyScore',\n  'companyId', 'companyName'\n];\nreturn [{ json: {\n  ...ctx,\n  requestBody: { data: { type: 'ContactEnrich', attributes: { matchPersonInput: [input], outputFields } } }\n} }];"
+      },
+      "id": "cw-29-018",
+      "name": "Build Enrich Contact body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 660]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.zoominfo.com/gtm/data/v1/contacts/enrich",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "Content-Type", "value": "application/vnd.api+json" }]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": { "continueOnFail": true }
+      },
+      "id": "cw-29-019",
+      "name": "ZoomInfo: Enrich Contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 660],
+      "continueOnFail": true,
+      "credentials": {
+        "oAuth2Api": { "id": "REPLACE_WITH_CREDENTIAL_ID", "name": "ZoomInfo API" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Shapes the enrich_contact response -- the one mode in this test bench\n// that reliably spends a real credit (contact-level Under Management is\n// independent from company-level, confirmed empirically 2026-08-03). Real\n// verified result on this exact flow: John Martin, Director of Operations\n// at DSI Logistics, came back with a real usable email\n// (jmartin@dsi-logistics.com) and accuracy score 81, but no phone or\n// externalUrls -- a data-completeness gap for that specific person, not a\n// schema bug, so don't treat missing phone/social as an error.\n//\n// PARSING QUIRK (found 2026-08-03 live in n8n): ZoomInfo's\n// application/vnd.api+json Content-Type isn't autodetected as JSON by\n// n8n's HTTP Request node, so the real response can arrive as\n// {data: \"<json string>\"} instead of a parsed object. Unwrap that here.\nfunction parseResp(raw) {\n  if (raw && typeof raw.data === 'string') {\n    try { return JSON.parse(raw.data); } catch (e) { return raw; }\n  }\n  return raw;\n}\nconst resp = parseResp($json || {});\nconst row = Array.isArray(resp.data) ? resp.data[0] : null;\nconst matchStatus = row && row.meta ? row.meta.matchStatus : (resp.errors ? 'ERROR' : 'NO_MATCH');\nconst a = row ? (row.attributes || {}) : {};\nreturn [{ json: {\n  provider: 'zoominfo',\n  mode: 'enrich_contact',\n  match_status: matchStatus,\n  person_id: row ? row.id : null,\n  full_name: [a.firstName, a.lastName].filter(Boolean).join(' ') || null,\n  job_title: a.jobTitle || null,\n  management_level: Array.isArray(a.managementLevel) ? a.managementLevel.join(', ') : (a.managementLevel || null),\n  email: a.email || null,\n  phone: a.phone || null,\n  mobile_phone: a.mobilePhone || null,\n  social_urls: a.externalUrls || null,\n  accuracy_score: a.contactAccuracyScore || null,\n  company_id: a.company ? a.company.id : null,\n  company_name: a.company ? a.company.name : null,\n  note: matchStatus !== 'FULL_MATCH'\n    ? `Match status was ${matchStatus} -- no credit charged, no usable contact data.`\n    : ((a.email || a.phone || a.mobilePhone) ? `Ready for outreach via ${[a.email && 'email', (a.phone || a.mobilePhone) && 'phone'].filter(Boolean).join(' and ')}.` : 'Matched, but no email or phone on file for this person -- try a different org_chart candidate.')\n} }];"
+      },
+      "id": "cw-29-020",
+      "name": "Build enrich_contact response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 660]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": { "responseCode": 200 }
+      },
+      "id": "cw-29-021",
+      "name": "Respond (enrich_contact)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1320, 660]
+    }
+  ],
+  "connections": {
+    "Test webhook": {
+      "main": [[{ "node": "Parse test input", "type": "main", "index": 0 }]]
+    },
+    "Parse test input": {
+      "main": [[{ "node": "Route by mode", "type": "main", "index": 0 }]]
+    },
+    "Route by mode": {
+      "main": [
+        [{ "node": "Build Search Companies body", "type": "main", "index": 0 }],
+        [{ "node": "Build Enrich Company body", "type": "main", "index": 0 }],
+        [{ "node": "Build Org Chart body", "type": "main", "index": 0 }],
+        [{ "node": "Build Enrich Contact body", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Search Companies body": {
+      "main": [[{ "node": "ZoomInfo: Search Companies", "type": "main", "index": 0 }]]
+    },
+    "ZoomInfo: Search Companies": {
+      "main": [[{ "node": "Build discover response", "type": "main", "index": 0 }]]
+    },
+    "Build discover response": {
+      "main": [[{ "node": "Respond (discover)", "type": "main", "index": 0 }]]
+    },
+    "Build Enrich Company body": {
+      "main": [[{ "node": "ZoomInfo: Enrich Company", "type": "main", "index": 0 }]]
+    },
+    "ZoomInfo: Enrich Company": {
+      "main": [[{ "node": "Extract matched companyId", "type": "main", "index": 0 }]]
+    },
+    "Extract matched companyId": {
+      "main": [[{ "node": "ZoomInfo: Enrich Corporate Hierarchy", "type": "main", "index": 0 }]]
+    },
+    "ZoomInfo: Enrich Corporate Hierarchy": {
+      "main": [[{ "node": "Build enrich_company response", "type": "main", "index": 0 }]]
+    },
+    "Build enrich_company response": {
+      "main": [[{ "node": "Respond (enrich_company)", "type": "main", "index": 0 }]]
+    },
+    "Build Org Chart body": {
+      "main": [[{ "node": "ZoomInfo: Enrich Org Chart", "type": "main", "index": 0 }]]
+    },
+    "ZoomInfo: Enrich Org Chart": {
+      "main": [[{ "node": "Build org_chart response", "type": "main", "index": 0 }]]
+    },
+    "Build org_chart response": {
+      "main": [[{ "node": "Respond (org_chart)", "type": "main", "index": 0 }]]
+    },
+    "Build Enrich Contact body": {
+      "main": [[{ "node": "ZoomInfo: Enrich Contact", "type": "main", "index": 0 }]]
+    },
+    "ZoomInfo: Enrich Contact": {
+      "main": [[{ "node": "Build enrich_contact response", "type": "main", "index": 0 }]]
+    },
+    "Build enrich_contact response": {
+      "main": [[{ "node": "Respond (enrich_contact)", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Los_Angeles"
+  },
+  "versionId": "cw-workflow-029"
+}

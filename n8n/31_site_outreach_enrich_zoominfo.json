@@ -1,0 +1,372 @@
+{
+  "name": "CW — 31. Site Outreach Enrich (ZoomInfo)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "site-outreach-enrich-zoominfo",
+        "responseMode": "responseNode",
+        "options": { "allowedOrigins": "*" }
+      },
+      "id": "cw-31-001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-1600, 200],
+      "webhookId": "site-outreach-enrich-zoominfo"
+    },
+    {
+      "parameters": {
+        "jsCode": "// This is the PAID half of the ZoomInfo pipeline, deliberately separate\n// from workflow 30's free Discover -- per testing_plan.md Phase 4's\n// architecture decision, one deliberate click/call per selected row (or a\n// small batch), never an automatic always-enrich-everything sweep like\n// CoreClaw's. Accepts either {place_cid} (single) or {place_cids:[...]}\n// (batch), hard-capped at MAX_BATCH so a typo or accidental request can't\n// blow through a big chunk of the credit budget in one call.\nconst MAX_BATCH = 10;\nconst b = $json.body || {};\nlet ids = [];\nif (Array.isArray(b.place_cids)) ids = b.place_cids.map(String);\nelse if (b.place_cid) ids = [String(b.place_cid)];\nif (!ids.length) throw new Error('Need place_cid or place_cids (array) -- these are ZoomInfo companyIds from a prior Discover run.');\nif (ids.length > MAX_BATCH) throw new Error(`Requested ${ids.length} companies in one call -- capped at ${MAX_BATCH} to keep credit spend deliberate and predictable. Split into smaller batches.`);\nconst department = (b.department || 'C-Suite,Operations').trim();\nreturn [{ json: { place_cids: ids, department } }];"
+      },
+      "id": "cw-31-002",
+      "name": "Parse request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1376, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Static-data accumulator, same convention as wf25/wf30 -- one item per\n// place_cid, reset on every fresh call.\nconst ws = $getWorkflowStaticData('global');\nws.rows = [];\nconst ctx = $json;\nreturn (ctx.place_cids || []).map(id => ({ json: { place_cid: id, department: ctx.department } }));"
+      },
+      "id": "cw-31-003",
+      "name": "Reset accumulator + fan out place_cids",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1152, 200]
+    },
+    { "parameters": { "options": {} }, "id": "cw-31-004", "name": "Batch place_cids (loop)", "type": "n8n-nodes-base.splitInBatches", "typeVersion": 3, "position": [-928, 200] },
+
+    {
+      "parameters": {
+        "jsCode": "// Real request shape confirmed live 2026-08-03: {data:{type:\"CompanyEnrich\",\n// attributes:{matchCompanyInput:[{companyId}], outputFields:[...]}}}.\n// companyId is an INTEGER here.\nconst ctx = $json;\nconst outputFields = [\n  'id', 'name', 'website', 'phone', 'street', 'city', 'state', 'zipCode', 'country',\n  'employeeCount', 'revenue', 'primaryIndustry', 'subUnitType',\n  'parentId', 'parentName', 'ultimateParentId', 'ultimateParentName',\n  'numberOfContactsInZoomInfo'\n];\nreturn [{ json: {\n  ...ctx,\n  requestBody: { data: { type: 'CompanyEnrich', attributes: { matchCompanyInput: [{ companyId: parseInt(ctx.place_cid, 10) }], outputFields } } }\n} }];"
+      },
+      "id": "cw-31-005",
+      "name": "Build Enrich Company body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-704, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.zoominfo.com/gtm/data/v1/companies/enrich",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/vnd.api+json" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": { "continueOnFail": true }
+      },
+      "id": "cw-31-006",
+      "name": "ZoomInfo: Enrich Company",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-480, 0],
+      "continueOnFail": true,
+      "credentials": { "oAuth2Api": { "id": "REPLACE_WITH_CREDENTIAL_ID", "name": "ZoomInfo API" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "// PARSING QUIRK (found 2026-08-03 live in n8n): ZoomInfo's\n// application/vnd.api+json Content-Type isn't autodetected as JSON, so\n// the real response can arrive as {data: \"<json string>\"} instead of a\n// parsed object.\nfunction parseResp(raw) {\n  if (raw && typeof raw.data === 'string') {\n    try { return JSON.parse(raw.data); } catch (e) { return raw; }\n  }\n  return raw;\n}\nconst prev = $('Reset accumulator + fan out place_cids').first().json;\nconst enrichResp = parseResp($json || {});\nconst row = Array.isArray(enrichResp.data) ? enrichResp.data[0] : null;\nconst matchStatus = row && row.meta ? row.meta.matchStatus : (enrichResp.errors ? 'ERROR' : 'NO_MATCH');\nconst a = row ? (row.attributes || {}) : {};\n// BUG FIX 2026-08-03: ZoomInfo's JSON:API responses put `id` at the TOP\n// LEVEL of the resource object (row.id), never inside row.attributes.\n// Reading row.attributes.id silently returned null even on a real\n// FULL_MATCH, which incorrectly routed every enrich_company call into the\n// \"no match\" branch below regardless of match_status.\nconst matchedCompanyId = row ? row.id : null;\nreturn [{ json: {\n  place_cid: prev.place_cid,\n  department: prev.department,\n  match_status: matchStatus,\n  matched_company_id: matchedCompanyId,\n  company: a\n} }];"
+      },
+      "id": "cw-31-007",
+      "name": "Extract matched companyId",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-256, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            { "leftValue": "={{ $json.matched_company_id }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty", "singleValue": true } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cw-31-008",
+      "name": "Company matched?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-32, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// No match (or error) on Enrich Company -- no credit was charged for this\n// record, and there's nothing to write beyond a status note. Skip straight\n// to the accumulator; don't chain hierarchy/org chart/contact calls\n// against a company that doesn't exist.\nconst ctx = $json;\nconst ws = $getWorkflowStaticData('global');\nws.rows = ws.rows || [];\nws.rows.push({\n  place_cid: ctx.place_cid,\n  enrich_status: ctx.match_status,\n  note: `Enrich Company match status was ${ctx.match_status} -- no data to write.`\n});\nreturn [{ json: ctx }];"
+      },
+      "id": "cw-31-009",
+      "name": "Accumulate (no match)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [192, 120]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const ctx = $json;\nreturn [{ json: {\n  ...ctx,\n  requestBody: {\n    data: {\n      type: 'CorporateHierarchyEnrich',\n      attributes: { matchCompanyInput: [{ companyId: parseInt(ctx.matched_company_id, 10) }], outputFields: ['companyId', 'familyTree', 'parentage'] }\n    }\n  }\n} }];"
+      },
+      "id": "cw-31-010",
+      "name": "Build Corporate Hierarchy body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [192, -120]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.zoominfo.com/gtm/data/v1/companies/corporate-hierarchy/enrich",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/vnd.api+json" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": { "continueOnFail": true }
+      },
+      "id": "cw-31-011",
+      "name": "ZoomInfo: Enrich Corporate Hierarchy",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [416, -120],
+      "continueOnFail": true,
+      "credentials": { "oAuth2Api": { "id": "REPLACE_WITH_CREDENTIAL_ID", "name": "ZoomInfo API" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "// subUnitType \"Unspecified\" means \"no hierarchy classification on file\",\n// not \"flagged as a sub-unit\" -- confirmed live 2026-08-03 (Coast\n// Fulfillment came back Unspecified with both parent fields null, i.e.\n// genuinely independent). Only treat it as a real flag when subUnitType\n// is a meaningful non-Unspecified value OR a parent name is populated.\nfunction parseResp(raw) {\n  if (raw && typeof raw.data === 'string') {\n    try { return JSON.parse(raw.data); } catch (e) { return raw; }\n  }\n  return raw;\n}\nconst prev = $('Extract matched companyId').first().json;\nconst hierarchyResp = parseResp($json || {});\nconst hierarchyRow = Array.isArray(hierarchyResp.data) ? hierarchyResp.data[0] : null;\nconst hAttrs = hierarchyRow && hierarchyRow.type === 'CorporateHierarchy' ? (hierarchyRow.attributes || {}) : null;\nconst a = prev.company || {};\nconst hasParentSignal = !!(a.parentName || a.ultimateParentName);\nconst isFlaggedSubUnit = !!(a.subUnitType && a.subUnitType !== 'Unspecified');\nreturn [{ json: {\n  place_cid: prev.place_cid,\n  department: prev.department,\n  matched_company_id: prev.matched_company_id,\n  match_status: prev.match_status,\n  company: a,\n  hierarchy_type: (isFlaggedSubUnit || hasParentSignal) ? (a.subUnitType || 'Flagged') : null,\n  parent_company: hasParentSignal ? (a.ultimateParentName || a.parentName) : null,\n  corporate_family_tree: hAttrs ? (hAttrs.familyTree || null) : null\n} }];"
+      },
+      "id": "cw-31-012",
+      "name": "Merge company + hierarchy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, -120]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Real request shape confirmed live 2026-08-03: {data:{type:\"OrgChartEnrich\",\n// attributes:{companyId:\"<string>\", department:\"<comma-separated string>\"}}}.\n// companyId is a STRING here (unlike Enrich Company/Corporate Hierarchy).\nconst ctx = $json;\nreturn [{ json: {\n  ...ctx,\n  requestBody: { data: { type: 'OrgChartEnrich', attributes: { companyId: String(ctx.matched_company_id), department: ctx.department } } }\n} }];"
+      },
+      "id": "cw-31-013",
+      "name": "Build Org Chart body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [864, -120]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.zoominfo.com/gtm/data/v1/companies/org-chart/enrich",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/vnd.api+json" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": { "continueOnFail": true }
+      },
+      "id": "cw-31-014",
+      "name": "ZoomInfo: Enrich Org Chart",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1088, -120],
+      "continueOnFail": true,
+      "credentials": { "oAuth2Api": { "id": "REPLACE_WITH_CREDENTIAL_ID", "name": "ZoomInfo API" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Picks the single most senior org chart candidate (lowest orgChartTier =\n// most senior, confirmed live 2026-08-03) -- this is the ONE person worth\n// spending an Enrich Contact credit on, per the search-then-reveal\n// discipline established in wf27/wf28/wf29. Coverage on very small\n// companies can be thin (a real live test returned exactly ONE contact,\n// no C-Suite match at all) -- that's a real data limit, not a bug.\nfunction parseResp(raw) {\n  if (raw && typeof raw.data === 'string') {\n    try { return JSON.parse(raw.data); } catch (e) { return raw; }\n  }\n  return raw;\n}\nconst prev = $('Merge company + hierarchy').first().json;\nconst resp = parseResp($json || {});\nconst rows = Array.isArray(resp.data) ? resp.data : [];\nconst candidates = rows.map(r => {\n  const a = r.attributes || {};\n  return {\n    person_id: r.id || null,\n    full_name: [a.firstName, a.middleName, a.lastName].filter(Boolean).join(' ') || null,\n    title: a.title || null,\n    org_chart_tier: (typeof a.orgChartTier === 'number') ? a.orgChartTier : 999\n  };\n}).sort((x, y) => x.org_chart_tier - y.org_chart_tier);\nconst best = candidates.length ? candidates[0] : null;\nreturn [{ json: { ...prev, best_contact: best } }];"
+      },
+      "id": "cw-31-015",
+      "name": "Pick best org chart candidate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1312, -120]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            { "leftValue": "={{ $json.best_contact }}", "rightValue": "", "operator": { "type": "object", "operation": "notEmpty", "singleValue": true } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cw-31-016",
+      "name": "Has a contact to reveal?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1536, -120]
+    },
+    {
+      "parameters": {
+        "jsCode": "// No org chart contact at all for this company (real, observed limit on\n// very small companies) -- write everything Enrich Company + Corporate\n// Hierarchy found, just with no contact fields. No credit spent on\n// Enrich Contact since there's no personId to spend it on.\nconst ctx = $json;\nconst a = ctx.company || {};\nconst ws = $getWorkflowStaticData('global');\nws.rows = ws.rows || [];\nws.rows.push({\n  place_cid: ctx.place_cid,\n  enrich_status: ctx.match_status,\n  address: a.street || null,\n  city: a.city || null,\n  state: a.state || null,\n  phone: a.phone || null,\n  hierarchy_type: ctx.hierarchy_type,\n  parent_company: ctx.parent_company,\n  contact_name: null,\n  contact_title: null,\n  contact_email: null,\n  contact_phone: null,\n  contact_linkedin: null,\n  note: 'No org chart contact found for this company -- no Enrich Contact credit spent.'\n});\nreturn [{ json: ctx }];"
+      },
+      "id": "cw-31-017",
+      "name": "Accumulate (no contact found)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, 40]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Real request shape confirmed live 2026-08-03: {data:{type:\"ContactEnrich\",\n// attributes:{matchPersonInput:[{personId}], outputFields:[...]}}}.\n// personId is an INTEGER.\nconst ctx = $json;\nconst outputFields = [\n  'id', 'firstName', 'lastName', 'jobTitle', 'managementLevel',\n  'email', 'phone', 'mobilePhone', 'externalUrls', 'contactAccuracyScore',\n  'companyId', 'companyName'\n];\nreturn [{ json: {\n  ...ctx,\n  requestBody: { data: { type: 'ContactEnrich', attributes: { matchPersonInput: [{ personId: parseInt(ctx.best_contact.person_id, 10) }], outputFields } } }\n} }];"
+      },
+      "id": "cw-31-018",
+      "name": "Build Enrich Contact body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, -200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.zoominfo.com/gtm/data/v1/contacts/enrich",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/vnd.api+json" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": { "continueOnFail": true }
+      },
+      "id": "cw-31-019",
+      "name": "ZoomInfo: Enrich Contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1984, -200],
+      "continueOnFail": true,
+      "credentials": { "oAuth2Api": { "id": "REPLACE_WITH_CREDENTIAL_ID", "name": "ZoomInfo API" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merges everything (company + hierarchy + contact) into the final row and\n// accumulates it. There is no dedicated LinkedIn field -- social URLs\n// come back inside externalUrls as [{type, url}]; pull the first entry\n// whose type mentions linkedin. contact_phone prefers phone, falls back\n// to mobilePhone (both are real, separate fields ZoomInfo returns).\nfunction parseResp(raw) {\n  if (raw && typeof raw.data === 'string') {\n    try { return JSON.parse(raw.data); } catch (e) { return raw; }\n  }\n  return raw;\n}\nconst prev = $('Pick best org chart candidate').first().json;\nconst resp = parseResp($json || {});\nconst row = Array.isArray(resp.data) ? resp.data[0] : null;\nconst matchStatus = row && row.meta ? row.meta.matchStatus : (resp.errors ? 'ERROR' : 'NO_MATCH');\nconst c = row ? (row.attributes || {}) : {};\nconst a = prev.company || {};\nconst linkedin = Array.isArray(c.externalUrls) ? (c.externalUrls.find(u => String(u.type || '').toLowerCase().includes('linkedin')) || {}).url : null;\nconst ws = $getWorkflowStaticData('global');\nws.rows = ws.rows || [];\nws.rows.push({\n  place_cid: prev.place_cid,\n  enrich_status: prev.match_status,\n  address: a.street || null,\n  city: a.city || null,\n  state: a.state || null,\n  phone: a.phone || null,\n  hierarchy_type: prev.hierarchy_type,\n  parent_company: prev.parent_company,\n  contact_name: [c.firstName, c.lastName].filter(Boolean).join(' ') || prev.best_contact.full_name || null,\n  contact_title: c.jobTitle || prev.best_contact.title || null,\n  contact_email: c.email || null,\n  contact_phone: c.phone || c.mobilePhone || null,\n  contact_linkedin: linkedin || null,\n  note: matchStatus !== 'FULL_MATCH' ? `Enrich Contact match status was ${matchStatus} -- no contact credit charged.` : undefined\n});\nreturn [{ json: prev }];"
+      },
+      "id": "cw-31-020",
+      "name": "Merge contact + accumulate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2208, -200]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// After the batch loop finishes, drain the accumulator into the final\n// list. No dedupe needed here (input place_cids are already the caller's\n// distinct selection), but the pull-and-clear pattern matches wf25/wf30\n// for consistency.\nconst ws = $getWorkflowStaticData('global');\nconst rows = ws.rows || [];\nws.rows = [];\nreturn [{ json: { rows } }];"
+      },
+      "id": "cw-31-021",
+      "name": "Drain accumulated rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-704, 320]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the workflow-20 bulk_update payload. Deliberately narrow field\n// list -- only touches the fields this Enrich pass actually populated,\n// never status/notes/attempts/archived/cold_draft/research fields on an\n// existing doc (masked update, same safety rule as wf25/wf30). Rows with\n// no enrichable data (NO_MATCH on Enrich Company) still get their\n// last_seen_at bumped plus an enrich_status note, so the caller can see\n// what happened without a separate error channel.\nconst rows = $json.rows || [];\nconst nowIso = new Date().toISOString();\nconst items = rows.map(r => {\n  const fields = { last_seen_at: nowIso };\n  if (r.enrich_status !== undefined) fields.enrich_status = r.enrich_status;\n  if (r.address !== undefined && r.address !== null) fields.address = r.address;\n  if (r.city !== undefined && r.city !== null) fields.city = r.city;\n  if (r.state !== undefined && r.state !== null) fields.state = r.state;\n  if (r.phone !== undefined && r.phone !== null) fields.phone = r.phone;\n  if (r.hierarchy_type !== undefined) fields.hierarchy_type = r.hierarchy_type;\n  if (r.parent_company !== undefined) fields.parent_company = r.parent_company;\n  if (r.contact_name !== undefined) fields.contact_name = r.contact_name;\n  if (r.contact_title !== undefined) fields.contact_title = r.contact_title;\n  if (r.contact_email !== undefined) fields.contact_email = r.contact_email;\n  if (r.contact_phone !== undefined) fields.contact_phone = r.contact_phone;\n  if (r.contact_linkedin !== undefined) fields.contact_linkedin = r.contact_linkedin;\n  return { id: r.place_cid, fields };\n});\nreturn [{ json: { enriched: items.length, rows, writerBody: { collection: 'site_outreach', action: 'bulk_update', items } } }];"
+      },
+      "id": "cw-31-022",
+      "name": "Build write payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-480, 320]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ailinker.item.com/webhook/firestore-write",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.writerBody) }}",
+        "options": {}
+      },
+      "id": "cw-31-023",
+      "name": "Write via workflow 20",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-256, 320],
+      "credentials": {
+        "oAuth2Api": { "id": "yA4MMh3TXmKCSDGY", "name": "n8n-cubework" },
+        "googleApi": { "id": "7IVvQuErxEJPoaMY", "name": "Firebase_SDK_do_or_wait" }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const build = $('Build write payload').first().json;\nconst wrote = $json;\nreturn [{ json: { ok: true, enriched: build.enriched, rows: build.rows, writerResponse: wrote } }];"
+      },
+      "id": "cw-31-024",
+      "name": "Build response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-32, 320]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, enriched: $json.enriched, rows: $json.rows }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": { "entries": [{ "name": "Access-Control-Allow-Origin", "value": "*" }] }
+        }
+      },
+      "id": "cw-31-025",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [192, 320]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Parse request", "type": "main", "index": 0 }]] },
+    "Parse request": { "main": [[{ "node": "Reset accumulator + fan out place_cids", "type": "main", "index": 0 }]] },
+    "Reset accumulator + fan out place_cids": { "main": [[{ "node": "Batch place_cids (loop)", "type": "main", "index": 0 }]] },
+    "Batch place_cids (loop)": {
+      "main": [
+        [{ "node": "Drain accumulated rows", "type": "main", "index": 0 }],
+        [{ "node": "Build Enrich Company body", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Enrich Company body": { "main": [[{ "node": "ZoomInfo: Enrich Company", "type": "main", "index": 0 }]] },
+    "ZoomInfo: Enrich Company": { "main": [[{ "node": "Extract matched companyId", "type": "main", "index": 0 }]] },
+    "Extract matched companyId": { "main": [[{ "node": "Company matched?", "type": "main", "index": 0 }]] },
+    "Company matched?": {
+      "main": [
+        [{ "node": "Build Corporate Hierarchy body", "type": "main", "index": 0 }],
+        [{ "node": "Accumulate (no match)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Accumulate (no match)": { "main": [[{ "node": "Batch place_cids (loop)", "type": "main", "index": 0 }]] },
+    "Build Corporate Hierarchy body": { "main": [[{ "node": "ZoomInfo: Enrich Corporate Hierarchy", "type": "main", "index": 0 }]] },
+    "ZoomInfo: Enrich Corporate Hierarchy": { "main": [[{ "node": "Merge company + hierarchy", "type": "main", "index": 0 }]] },
+    "Merge company + hierarchy": { "main": [[{ "node": "Build Org Chart body", "type": "main", "index": 0 }]] },
+    "Build Org Chart body": { "main": [[{ "node": "ZoomInfo: Enrich Org Chart", "type": "main", "index": 0 }]] },
+    "ZoomInfo: Enrich Org Chart": { "main": [[{ "node": "Pick best org chart candidate", "type": "main", "index": 0 }]] },
+    "Pick best org chart candidate": { "main": [[{ "node": "Has a contact to reveal?", "type": "main", "index": 0 }]] },
+    "Has a contact to reveal?": {
+      "main": [
+        [{ "node": "Build Enrich Contact body", "type": "main", "index": 0 }],
+        [{ "node": "Accumulate (no contact found)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Accumulate (no contact found)": { "main": [[{ "node": "Batch place_cids (loop)", "type": "main", "index": 0 }]] },
+    "Build Enrich Contact body": { "main": [[{ "node": "ZoomInfo: Enrich Contact", "type": "main", "index": 0 }]] },
+    "ZoomInfo: Enrich Contact": { "main": [[{ "node": "Merge contact + accumulate", "type": "main", "index": 0 }]] },
+    "Merge contact + accumulate": { "main": [[{ "node": "Batch place_cids (loop)", "type": "main", "index": 0 }]] },
+    "Drain accumulated rows": { "main": [[{ "node": "Build write payload", "type": "main", "index": 0 }]] },
+    "Build write payload": { "main": [[{ "node": "Write via workflow 20", "type": "main", "index": 0 }]] },
+    "Write via workflow 20": { "main": [[{ "node": "Build response", "type": "main", "index": 0 }]] },
+    "Build response": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1", "availableInMCP": false },
+  "versionId": "cw-workflow-031"
+}
