@@ -1,5 +1,5 @@
 {
-  "name": "CW — 29. Contact Enrichment Test Bench (ZoomInfo)",
+  "name": "CW \u2014 29. Contact Enrichment Test Bench (ZoomInfo)",
   "nodes": [
     {
       "parameters": {
@@ -12,18 +12,24 @@
       "name": "Test webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [0, 300],
+      "position": [
+        0,
+        300
+      ],
       "webhookId": "zoominfo-test"
     },
     {
       "parameters": {
-        "jsCode": "// Test-bench input for ZoomInfo: {mode, ...params}. Pure sandbox -- writes\n// NOTHING to Firestore, not wired into workflows 25/26 or site_outreach.\n// Built 2026-08-03 after verifying every endpoint below with real PowerShell\n// calls against the live API (100-credit trial), not from docs alone -- see\n// testing_plan.md in Sales/zoominfo/ for the full verification log. Mirrors\n// the search-then-enrich test bench pattern established in wf27 (PDL) and\n// wf28 (UpLead), but ZoomInfo needs FOUR distinct modes instead of a simple\n// search/reveal split, because ZoomInfo's credit model charges per-endpoint-\n// type the first time a record is touched, then that record is free across\n// every other enrich type for 12 months (\"Under Management\" -- confirmed\n// empirically 2026-08-03: enriching a company then immediately pulling its\n// Corporate Hierarchy charged only 1 total credit, not 2).\n//\n// FOUR MODES, mapped 1:1 to the four credit-relevant checkpoints in the real\n// pipeline (testing_plan.md Phases 0-3):\n//   \"discover\"        -- Search Companies (free, no cap needed on credits,\n//                         only on result size for readability)\n//   \"enrich_company\"   -- Enrich Company + Enrich Corporate Hierarchy\n//                         chained together (1 credit for the company the\n//                         FIRST time it's touched by either; free after)\n//   \"org_chart\"        -- Enrich Org Chart (free once the company is Under\n//                         Management from a prior enrich_company call;\n//                         requires a real `department` value, NOT freeform --\n//                         see Lookup Data /lookup/departments)\n//   \"enrich_contact\"   -- Enrich Contact (1 credit per NEW contact record,\n//                         independent of whether the company itself is\n//                         Under Management -- confirmed empirically: the\n//                         contact and company \"Under Management\" clocks\n//                         are separate)\n//\n// This deliberate 4-mode split matches the real architecture decision\n// already written into testing_plan.md Phase 4 (\"Discover\" free vs.\n// \"Enrich\" paid must be two separate, explicit actions -- ZoomInfo can't\n// use CoreClaw's always-enrich-everything pattern without blowing the\n// credit budget in one click).\nconst b = $json.body || $json || {};\nconst mode = (b.mode || '').trim();\nconst VALID_MODES = ['discover', 'enrich_company', 'org_chart', 'enrich_contact'];\nif (!VALID_MODES.includes(mode)) {\n  throw new Error(`mode must be one of: ${VALID_MODES.join(', ')}. Got: \"${mode}\"`);\n}\n\nconst out = { mode };\n\nif (mode === 'discover') {\n  // Free -- Search Companies. Cap page size for readability only, not cost\n  // (Search Companies charges zero credits regardless of result count --\n  // confirmed 2026-08-03: a live zip+radius test returned 183 real results\n  // at zero credit cost).\n  out.zip_code = (b.zip_code || '').trim();\n  out.zip_code_radius_miles = [10, 25, 50, 100, 250].includes(parseInt(b.zip_code_radius_miles, 10))\n    ? parseInt(b.zip_code_radius_miles, 10) : 25;\n  out.employee_range_max = b.employee_range_max ? String(b.employee_range_max) : '';\n  out.zoominfo_contacts_max = b.zoominfo_contacts_max ? String(b.zoominfo_contacts_max) : '';\n  out.industry_keywords = (b.industry_keywords || '').trim();\n  out.exclude_defunct = b.exclude_defunct !== false; // default true\n  let pageSize = parseInt(b.page_size, 10);\n  if (!Number.isFinite(pageSize) || pageSize < 1) pageSize = 25;\n  if (pageSize > 100) pageSize = 100; // ZoomInfo's own hard max, not a cost cap\n  out.page_size = pageSize;\n  if (!out.zip_code && !out.industry_keywords) {\n    throw new Error('discover mode needs at least zip_code or industry_keywords.');\n  }\n} else if (mode === 'enrich_company') {\n  // Paid (1 credit first touch) -- Enrich Company, then Enrich Corporate\n  // Hierarchy chained on the same matched companyId. Accepts companyId OR\n  // companyName/companyWebsite (ZoomInfo will best-match on the latter, per\n  // docs -- \"the more details you provide the more likely we are to\n  // provide the correct match\").\n  out.company_id = b.company_id ? String(b.company_id).trim() : '';\n  out.company_name = (b.company_name || '').trim();\n  out.company_website = (b.company_website || '').trim();\n  if (!out.company_id && !out.company_name && !out.company_website) {\n    throw new Error('enrich_company mode needs company_id, company_name, or company_website.');\n  }\n} else if (mode === 'org_chart') {\n  // Free IF the company is already Under Management from a prior\n  // enrich_company call on this companyId -- otherwise this is the FIRST\n  // enrich touch on the record and WILL charge a credit. `department` must\n  // be one of the real controlled values from GET /lookup/departments\n  // (confirmed 2026-08-03): C-Suite, Finance, Human Resources, Sales,\n  // Operations, Information Technology, Engineering & Technical, Marketing,\n  // Legal, Medical & Health, Other. Comma-separate multiple.\n  out.company_id = b.company_id ? String(b.company_id).trim() : '';\n  out.department = (b.department || 'C-Suite,Operations').trim();\n  if (!out.company_id) {\n    throw new Error('org_chart mode needs company_id (from a prior discover or enrich_company call).');\n  }\n} else if (mode === 'enrich_contact') {\n  // Paid (1 credit per NEW contact) -- Enrich Contact. Best practice per\n  // ZoomInfo docs and this project's own established pattern (wf27's\n  // search-then-reveal): get personId from a free org_chart call first,\n  // only spend the credit on the ONE person actually worth revealing.\n  out.person_id = b.person_id ? String(b.person_id).trim() : '';\n  out.full_name = (b.full_name || '').trim();\n  out.email_address = (b.email_address || '').trim();\n  if (!out.person_id && !out.full_name && !out.email_address) {\n    throw new Error('enrich_contact mode needs person_id (preferred, from a prior org_chart call), full_name, or email_address.');\n  }\n}\n\nreturn [{ json: out }];"
+        "jsCode": "// Test-bench input for ZoomInfo: {mode, ...params}. Pure sandbox -- writes\n// NOTHING to Firestore, not wired into workflows 25/26 or site_outreach.\n// Built 2026-08-03 after verifying every endpoint below with real PowerShell\n// calls against the live API (100-credit trial), not from docs alone -- see\n// testing_plan.md in Sales/zoominfo/ for the full verification log. Mirrors\n// the search-then-enrich test bench pattern established in wf27 (PDL) and\n// wf28 (UpLead), but ZoomInfo needs FOUR distinct modes instead of a simple\n// search/reveal split, because ZoomInfo's credit model charges per-endpoint-\n// type the first time a record is touched, then that record is free across\n// every other enrich type for 12 months (\"Under Management\" -- confirmed\n// empirically 2026-08-03: enriching a company then immediately pulling its\n// Corporate Hierarchy charged only 1 total credit, not 2).\n//\n// FOUR MODES, mapped 1:1 to the four credit-relevant checkpoints in the real\n// pipeline (testing_plan.md Phases 0-3):\n//   \"discover\"        -- Search Companies (free, no cap needed on credits,\n//                         only on result size for readability)\n//   \"enrich_company\"   -- Enrich Company + Enrich Corporate Hierarchy\n//                         chained together (1 credit for the company the\n//                         FIRST time it's touched by either; free after)\n//   \"org_chart\"        -- Enrich Org Chart (free once the company is Under\n//                         Management from a prior enrich_company call;\n//                         requires a real `department` value, NOT freeform --\n//                         see Lookup Data /lookup/departments)\n//   \"enrich_contact\"   -- Enrich Contact (1 credit per NEW contact record,\n//                         independent of whether the company itself is\n//                         Under Management -- confirmed empirically: the\n//                         contact and company \"Under Management\" clocks\n//                         are separate)\n//\n// This deliberate 4-mode split matches the real architecture decision\n// already written into testing_plan.md Phase 4 (\"Discover\" free vs.\n// \"Enrich\" paid must be two separate, explicit actions -- ZoomInfo can't\n// use CoreClaw's always-enrich-everything pattern without blowing the\n// credit budget in one click).\n// FOUR MORE MODES added 2026-08-04 for Phase 0 free signal-scoring (testing_plan.md\n// \"intent and signals\" ask) -- these are separate from the four credit-relevant modes\n// above because none of Search Intent / Search Scoops / Search News / Find Similar\n// Companies charge credits at all (confirmed per docs.zoominfo.com 2026-08-04: all four\n// are free, though each returned record still counts against the account's Record Limit\n// and each call against the Request Limit -- NOT the same thing as the 100-credit budget).\n// Purpose: rank the ~289 already-discovered Ontario Airport companies (or discover more)\n// by real signals BEFORE spending any of the ~35-40 enrich-company credits on them.\n//   \"search_intent\"  -- Search Intent: which companies are actively researching topics\n//                        like warehouse space / 3PL / flex industrial / cold storage.\n//                        REQUIRES real topic strings from GET /lookup/intent-topics --\n//                        not freeform text. Response shape NOT fully confirmed live yet:\n//                        docs show attributes {audienceStrength, category, signalDate,\n//                        signalScore, spikesInDateRange, topic, recommendedContacts[]}\n//                        but no obvious top-level companyId/companyName field -- the\n//                        response `id` looks like a composite\n//                        \"<hash>#<possibleCompanyId>#<date>\" string. UNCONFIRMED how to\n//                        match a signal back to one of our discovered place_cid rows --\n//                        this is exactly what running this mode live should reveal.\n//   \"search_scoops\"  -- Search Scoops: real trigger events (expansions, new leadership,\n//                        funding). Accepts the SAME company geography/industry filters as\n//                        discover mode (zipCode/radius/industryKeywords/etc), so this can\n//                        be pointed at the same Ontario Airport zip+radius. Response\n//                        attribute names NOT confirmed live yet (docs only describe them\n//                        in prose) -- this mode returns the raw first result's keys\n//                        alongside a best-effort mapping so real field names can be\n//                        confirmed from an actual response.\n//   \"search_news\"    -- Search News: real published articles, well-documented response\n//                        shape (domain/title/url/pageDate/categories/description/company).\n//                        IMPORTANT CAVEAT: this endpoint's request body only supports\n//                        categories/url/date filters per docs -- there is NO company or\n//                        location filter. It's a broad industry-news sweep, not a\n//                        per-company lookup (that's the separate paid Enrich News\n//                        endpoint). Useful for spotting named companies in the results,\n//                        not for scoring our existing 289 rows directly.\n//   \"find_similar\"   -- Find Similar Companies (Company Lookalikes): given one seed\n//                        company (by companyId or companyName), returns up to 100\n//                        similar companies -- widens the candidate POOL, doesn't score\n//                        rows already in it. Different base path\n//                        (gtm/copilot/v1, not gtm/data/v1) and a DIFFERENT OAuth scope\n//                        (api:recommendations:read vs api:data:*) -- if this 403s, the\n//                        ZoomInfo API credential probably needs that scope added.\n//   \"lookup\"        -- GET /lookup/{fieldName}: generic controlled-value lookup\n//                        (free). Use this FIRST to fetch real values for\n//                        intent-topics / scoop-types / scoop-topics / news-categories\n//                        before trusting freeform strings on the four modes above.\nconst b = $json.body || $json || {};\nconst mode = (b.mode || '').trim();\nconst VALID_MODES = ['discover', 'enrich_company', 'org_chart', 'enrich_contact', 'search_intent', 'search_scoops', 'search_news', 'find_similar', 'lookup'];\nif (!VALID_MODES.includes(mode)) {\n  throw new Error(`mode must be one of: ${VALID_MODES.join(', ')}. Got: \"${mode}\"`);\n}\n\nconst out = { mode };\n\nif (mode === 'discover') {\n  // Free -- Search Companies. Cap page size for readability only, not cost\n  // (Search Companies charges zero credits regardless of result count --\n  // confirmed 2026-08-03: a live zip+radius test returned 183 real results\n  // at zero credit cost).\n  out.zip_code = (b.zip_code || '').trim();\n  out.zip_code_radius_miles = [10, 25, 50, 100, 250].includes(parseInt(b.zip_code_radius_miles, 10))\n    ? parseInt(b.zip_code_radius_miles, 10) : 25;\n  out.employee_range_max = b.employee_range_max ? String(b.employee_range_max) : '';\n  out.zoominfo_contacts_max = b.zoominfo_contacts_max ? String(b.zoominfo_contacts_max) : '';\n  out.industry_keywords = (b.industry_keywords || '').trim();\n  out.exclude_defunct = b.exclude_defunct !== false; // default true\n  let pageSize = parseInt(b.page_size, 10);\n  if (!Number.isFinite(pageSize) || pageSize < 1) pageSize = 25;\n  if (pageSize > 100) pageSize = 100; // ZoomInfo's own hard max, not a cost cap\n  out.page_size = pageSize;\n  if (!out.zip_code && !out.industry_keywords) {\n    throw new Error('discover mode needs at least zip_code or industry_keywords.');\n  }\n} else if (mode === 'enrich_company') {\n  // Paid (1 credit first touch) -- Enrich Company, then Enrich Corporate\n  // Hierarchy chained on the same matched companyId. Accepts companyId OR\n  // companyName/companyWebsite (ZoomInfo will best-match on the latter, per\n  // docs -- \"the more details you provide the more likely we are to\n  // provide the correct match\").\n  out.company_id = b.company_id ? String(b.company_id).trim() : '';\n  out.company_name = (b.company_name || '').trim();\n  out.company_website = (b.company_website || '').trim();\n  if (!out.company_id && !out.company_name && !out.company_website) {\n    throw new Error('enrich_company mode needs company_id, company_name, or company_website.');\n  }\n} else if (mode === 'org_chart') {\n  // Free IF the company is already Under Management from a prior\n  // enrich_company call on this companyId -- otherwise this is the FIRST\n  // enrich touch on the record and WILL charge a credit. `department` must\n  // be one of the real controlled values from GET /lookup/departments\n  // (confirmed 2026-08-03): C-Suite, Finance, Human Resources, Sales,\n  // Operations, Information Technology, Engineering & Technical, Marketing,\n  // Legal, Medical & Health, Other. Comma-separate multiple.\n  out.company_id = b.company_id ? String(b.company_id).trim() : '';\n  out.department = (b.department || 'C-Suite,Operations').trim();\n  if (!out.company_id) {\n    throw new Error('org_chart mode needs company_id (from a prior discover or enrich_company call).');\n  }\n} else if (mode === 'enrich_contact') {\n  // Paid (1 credit per NEW contact) -- Enrich Contact. Best practice per\n  // ZoomInfo docs and this project's own established pattern (wf27's\n  // search-then-reveal): get personId from a free org_chart call first,\n  // only spend the credit on the ONE person actually worth revealing.\n  out.person_id = b.person_id ? String(b.person_id).trim() : '';\n  out.full_name = (b.full_name || '').trim();\n  out.email_address = (b.email_address || '').trim();\n  if (!out.person_id && !out.full_name && !out.email_address) {\n    throw new Error('enrich_contact mode needs person_id (preferred, from a prior org_chart call), full_name, or email_address.');\n  }\n} else if (mode === 'search_intent') {\n  // Free (Record/Request limits only, no credit cost) -- Search Intent.\n  // `topics` MUST come from GET /data/v1/lookup/intent-topics -- check that\n  // live first (same pattern as org_chart's `department` values from\n  // GET /lookup/departments) and pass real topic strings here, e.g. topics\n  // relevant to warehouse/3PL/flex industrial/cold storage searches.\n  const topicsRaw = b.topics;\n  out.topics = Array.isArray(topicsRaw) ? topicsRaw : (typeof topicsRaw === 'string' ? topicsRaw.split(',').map(t => t.trim()).filter(Boolean) : []);\n  if (!out.topics.length) {\n    throw new Error('search_intent mode needs at least 1 topic (up to 50) -- check GET /lookup/intent-topics for valid values.');\n  }\n  if (out.topics.length > 50) out.topics = out.topics.slice(0, 50);\n  out.signal_score_min = b.signal_score_min != null ? parseInt(b.signal_score_min, 10) : undefined;\n  out.signal_score_max = b.signal_score_max != null ? parseInt(b.signal_score_max, 10) : undefined;\n  out.audience_strength_min = (b.audience_strength_min || '').trim();\n  out.audience_strength_max = (b.audience_strength_max || '').trim();\n  out.metro_region = (b.metro_region || '').trim();\n  out.industry_codes = (b.industry_codes || '').trim();\n  out.employee_count = (b.employee_count || '').trim();\n  out.revenue = (b.revenue || '').trim();\n  out.company_description = (b.company_description || '').trim();\n  let intentPageSize = parseInt(b.page_size, 10);\n  if (!Number.isFinite(intentPageSize) || intentPageSize < 1) intentPageSize = 25;\n  if (intentPageSize > 100) intentPageSize = 100;\n  out.page_size = intentPageSize;\n} else if (mode === 'search_scoops') {\n  // Free (Record/Request limits only) -- Search Scoops. Reuses the same\n  // company geography/industry filter vocabulary as discover mode, so point\n  // it at the same zip/radius/category used for the original Ontario\n  // Airport discover run to find trigger-event companies in that same pool.\n  out.zip_code = (b.zip_code || '').trim();\n  out.zip_code_radius_miles = [10, 25, 50, 100, 250].includes(parseInt(b.zip_code_radius_miles, 10))\n    ? parseInt(b.zip_code_radius_miles, 10) : 25;\n  out.employee_range_max = b.employee_range_max ? String(b.employee_range_max) : '';\n  out.zoominfo_contacts_max = b.zoominfo_contacts_max ? String(b.zoominfo_contacts_max) : '';\n  out.industry_keywords = (b.industry_keywords || '').trim();\n  // scoop_types / scoop_topics should come from GET /lookup/scoop-types and\n  // GET /lookup/scoop-topics -- check those live first, same as intent-topics.\n  out.scoop_types = (b.scoop_types || '').trim();\n  out.scoop_topics = (b.scoop_topics || '').trim();\n  out.published_start_date = (b.published_start_date || '').trim();\n  out.published_end_date = (b.published_end_date || '').trim();\n  let scoopPageSize = parseInt(b.page_size, 10);\n  if (!Number.isFinite(scoopPageSize) || scoopPageSize < 1) scoopPageSize = 25;\n  if (scoopPageSize > 100) scoopPageSize = 100;\n  out.page_size = scoopPageSize;\n  if (!out.zip_code && !out.industry_keywords && !out.scoop_types && !out.scoop_topics) {\n    throw new Error('search_scoops mode needs at least one filter: zip_code, industry_keywords, scoop_types, or scoop_topics.');\n  }\n} else if (mode === 'search_news') {\n  // Free (Record/Request limits only) -- Search News. NOT a per-company\n  // lookup -- only categories/url/date filters exist on this endpoint (see\n  // comment block above). categories should come from\n  // GET /lookup/news-categories.\n  const catsRaw = b.categories;\n  out.categories = Array.isArray(catsRaw) ? catsRaw : (typeof catsRaw === 'string' ? catsRaw.split(',').map(c => c.trim()).filter(Boolean) : []);\n  out.page_date_min = (b.page_date_min || '').trim();\n  out.page_date_max = (b.page_date_max || '').trim();\n  const urlRaw = b.url;\n  out.url = Array.isArray(urlRaw) ? urlRaw : (typeof urlRaw === 'string' && urlRaw ? [urlRaw] : []);\n  let newsPageSize = parseInt(b.page_size, 10);\n  if (!Number.isFinite(newsPageSize) || newsPageSize < 1) newsPageSize = 25;\n  if (newsPageSize > 100) newsPageSize = 100;\n  out.page_size = newsPageSize;\n  if (!out.categories.length && !out.page_date_min && !out.page_date_max && !out.url.length) {\n    throw new Error('search_news mode needs at least one of: categories, page_date_min/page_date_max, or url.');\n  }\n} else if (mode === 'find_similar') {\n  // Free -- Company Lookalikes (GET, different base path gtm/copilot/v1 and\n  // a different OAuth scope, api:recommendations:read -- see comment block\n  // above). Give it ONE seed company you already know is a good fit (e.g.\n  // an existing tenant or an ecommerce_brand_pilot account) to widen the\n  // candidate pool, not to score companies already discovered.\n  out.company_id = b.company_id ? String(b.company_id).trim() : '';\n  out.company_name = (b.company_name || '').trim();\n  if (!out.company_id && !out.company_name) {\n    throw new Error('find_similar mode needs company_id or company_name (the seed company to find lookalikes for).');\n  }\n} else if (mode === 'lookup') {\n  // Free -- GET /gtm/data/v1/lookup/{fieldName}. Added 2026-08-04 to check\n  // controlled values (intent-topics, scoop-types, scoop-topics,\n  // news-categories, departments, etc.) before trusting freeform-looking\n  // inputs on search_intent/search_scoops/search_news.\n  out.field = (b.field || '').trim();\n  if (!out.field) {\n    throw new Error(\"lookup mode needs field, e.g. 'intent-topics', 'scoop-types', 'scoop-topics', 'news-categories', or 'departments'.\");\n  }\n} else if (mode === 'discover' || mode === 'enrich_company' || mode === 'org_chart' || mode === 'enrich_contact') {\n  // handled above, nothing more to do here -- this branch only exists so the\n  // final else below stays reachable for truly-unknown modes despite the\n  // VALID_MODES check already having caught them earlier.\n}\n\nreturn [{ json: out }];"
       },
       "id": "cw-29-002",
       "name": "Parse test input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [220, 300]
+      "position": [
+        220,
+        300
+      ]
     },
     {
       "parameters": {
@@ -32,9 +38,20 @@
           "values": [
             {
               "conditions": {
-                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
                 "conditions": [
-                  { "leftValue": "={{ $json.mode }}", "rightValue": "discover", "operator": { "type": "string", "operation": "equals" } }
+                  {
+                    "leftValue": "={{ $json.mode }}",
+                    "rightValue": "discover",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
                 ],
                 "combinator": "and"
               },
@@ -42,9 +59,20 @@
             },
             {
               "conditions": {
-                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
                 "conditions": [
-                  { "leftValue": "={{ $json.mode }}", "rightValue": "enrich_company", "operator": { "type": "string", "operation": "equals" } }
+                  {
+                    "leftValue": "={{ $json.mode }}",
+                    "rightValue": "enrich_company",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
                 ],
                 "combinator": "and"
               },
@@ -52,9 +80,20 @@
             },
             {
               "conditions": {
-                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
                 "conditions": [
-                  { "leftValue": "={{ $json.mode }}", "rightValue": "org_chart", "operator": { "type": "string", "operation": "equals" } }
+                  {
+                    "leftValue": "={{ $json.mode }}",
+                    "rightValue": "org_chart",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
                 ],
                 "combinator": "and"
               },
@@ -62,13 +101,129 @@
             },
             {
               "conditions": {
-                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
                 "conditions": [
-                  { "leftValue": "={{ $json.mode }}", "rightValue": "enrich_contact", "operator": { "type": "string", "operation": "equals" } }
+                  {
+                    "leftValue": "={{ $json.mode }}",
+                    "rightValue": "enrich_contact",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
                 ],
                 "combinator": "and"
               },
               "outputKey": "enrich_contact"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.mode }}",
+                    "rightValue": "search_intent",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "search_intent"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.mode }}",
+                    "rightValue": "search_scoops",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "search_scoops"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.mode }}",
+                    "rightValue": "search_news",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "search_news"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.mode }}",
+                    "rightValue": "find_similar",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "find_similar"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.mode }}",
+                    "rightValue": "lookup",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "lookup"
             }
           ]
         },
@@ -78,9 +233,11 @@
       "name": "Route by mode",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3,
-      "position": [440, 300]
+      "position": [
+        440,
+        300
+      ]
     },
-
     {
       "parameters": {
         "jsCode": "// Real request shape confirmed via docs.zoominfo.com OpenAPI spec\n// (searchinterface_searchcompany) 2026-08-03: POST body is\n// {data:{type:\"CompanySearch\", attributes:{...filters}}}, page[number]/\n// page[size]/sort are URL query params, NOT body fields. Free endpoint --\n// no credit cost regardless of result count or page size.\nconst ctx = $json;\nconst attrs = {};\nif (ctx.zip_code) {\n  attrs.zipCode = ctx.zip_code;\n  attrs.zipCodeRadiusMiles = ctx.zip_code_radius_miles;\n}\nif (ctx.employee_range_max) attrs.employeeRangeMax = ctx.employee_range_max;\nif (ctx.zoominfo_contacts_max) attrs.zoominfoContactsMax = ctx.zoominfo_contacts_max;\nif (ctx.industry_keywords) attrs.industryKeywords = ctx.industry_keywords;\nattrs.excludeDefunctCompanies = ctx.exclude_defunct;\nreturn [{ json: {\n  ...ctx,\n  requestBody: { data: { type: 'CompanySearch', attributes: attrs } }\n} }];"
@@ -89,7 +246,10 @@
       "name": "Build Search Companies body",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [660, 0]
+      "position": [
+        660,
+        0
+      ]
     },
     {
       "parameters": {
@@ -99,25 +259,43 @@
         "genericAuthType": "oAuth2Api",
         "sendQuery": true,
         "queryParameters": {
-          "parameters": [{ "name": "page[size]", "value": "={{ $json.page_size }}" }]
+          "parameters": [
+            {
+              "name": "page[size]",
+              "value": "={{ $json.page_size }}"
+            }
+          ]
         },
         "sendHeaders": true,
         "headerParameters": {
-          "parameters": [{ "name": "Content-Type", "value": "application/vnd.api+json" }]
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/vnd.api+json"
+            }
+          ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
-        "options": { "continueOnFail": true }
+        "options": {
+          "continueOnFail": true
+        }
       },
       "id": "cw-29-005",
       "name": "ZoomInfo: Search Companies",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [880, 0],
+      "position": [
+        880,
+        0
+      ],
       "continueOnFail": true,
       "credentials": {
-        "oAuth2Api": { "id": "REPLACE_WITH_CREDENTIAL_ID", "name": "ZoomInfo API" }
+        "oAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "ZoomInfo API"
+        }
       }
     },
     {
@@ -128,21 +306,28 @@
       "name": "Build discover response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1100, 0]
+      "position": [
+        1100,
+        0
+      ]
     },
     {
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
-        "options": { "responseCode": 200 }
+        "options": {
+          "responseCode": 200
+        }
       },
       "id": "cw-29-007",
       "name": "Respond (discover)",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1320, 0]
+      "position": [
+        1320,
+        0
+      ]
     },
-
     {
       "parameters": {
         "jsCode": "// Real request shape confirmed via docs.zoominfo.com OpenAPI spec\n// (enrichinterface_enrichcompany) 2026-08-03: {data:{type:\"CompanyEnrich\",\n// attributes:{matchCompanyInput:[{companyId|companyName|companyWebsite}],\n// outputFields:[...]}}}. matchCompanyInput.companyId is an INTEGER, not a\n// string -- confirmed against the real schema, cast explicitly below.\n// outputFields chosen from the real Lookup Enrich Fields (entity=company)\n// results verified 2026-08-03, all accessGranted:true on this account.\nconst ctx = $json;\nconst input = {};\nif (ctx.company_id) input.companyId = parseInt(ctx.company_id, 10);\nif (ctx.company_name) input.companyName = ctx.company_name;\nif (ctx.company_website) input.companyWebsite = ctx.company_website;\nconst outputFields = [\n  'id', 'name', 'website', 'phone', 'street', 'city', 'state', 'zipCode', 'country',\n  'employeeCount', 'revenue', 'primaryIndustry', 'subUnitType',\n  'parentId', 'parentName', 'ultimateParentId', 'ultimateParentName',\n  'numberOfContactsInZoomInfo'\n];\nreturn [{ json: {\n  ...ctx,\n  requestBody: { data: { type: 'CompanyEnrich', attributes: { matchCompanyInput: [input], outputFields } } }\n} }];"
@@ -151,7 +336,10 @@
       "name": "Build Enrich Company body",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [660, 220]
+      "position": [
+        660,
+        220
+      ]
     },
     {
       "parameters": {
@@ -161,21 +349,34 @@
         "genericAuthType": "oAuth2Api",
         "sendHeaders": true,
         "headerParameters": {
-          "parameters": [{ "name": "Content-Type", "value": "application/vnd.api+json" }]
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/vnd.api+json"
+            }
+          ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
-        "options": { "continueOnFail": true }
+        "options": {
+          "continueOnFail": true
+        }
       },
       "id": "cw-29-009",
       "name": "ZoomInfo: Enrich Company",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [880, 220],
+      "position": [
+        880,
+        220
+      ],
       "continueOnFail": true,
       "credentials": {
-        "oAuth2Api": { "id": "REPLACE_WITH_CREDENTIAL_ID", "name": "ZoomInfo API" }
+        "oAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "ZoomInfo API"
+        }
       }
     },
     {
@@ -186,7 +387,10 @@
       "name": "Extract matched companyId",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1100, 220]
+      "position": [
+        1100,
+        220
+      ]
     },
     {
       "parameters": {
@@ -196,21 +400,34 @@
         "genericAuthType": "oAuth2Api",
         "sendHeaders": true,
         "headerParameters": {
-          "parameters": [{ "name": "Content-Type", "value": "application/vnd.api+json" }]
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/vnd.api+json"
+            }
+          ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
-        "options": { "continueOnFail": true }
+        "options": {
+          "continueOnFail": true
+        }
       },
       "id": "cw-29-011",
       "name": "ZoomInfo: Enrich Corporate Hierarchy",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1320, 220],
+      "position": [
+        1320,
+        220
+      ],
       "continueOnFail": true,
       "credentials": {
-        "oAuth2Api": { "id": "REPLACE_WITH_CREDENTIAL_ID", "name": "ZoomInfo API" }
+        "oAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "ZoomInfo API"
+        }
       }
     },
     {
@@ -221,21 +438,28 @@
       "name": "Build enrich_company response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1540, 220]
+      "position": [
+        1540,
+        220
+      ]
     },
     {
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
-        "options": { "responseCode": 200 }
+        "options": {
+          "responseCode": 200
+        }
       },
       "id": "cw-29-013",
       "name": "Respond (enrich_company)",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1760, 220]
+      "position": [
+        1760,
+        220
+      ]
     },
-
     {
       "parameters": {
         "jsCode": "// Real request shape confirmed via docs.zoominfo.com OpenAPI spec\n// (enrichinterface_enrichorgchart) 2026-08-03: {data:{type:\"OrgChartEnrich\",\n// attributes:{companyId:\"<string>\", department:\"<comma-separated string>\"}}}\n// Note companyId is a STRING here (unlike Enrich Company/Corporate\n// Hierarchy where it's an integer) -- confirmed against the real schema,\n// don't cast it. `department` values are a controlled list from\n// GET /lookup/departments, live-verified 2026-08-03.\nconst ctx = $json;\nreturn [{ json: {\n  ...ctx,\n  requestBody: {\n    data: {\n      type: 'OrgChartEnrich',\n      attributes: { companyId: String(ctx.company_id), department: ctx.department }\n    }\n  }\n} }];"
@@ -244,7 +468,10 @@
       "name": "Build Org Chart body",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [660, 440]
+      "position": [
+        660,
+        440
+      ]
     },
     {
       "parameters": {
@@ -254,21 +481,34 @@
         "genericAuthType": "oAuth2Api",
         "sendHeaders": true,
         "headerParameters": {
-          "parameters": [{ "name": "Content-Type", "value": "application/vnd.api+json" }]
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/vnd.api+json"
+            }
+          ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
-        "options": { "continueOnFail": true }
+        "options": {
+          "continueOnFail": true
+        }
       },
       "id": "cw-29-015",
       "name": "ZoomInfo: Enrich Org Chart",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [880, 440],
+      "position": [
+        880,
+        440
+      ],
       "continueOnFail": true,
       "credentials": {
-        "oAuth2Api": { "id": "REPLACE_WITH_CREDENTIAL_ID", "name": "ZoomInfo API" }
+        "oAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "ZoomInfo API"
+        }
       }
     },
     {
@@ -279,21 +519,28 @@
       "name": "Build org_chart response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1100, 440]
+      "position": [
+        1100,
+        440
+      ]
     },
     {
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
-        "options": { "responseCode": 200 }
+        "options": {
+          "responseCode": 200
+        }
       },
       "id": "cw-29-017",
       "name": "Respond (org_chart)",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1320, 440]
+      "position": [
+        1320,
+        440
+      ]
     },
-
     {
       "parameters": {
         "jsCode": "// Real request shape confirmed via docs.zoominfo.com OpenAPI spec\n// (enrichinterface_enrichcontact) 2026-08-03: {data:{type:\"ContactEnrich\",\n// attributes:{matchPersonInput:[{personId|fullName|emailAddress}],\n// outputFields:[...]}}}. matchPersonInput.personId is an INTEGER --\n// confirmed against the real schema. outputFields chosen from the real\n// Lookup Enrich Fields (entity=contact) results verified 2026-08-03, all\n// accessGranted:true on this account. There is no dedicated LinkedIn\n// field -- social URLs come back inside externalUrls, not a separate\n// contact_linkedin-style field (closes an open question from\n// testing_plan.md).\nconst ctx = $json;\nconst input = {};\nif (ctx.person_id) input.personId = parseInt(ctx.person_id, 10);\nif (ctx.full_name) input.fullName = ctx.full_name;\nif (ctx.email_address) input.emailAddress = ctx.email_address;\nconst outputFields = [\n  'id', 'firstName', 'lastName', 'jobTitle', 'managementLevel',\n  'email', 'phone', 'mobilePhone', 'externalUrls', 'contactAccuracyScore',\n  'companyId', 'companyName'\n];\nreturn [{ json: {\n  ...ctx,\n  requestBody: { data: { type: 'ContactEnrich', attributes: { matchPersonInput: [input], outputFields } } }\n} }];"
@@ -302,7 +549,10 @@
       "name": "Build Enrich Contact body",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [660, 660]
+      "position": [
+        660,
+        660
+      ]
     },
     {
       "parameters": {
@@ -312,21 +562,34 @@
         "genericAuthType": "oAuth2Api",
         "sendHeaders": true,
         "headerParameters": {
-          "parameters": [{ "name": "Content-Type", "value": "application/vnd.api+json" }]
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/vnd.api+json"
+            }
+          ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
-        "options": { "continueOnFail": true }
+        "options": {
+          "continueOnFail": true
+        }
       },
       "id": "cw-29-019",
       "name": "ZoomInfo: Enrich Contact",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [880, 660],
+      "position": [
+        880,
+        660
+      ],
       "continueOnFail": true,
       "credentials": {
-        "oAuth2Api": { "id": "REPLACE_WITH_CREDENTIAL_ID", "name": "ZoomInfo API" }
+        "oAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "ZoomInfo API"
+        }
       }
     },
     {
@@ -337,77 +600,849 @@
       "name": "Build enrich_contact response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1100, 660]
+      "position": [
+        1100,
+        660
+      ]
     },
     {
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
-        "options": { "responseCode": 200 }
+        "options": {
+          "responseCode": 200
+        }
       },
       "id": "cw-29-021",
       "name": "Respond (enrich_contact)",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1320, 660]
+      "position": [
+        1320,
+        660
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Request shape confirmed via docs.zoominfo.com/reference/searchinterface_searchintent\n// 2026-08-04 (real example JSON on the page, not just prose): POST body is\n// {data:{type:\"IntentSearch\", attributes:{topics:[...], signalScoreMin, ...}}}.\n// Free endpoint (no credit cost) but topics MUST be real values from\n// GET /data/v1/lookup/intent-topics -- not verified live which topic strings\n// actually cover warehouse/3PL/flex industrial/cold storage; check that lookup\n// call first and adjust the `topics` input accordingly.\nconst ctx = $json;\nconst attrs = { topics: ctx.topics };\nif (ctx.signal_score_min != null) attrs.signalScoreMin = ctx.signal_score_min;\nif (ctx.signal_score_max != null) attrs.signalScoreMax = ctx.signal_score_max;\nif (ctx.audience_strength_min) attrs.audienceStrengthMin = ctx.audience_strength_min;\nif (ctx.audience_strength_max) attrs.audienceStrengthMax = ctx.audience_strength_max;\nif (ctx.metro_region) attrs.metroRegion = ctx.metro_region;\nif (ctx.industry_codes) attrs.industryCodes = ctx.industry_codes;\nif (ctx.employee_count) attrs.employeeCount = ctx.employee_count;\nif (ctx.revenue) attrs.revenue = ctx.revenue;\nif (ctx.company_description) attrs.companyDescription = ctx.company_description;\nreturn [{ json: {\n  ...ctx,\n  requestBody: { data: { type: 'IntentSearch', attributes: attrs } }\n} }];"
+      },
+      "id": "cw-29-022",
+      "name": "Build Search Intent body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.zoominfo.com/gtm/data/v1/intent/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "page[size]",
+              "value": "={{ $json.page_size }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/vnd.api+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": {
+          "continueOnFail": true
+        }
+      },
+      "id": "cw-29-023",
+      "name": "ZoomInfo: Search Intent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        880
+      ],
+      "continueOnFail": true,
+      "credentials": {
+        "oAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "ZoomInfo API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Shapes the search_intent response. Real example response confirmed via docs\n// 2026-08-04: data[].attributes = {audienceStrength, category, signalDate,\n// signalScore, spikesInDateRange, topic, recommendedContacts[]}. NOTE: no\n// obvious top-level companyId/companyName field in the documented example --\n// the response `id` looks like a composite \"<hash>#<possibleCompanyId>#<date>\"\n// string. This code best-effort-extracts the middle segment as a candidate\n// company id AND pulls companyName off the first recommended contact as a\n// fallback, but BOTH are unconfirmed until this mode is actually run live --\n// that's exactly what running this test is for. Don't wire this into a real\n// scoring workflow until that's confirmed.\nfunction parseResp(raw) {\n  if (raw && typeof raw.data === 'string') {\n    try { return JSON.parse(raw.data); } catch (e) { return raw; }\n  }\n  return raw;\n}\nconst resp = parseResp($json || {});\nconst rows = Array.isArray(resp.data) ? resp.data : [];\nconst signals = rows.map(r => {\n  const a = r.attributes || {};\n  const idParts = typeof r.id === 'string' ? r.id.split('#') : [];\n  const bestGuessCompanyId = idParts.length >= 2 ? idParts[1] : null;\n  const firstContact = Array.isArray(a.recommendedContacts) && a.recommendedContacts.length ? a.recommendedContacts[0] : null;\n  return {\n    raw_id: r.id || null,\n    best_guess_company_id: bestGuessCompanyId,\n    company_name_from_contact: firstContact ? firstContact.companyName : null,\n    topic: a.topic || null,\n    category: a.category || null,\n    signal_score: a.signalScore || null,\n    audience_strength: a.audienceStrength || null,\n    signal_date: a.signalDate || null,\n    spikes_in_date_range: a.spikesInDateRange || null\n  };\n});\nreturn [{ json: {\n  provider: 'zoominfo',\n  mode: 'search_intent',\n  total_results: resp.meta && resp.meta.totalResults ? resp.meta.totalResults : signals.length,\n  signals_returned: signals.length,\n  signals,\n  credits_spent: 0,\n  raw_first_result: rows.length ? rows[0] : null,\n  note: signals.length === 0\n    ? 'No intent signals -- confirm topics are real values from GET /lookup/intent-topics, or widen signalScoreMin/audienceStrengthMin.'\n    : 'IMPORTANT: best_guess_company_id is unconfirmed -- inspect raw_first_result to verify how to match a signal back to a place_cid before wiring this into real scoring.'\n} }];"
+      },
+      "id": "cw-29-024",
+      "name": "Build search_intent response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "cw-29-025",
+      "name": "Respond (search_intent)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Request shape per docs.zoominfo.com/reference/searchinterface_searchscoop\n// 2026-08-04: POST body {data:{type:?, attributes:{...}}}. Docs did NOT show a\n// literal example, only a prose parameter list -- `type` value guessed as\n// 'ScoopSearch' by analogy with IntentSearch/NewsSearch, UNCONFIRMED. Reuses the\n// same company geography/industry filter names as Search Companies (zipCode,\n// zipCodeRadiusMiles, employeeRangeMax, zoominfoContactsMax, industryKeywords).\nconst ctx = $json;\nconst attrs = {};\nif (ctx.zip_code) { attrs.zipCode = ctx.zip_code; attrs.zipCodeRadiusMiles = ctx.zip_code_radius_miles; }\nif (ctx.employee_range_max) attrs.employeeRangeMax = ctx.employee_range_max;\nif (ctx.zoominfo_contacts_max) attrs.zoominfoContactsMax = ctx.zoominfo_contacts_max;\nif (ctx.industry_keywords) attrs.industryKeywords = ctx.industry_keywords;\nif (ctx.scoop_types) attrs.scoopType = ctx.scoop_types;\nif (ctx.scoop_topics) attrs.scoopTopic = ctx.scoop_topics;\nif (ctx.published_start_date) attrs.publishedStartDate = ctx.published_start_date;\nif (ctx.published_end_date) attrs.publishedEndDate = ctx.published_end_date;\nreturn [{ json: {\n  ...ctx,\n  requestBody: { data: { type: 'ScoopSearch', attributes: attrs } }\n} }];"
+      },
+      "id": "cw-29-026",
+      "name": "Build Search Scoops body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        1100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.zoominfo.com/gtm/data/v1/scoops/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "page[size]",
+              "value": "={{ $json.page_size }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/vnd.api+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": {
+          "continueOnFail": true
+        }
+      },
+      "id": "cw-29-027",
+      "name": "ZoomInfo: Search Scoops",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        1100
+      ],
+      "continueOnFail": true,
+      "credentials": {
+        "oAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "ZoomInfo API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Shapes the search_scoops response. UNLIKE the other modes, docs.zoominfo.com\n// did NOT give a literal example response for this endpoint -- only a prose\n// description (\"company information (id, name), contact details, publication\n// dates, descriptions, links, topic and type classifications\"). This code\n// therefore returns BOTH a best-effort mapping (using the field names visible\n// in the sort-parameter docs: scoopId, originalPublishedDate, description, link,\n// linkText) AND the raw first result's full attributes object, so real field\n// names can be confirmed from an actual live response before trusting the\n// mapped version for anything.\nfunction parseResp(raw) {\n  if (raw && typeof raw.data === 'string') {\n    try { return JSON.parse(raw.data); } catch (e) { return raw; }\n  }\n  return raw;\n}\nconst resp = parseResp($json || {});\nconst rows = Array.isArray(resp.data) ? resp.data : [];\nconst scoops = rows.map(r => {\n  const a = r.attributes || {};\n  return {\n    scoop_id: a.scoopId || r.id || null,\n    company_id: a.company ? a.company.id : (a.companyId || null),\n    company_name: a.company ? a.company.name : (a.companyName || null),\n    published_date: a.originalPublishedDate || null,\n    description: a.description || null,\n    link: a.link || null\n  };\n});\nreturn [{ json: {\n  provider: 'zoominfo',\n  mode: 'search_scoops',\n  total_results: resp.meta && resp.meta.totalResults ? resp.meta.totalResults : scoops.length,\n  scoops_returned: scoops.length,\n  scoops,\n  credits_spent: 0,\n  raw_first_result: rows.length ? rows[0] : null,\n  note: scoops.length === 0\n    ? 'No scoops matched -- try widening zip_code_radius_miles or dropping scoop_types/scoop_topics.'\n    : 'Field mapping above is best-effort/unconfirmed -- check raw_first_result for the real attribute names before trusting company_id/company_name matching.'\n} }];"
+      },
+      "id": "cw-29-028",
+      "name": "Build search_scoops response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        1100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "cw-29-029",
+      "name": "Respond (search_scoops)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        1100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Request shape confirmed via docs.zoominfo.com/reference/searchinterface_searchnews\n// 2026-08-04 (real example JSON on the page): POST body\n// {data:{type:\"NewsSearch\", attributes:{categories, url, pageDateMin, pageDateMax}}}.\n// IMPORTANT: no company/location filter exists on this endpoint at all -- it's a\n// broad category+date sweep, not a per-company lookup (see comment block on the\n// Parse test input node). categories should come from GET /lookup/news-categories.\nconst ctx = $json;\nconst attrs = {};\nif (ctx.categories && ctx.categories.length) attrs.categories = ctx.categories;\nif (ctx.url && ctx.url.length) attrs.url = ctx.url;\nif (ctx.page_date_min) attrs.pageDateMin = ctx.page_date_min;\nif (ctx.page_date_max) attrs.pageDateMax = ctx.page_date_max;\nreturn [{ json: {\n  ...ctx,\n  requestBody: { data: { type: 'NewsSearch', attributes: attrs } }\n} }];"
+      },
+      "id": "cw-29-030",
+      "name": "Build Search News body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        1320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.zoominfo.com/gtm/data/v1/news/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "page[size]",
+              "value": "={{ $json.page_size }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/vnd.api+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": {
+          "continueOnFail": true
+        }
+      },
+      "id": "cw-29-031",
+      "name": "ZoomInfo: Search News",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        1320
+      ],
+      "continueOnFail": true,
+      "credentials": {
+        "oAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "ZoomInfo API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Shapes the search_news response. Real example response confirmed via docs\n// 2026-08-04: data[].attributes = {domain, title, url, imageUrl, pageDate,\n// categories, description, company:[{id,name}]}. company is an ARRAY (an\n// article can mention more than one company) -- surface all of them, not just\n// the first, so this can be cross-referenced against our discovered place_cid\n// list by company id or name.\nfunction parseResp(raw) {\n  if (raw && typeof raw.data === 'string') {\n    try { return JSON.parse(raw.data); } catch (e) { return raw; }\n  }\n  return raw;\n}\nconst resp = parseResp($json || {});\nconst rows = Array.isArray(resp.data) ? resp.data : [];\nconst articles = rows.map(r => {\n  const a = r.attributes || {};\n  return {\n    title: a.title || null,\n    url: a.url || null,\n    domain: a.domain || null,\n    page_date: a.pageDate || null,\n    categories: a.categories || null,\n    description: a.description || null,\n    companies: Array.isArray(a.company) ? a.company.map(c => ({ company_id: c.id || null, company_name: c.name || null })) : []\n  };\n});\nreturn [{ json: {\n  provider: 'zoominfo',\n  mode: 'search_news',\n  total_results: resp.meta && resp.meta.totalResults ? resp.meta.totalResults : articles.length,\n  articles_returned: articles.length,\n  articles,\n  credits_spent: 0,\n  note: articles.length === 0\n    ? 'No articles matched -- widen page_date_min/page_date_max or try different categories from GET /lookup/news-categories.'\n    : 'Cross-reference articles[].companies against our discovered place_cid list by company_id or company_name -- this endpoint has no direct company filter.'\n} }];"
+      },
+      "id": "cw-29-032",
+      "name": "Build search_news response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        1320
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "cw-29-033",
+      "name": "Respond (search_news)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        1320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Company Lookalikes per docs.zoominfo.com/reference/companylookalikesinterface_companylookalikes\n// 2026-08-04: GET (not POST) https://api.zoominfo.com/gtm/copilot/v1/companies/lookalikes\n// with query params filter[companyId] or filter[companyName] -- no request body\n// at all. Different base path (gtm/copilot/v1) and OAuth scope\n// (api:recommendations:read) than every other mode in this test bench (gtm/data/v1,\n// api:data:*) -- if the HTTP call 403s, the ZoomInfo API credential likely needs\n// that scope granted.\nconst ctx = $json;\nconst queryParams = [];\nif (ctx.company_id) queryParams.push({ name: 'filter[companyId]', value: ctx.company_id });\nif (ctx.company_name) queryParams.push({ name: 'filter[companyName]', value: ctx.company_name });\nreturn [{ json: { ...ctx, queryParams } }];"
+      },
+      "id": "cw-29-034",
+      "name": "Build Find Similar params",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        1540
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.zoominfo.com/gtm/copilot/v1/companies/lookalikes",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": "={{ $json.queryParams }}"
+        },
+        "options": {
+          "continueOnFail": true
+        }
+      },
+      "id": "cw-29-035",
+      "name": "ZoomInfo: Find Similar Companies",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        1540
+      ],
+      "continueOnFail": true,
+      "credentials": {
+        "oAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "ZoomInfo API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Shapes the find_similar response. Docs describe (not a literal JSON example)\n// each result as: company name, similarity score (0-1, descending), rank,\n// industry, revenue range, employee range, headquarters country. Exact\n// attribute key names (e.g. `score` vs `similarityScore`) are UNCONFIRMED --\n// this returns a best-effort mapping plus the raw first result so real key\n// names can be fixed after one live call.\nfunction parseResp(raw) {\n  if (raw && typeof raw.data === 'string') {\n    try { return JSON.parse(raw.data); } catch (e) { return raw; }\n  }\n  return raw;\n}\nconst resp = parseResp($json || {});\nconst rows = Array.isArray(resp.data) ? resp.data : [];\nconst lookalikes = rows.map(r => {\n  const a = r.attributes || {};\n  return {\n    company_id: r.id || null,\n    name: a.name || a.companyName || null,\n    similarity_score: (a.score != null ? a.score : (a.similarityScore != null ? a.similarityScore : null)),\n    rank: a.rank != null ? a.rank : null,\n    industry: a.industry || a.primaryIndustry || null,\n    revenue_range: a.revenueRange || a.revenue || null,\n    employee_range: a.employeeRange || a.employeeCount || null,\n    country: a.country || a.hqCountry || null\n  };\n});\nreturn [{ json: {\n  provider: 'zoominfo',\n  mode: 'find_similar',\n  total_results: lookalikes.length,\n  lookalikes_returned: lookalikes.length,\n  lookalikes,\n  credits_spent: 0,\n  raw_first_result: rows.length ? rows[0] : null,\n  note: lookalikes.length === 0\n    ? 'No lookalikes returned -- confirm the seed company_id/company_name actually matched a real ZoomInfo company, and that the credential has api:recommendations:read scope.'\n    : 'Field mapping above is best-effort/unconfirmed -- check raw_first_result for the real attribute names.'\n} }];"
+      },
+      "id": "cw-29-036",
+      "name": "Build find_similar response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        1540
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "cw-29-037",
+      "name": "Respond (find_similar)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        1540
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// mode: 'lookup' -- generic pass-through for ZoomInfo's GET\n// /gtm/data/v1/lookup/{fieldName} endpoint. Free, no credit cost, confirmed\n// working shape 2026-08-03 against fieldName=departments (see testing_plan.md).\n// Added 2026-08-04 so the controlled-value lookups that search_intent/\n// search_scoops/search_news depend on (intent-topics, scoop-types,\n// scoop-topics, news-categories) can be checked live from inside this same\n// test bench instead of a separate PowerShell/Postman call, before those 4\n// modes are trusted with real field values. Pass any valid fieldName --\n// e.g. intent-topics, scoop-types, scoop-topics, news-categories, departments.\nconst ctx = $json;\nreturn [{ json: {\n  ...ctx,\n  lookup_field: ctx.field\n} }];"
+      },
+      "id": "cw-29-038",
+      "name": "Build Lookup params",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        1760
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.zoominfo.com/gtm/data/v1/lookup/{{ $json.lookup_field }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "continueOnFail": true
+        }
+      },
+      "id": "cw-29-039",
+      "name": "ZoomInfo: Lookup Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        1760
+      ],
+      "continueOnFail": true,
+      "credentials": {
+        "oAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "ZoomInfo API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Shapes the lookup response. Confirmed shape 2026-08-03 (fieldName=departments\n// returned data[] of controlled string values). Kept generic/best-effort since\n// this mode is meant to reveal whatever shape a NEW fieldName actually returns\n// (e.g. intent-topics might return objects, not bare strings) -- raw_response\n// is always included so the real shape can be inspected regardless.\nfunction parseResp(raw) {\n  if (raw && typeof raw.data === 'string') {\n    try { return JSON.parse(raw.data); } catch (e) { return raw; }\n  }\n  return raw;\n}\nconst resp = parseResp($json || {});\nconst rows = Array.isArray(resp.data) ? resp.data : [];\nconst values = rows.map(r => {\n  if (r == null) return null;\n  if (typeof r === 'string') return r;\n  if (r.attributes && r.attributes.name != null) return r.attributes.name;\n  if (r.id != null) return r.id;\n  return r;\n});\nreturn [{ json: {\n  provider: 'zoominfo',\n  mode: 'lookup',\n  field: $json.lookup_field || null,\n  value_count: values.length,\n  values,\n  credits_spent: 0,\n  raw_response: resp\n} }];"
+      },
+      "id": "cw-29-040",
+      "name": "Build lookup response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        1760
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "cw-29-041",
+      "name": "Respond (lookup)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        1760
+      ]
     }
   ],
   "connections": {
     "Test webhook": {
-      "main": [[{ "node": "Parse test input", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Parse test input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Parse test input": {
-      "main": [[{ "node": "Route by mode", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Route by mode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Route by mode": {
       "main": [
-        [{ "node": "Build Search Companies body", "type": "main", "index": 0 }],
-        [{ "node": "Build Enrich Company body", "type": "main", "index": 0 }],
-        [{ "node": "Build Org Chart body", "type": "main", "index": 0 }],
-        [{ "node": "Build Enrich Contact body", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Build Search Companies body",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Enrich Company body",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Org Chart body",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Enrich Contact body",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Search Intent body",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Search Scoops body",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Search News body",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Find Similar params",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Lookup params",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Build Search Companies body": {
-      "main": [[{ "node": "ZoomInfo: Search Companies", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "ZoomInfo: Search Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "ZoomInfo: Search Companies": {
-      "main": [[{ "node": "Build discover response", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Build discover response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Build discover response": {
-      "main": [[{ "node": "Respond (discover)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Respond (discover)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Build Enrich Company body": {
-      "main": [[{ "node": "ZoomInfo: Enrich Company", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "ZoomInfo: Enrich Company",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "ZoomInfo: Enrich Company": {
-      "main": [[{ "node": "Extract matched companyId", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Extract matched companyId",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Extract matched companyId": {
-      "main": [[{ "node": "ZoomInfo: Enrich Corporate Hierarchy", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "ZoomInfo: Enrich Corporate Hierarchy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "ZoomInfo: Enrich Corporate Hierarchy": {
-      "main": [[{ "node": "Build enrich_company response", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Build enrich_company response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Build enrich_company response": {
-      "main": [[{ "node": "Respond (enrich_company)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Respond (enrich_company)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Build Org Chart body": {
-      "main": [[{ "node": "ZoomInfo: Enrich Org Chart", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "ZoomInfo: Enrich Org Chart",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "ZoomInfo: Enrich Org Chart": {
-      "main": [[{ "node": "Build org_chart response", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Build org_chart response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Build org_chart response": {
-      "main": [[{ "node": "Respond (org_chart)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Respond (org_chart)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Build Enrich Contact body": {
-      "main": [[{ "node": "ZoomInfo: Enrich Contact", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "ZoomInfo: Enrich Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "ZoomInfo: Enrich Contact": {
-      "main": [[{ "node": "Build enrich_contact response", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Build enrich_contact response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Build enrich_contact response": {
-      "main": [[{ "node": "Respond (enrich_contact)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Respond (enrich_contact)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Search Intent body": {
+      "main": [
+        [
+          {
+            "node": "ZoomInfo: Search Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ZoomInfo: Search Intent": {
+      "main": [
+        [
+          {
+            "node": "Build search_intent response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build search_intent response": {
+      "main": [
+        [
+          {
+            "node": "Respond (search_intent)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Search Scoops body": {
+      "main": [
+        [
+          {
+            "node": "ZoomInfo: Search Scoops",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ZoomInfo: Search Scoops": {
+      "main": [
+        [
+          {
+            "node": "Build search_scoops response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build search_scoops response": {
+      "main": [
+        [
+          {
+            "node": "Respond (search_scoops)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Search News body": {
+      "main": [
+        [
+          {
+            "node": "ZoomInfo: Search News",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ZoomInfo: Search News": {
+      "main": [
+        [
+          {
+            "node": "Build search_news response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build search_news response": {
+      "main": [
+        [
+          {
+            "node": "Respond (search_news)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Find Similar params": {
+      "main": [
+        [
+          {
+            "node": "ZoomInfo: Find Similar Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ZoomInfo: Find Similar Companies": {
+      "main": [
+        [
+          {
+            "node": "Build find_similar response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build find_similar response": {
+      "main": [
+        [
+          {
+            "node": "Respond (find_similar)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Lookup params": {
+      "main": [
+        [
+          {
+            "node": "ZoomInfo: Lookup Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ZoomInfo: Lookup Data": {
+      "main": [
+        [
+          {
+            "node": "Build lookup response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build lookup response": {
+      "main": [
+        [
+          {
+            "node": "Respond (lookup)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": false,
@@ -415,5 +1450,5 @@
     "executionOrder": "v1",
     "timezone": "America/Los_Angeles"
   },
-  "versionId": "cw-workflow-029"
+  "versionId": "cw-workflow-029-v3"
 }
