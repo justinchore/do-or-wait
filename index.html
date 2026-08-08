@@ -864,13 +864,13 @@
 
     <!-- Stage filter -->
     <div class="lead-filter">
-      <button class="lf-btn active" data-stage="all"       onclick="setLeadFilter('all')">All</button>
-      <button class="lf-btn"        data-stage="cold"      onclick="setLeadFilter('cold')">Cold</button>
-      <button class="lf-btn"        data-stage="contacted" onclick="setLeadFilter('contacted')">Contacted</button>
-      <button class="lf-btn"        data-stage="toured"    onclick="setLeadFilter('toured')">Toured</button>
-      <button class="lf-btn"        data-stage="proposal"  onclick="setLeadFilter('proposal')">Proposal</button>
-      <button class="lf-btn"        data-stage="followup"  id="followup-filter-btn" onclick="setLeadFilter('followup')">🔔 Follow-ups</button>
-      <button class="lf-btn"        data-stage="waitlist"  onclick="setLeadFilter('waitlist')">⏳ Waitlist</button>
+      <button class="lf-btn active" data-stage="all"         onclick="setLeadFilter('all')">All</button>
+      <button class="lf-btn"        data-stage="lead"        onclick="setLeadFilter('lead')">Lead</button>
+      <button class="lf-btn"        data-stage="tour"        onclick="setLeadFilter('tour')">Tour</button>
+      <button class="lf-btn"        data-stage="proposal"    onclick="setLeadFilter('proposal')">Proposal</button>
+      <button class="lf-btn"        data-stage="negotiation" onclick="setLeadFilter('negotiation')">Negotiation</button>
+      <button class="lf-btn"        data-stage="followup"    id="followup-filter-btn" onclick="setLeadFilter('followup')">🔔 Follow-ups</button>
+      <button class="lf-btn"        data-stage="waitlist"    onclick="setLeadFilter('waitlist')">⏳ Waitlist</button>
       <button class="lf-btn" id="hide-wl-btn" style="margin-left:auto" onclick="toggleHideWaitlist()">Hide ⏳</button>
     </div>
 
@@ -1417,13 +1417,39 @@
       </div>
       <div class="field">
         <label>Stage</label>
-        <select id="lf-stage">
-          <option value="cold">Cold</option>
-          <option value="contacted">Contacted</option>
-          <option value="toured">Toured</option>
+        <select id="lf-stage" onchange="onLeadStageChange()">
+          <option value="lead">Lead</option>
+          <option value="tour">Tour</option>
           <option value="proposal">Proposal</option>
-          <option value="won">Won ✓</option>
-          <option value="lost">Lost ✗</option>
+          <option value="negotiation">Negotiation</option>
+          <option value="executed">Executed ✓</option>
+          <option value="dead">Dead Deal ✗</option>
+        </select>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="field" id="lf-milestone-wrap">
+        <label>Milestone <span style="font-weight:400;color:var(--text2)">(Yardi substage)</span></label>
+        <select id="lf-milestone"></select>
+      </div>
+      <div class="field" id="lf-deadreason-wrap" style="display:none">
+        <label>Dead Deal Reason</label>
+        <select id="lf-dead-reason">
+          <option value="">— Select —</option>
+          <option>Bad Credit</option>
+          <option>Corporate Ban</option>
+          <option>Went to Competitor</option>
+          <option>Prohibited Goods</option>
+          <option>Other - see deal notes</option>
+          <option>No Longer Interested</option>
+          <option>Price too High</option>
+          <option>Space Requested Not Available</option>
+          <option>Rejected</option>
+          <option>Duplicate Lead/Deal</option>
+          <option>Wrong Deal Type</option>
+          <option>Certificate of Insurance (COI)</option>
+          <option>No Proposal Attached/Required</option>
+          <option>Junk / Scam Lead / Fake Bot Lead</option>
         </select>
       </div>
     </div>
@@ -2546,14 +2572,61 @@ const wlCollapsed = new Set();   // lead ids whose waitlist block is collapsed
 let expandedLeadIds = new Set();
 const addingLink = new Set();    // `${coll}:${id}` keys with an open "add email thread" form
 
+// Stage vocabulary matches Yardi Deal Manager's own Deal Stage field 1:1 (changed 2026-08-07 —
+// previously Do-or-Wait had its own cold/contacted/toured/proposal/won/lost taxonomy that had to be
+// manually translated to/from Yardi; replaced entirely so the Yardi sync never needs a translation layer).
+// Finer-grained Yardi substages live in lead.yardi_milestone (see YARDI_MILESTONES_BY_STAGE below);
+// Dead Deal's reason lives in lead.dead_reason (see DEAD_DEAL_REASONS below).
 const LEAD_STAGES = {
-  cold:      { label:'Cold',      color:'#6b7280' },
-  contacted: { label:'Contacted', color:'#2563eb' },
-  toured:    { label:'Toured',    color:'#7c3aed' },
-  proposal:  { label:'Proposal',  color:'#d97706' },
-  won:       { label:'Won ✓',     color:'#059669' },
-  lost:      { label:'Lost ✗',    color:'#dc2626' },
+  lead:        { label:'Lead',        color:'#6b7280' },
+  tour:        { label:'Tour',        color:'#7c3aed' },
+  proposal:    { label:'Proposal',    color:'#d97706' },
+  negotiation: { label:'Negotiation', color:'#2563eb' },
+  executed:    { label:'Executed ✓',  color:'#059669' },
+  dead:        { label:'Dead Deal ✗', color:'#dc2626' },
 };
+// Sales-actionable Yardi substages per stage (Admin/Accounting-only substages, e.g. "Voyager account
+// set up (Admin)", are set by other staff in Yardi itself — they're still valid values the pull sync can
+// write here, just not ones this dropdown needs to offer for Justin to pick by hand). Deliberately excludes
+// the move-out/termination substages (30/45 Day Move Out Notice, Move Out/Move In Form + Pictures, Cancelled
+// Signed Deal) — those belong to Yardi's Termination/move-out deal-type path, not the new-lease pipeline
+// this taxonomy covers.
+const YARDI_MILESTONES_BY_STAGE = {
+  lead:        ['Lead Assigned','Lead Contacted (Sales)','Lead Follow Up','Waitlist (Sales)','Cold Lead (Sales)'],
+  tour:        ['Tour Scheduled (Sales)','Credit App Sent to Lead','Credit App Submitted (Sales)','Credit App Reviewed (Admin)'],
+  proposal:    ['Proposal Submitted (Sales)','Proposal Agreement Drafted (Submitted to Sales)'],
+  negotiation: ['Signed Proposal Uploaded (Sales)','Awaiting Payment (Admin)'],
+  executed:    ['Signed Proposal Approved (Admin)','Voyager Account Set Up (Admin)','Payment Cleared Move in Allowed (Accounting)','Voyager Account Updated (Admin)','Security Deposit Return'],
+  dead:        [],
+};
+const DEAD_DEAL_REASONS = [
+  'Bad Credit','Corporate Ban','Went to Competitor','Prohibited Goods','Other - see deal notes',
+  'No Longer Interested','Price too High','Space Requested Not Available','Rejected',
+  'Duplicate Lead/Deal','Wrong Deal Type','Certificate of Insurance (COI)',
+  'No Proposal Attached/Required','Junk / Scam Lead / Fake Bot Lead',
+];
+function onLeadStageChange() {
+  const stage = document.getElementById('lf-stage').value;
+  const msel = document.getElementById('lf-milestone');
+  const opts = YARDI_MILESTONES_BY_STAGE[stage] || [];
+  const prev = msel.value;
+  msel.innerHTML = '<option value="">— none yet —</option>' + opts.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+  if (opts.includes(prev)) msel.value = prev;
+  const drWrap = document.getElementById('lf-deadreason-wrap');
+  if (drWrap) drWrap.style.display = stage === 'dead' ? '' : 'none';
+}
+// followupBucket() maps the new, coarser stage field back onto the follow-up email engine's own tone
+// buckets (cold/contacted/toured/proposal/negotiation) — preserves the pre-2026-08-07 distinction between
+// a genuinely-cold Lead and one that's already been spoken to, which the Yardi stage merge would otherwise
+// collapse away, purely off yardi_milestone rather than a separate stage value.
+function followupBucket(lead) {
+  const stage = lead.stage || 'lead';
+  if (stage === 'tour') return 'toured';
+  if (stage !== 'lead') return stage; // proposal, negotiation (executed/dead are closed, never reach here)
+  const m = lead.yardi_milestone || '';
+  if (/lead contacted|follow up/i.test(m)) return 'contacted';
+  return 'cold'; // Lead Assigned, Waitlist, Cold Lead, or no milestone set yet
+}
 const LEAD_SEGS = {
   importer:  { label:'🚢 Importer',  bg:'#f5f3ff', color:'#6d28d9' },
   '3pl':     { label:'📦 3PL',       bg:'#eff6ff', color:'#1d4ed8' },
@@ -2623,7 +2696,7 @@ function isFollowupSnoozed(lead) {
 function isFollowupDue(lead) {
   if (lead.archived) return false;
   if (lead.wl_on) return false;   // waitlist leads aren't chased — you watch for matching space instead
-  if (['won', 'lost'].includes(lead.stage || 'cold')) return false;
+  if (['executed', 'dead'].includes(lead.stage || 'lead')) return false;
   if (lead.seq_status === 'replied') return false;
   if (isFollowupSnoozed(lead)) return false;
   const { bizDays, dir } = contactInfo(lead);
@@ -2648,9 +2721,9 @@ function leadRecentSort(a, b) {
   if (av !== bv) return av - bv;
   return (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0);
 }
-const LEAD_STAGE_ORDER = ['cold', 'contacted', 'toured', 'proposal'];
+const LEAD_STAGE_ORDER = ['lead', 'tour', 'proposal', 'negotiation', 'executed', 'dead'];
 function leadStageSort(a, b) {
-  const ai = LEAD_STAGE_ORDER.indexOf(a.stage || 'cold'), bi = LEAD_STAGE_ORDER.indexOf(b.stage || 'cold');
+  const ai = LEAD_STAGE_ORDER.indexOf(a.stage || 'lead'), bi = LEAD_STAGE_ORDER.indexOf(b.stage || 'lead');
   if (ai !== bi) return ai - bi;
   return (a.company || '').localeCompare(b.company || '');
 }
@@ -2716,6 +2789,10 @@ const FOLLOWUP_BY_STAGE = {
   proposal:  [{ label: 'Proposal nudge', build: l => ({ subject: `Keeping ${fuSpace(l)} on the table`,
       body: `${fuHi(l)}\n\nWanted to keep this moving. If the numbers are the sticking point, remember ${FU_TCO}. A longer term sharpens the rate further too. Glad to rework the proposal so it lands.\n\nWhat would need to be true for this to be a yes?${FU_SIGN}` }) }],
 };
+// negotiation is new (2026-08-07, part of the Yardi stage-taxonomy replacement) — no dedicated copy
+// written for it yet, so it aliases the Proposal nudge template for now. Flag for Justin to review/write
+// negotiation-specific copy once real leads start reaching this stage.
+FOLLOWUP_BY_STAGE.negotiation = FOLLOWUP_BY_STAGE.proposal;
 // Random value — replaced twice now (2026-07-20). First pass was a single
 // value-prop line (all-inclusive/flex/fast/segment hook), but Justin found it
 // too thin, no real information. Second pass: real, anonymized Cubework
@@ -2755,7 +2832,7 @@ const FOLLOWUP_BREAKUP = { label: 'Break-up', build: l => ({ subject: `One last 
   body: `${fuHi(l)}\n\nDidn't want to stop reaching out without one more check in. If your plans ever call for space, ours is flexible: no long commitment required, and we can move you in within a day or two.\n\nFeel free to reach out whenever the timing's right, whether that's now or down the road.${FU_SIGN}` }) };
 
 function followupMsgsFor(lead){
-  const base = FOLLOWUP_BY_STAGE[lead.stage || 'cold'] || FOLLOWUP_BY_STAGE.cold;
+  const base = FOLLOWUP_BY_STAGE[followupBucket(lead)] || FOLLOWUP_BY_STAGE.cold;
   return base.concat([FOLLOWUP_NUDGE, FOLLOWUP_VALUE, FOLLOWUP_BREAKUP]);
 }
 function followupMsgFor(lead) {
@@ -2783,13 +2860,13 @@ function leadMatchesSearch(l, q) {
 }
 
 function renderLeadsSection() {
-  const closed  = ['won','lost'];
-  const active  = leads.filter(l => !l.archived && !closed.includes(l.stage || 'cold'));
-  let wonlost = leads.filter(l => l.archived || closed.includes(l.stage || 'cold'));
+  const closed  = ['executed','dead'];
+  const active  = leads.filter(l => !l.archived && !closed.includes(l.stage || 'lead'));
+  let wonlost = leads.filter(l => l.archived || closed.includes(l.stage || 'lead'));
   let filtered = leadFilter === 'all' ? active
     : leadFilter === 'waitlist' ? active.filter(l => l.wl_on)
     : leadFilter === 'followup' ? active.filter(isFollowupDue)
-    : active.filter(l => (l.stage||'cold') === leadFilter);
+    : active.filter(l => (l.stage||'lead') === leadFilter);
   if (hideWaitlist && leadFilter !== 'waitlist') filtered = filtered.filter(l => !l.wl_on);
 
   const searchQ = leadSearch.trim().toLowerCase();
@@ -2981,15 +3058,15 @@ function wlRecheck(leadId, ev) {
 //  SPACE MATCHES — "reconnect a dead lead when their old ask opens up"
 // ═══════════════════════════════════════════════════════════════
 // Pain point (2026-07-03): leads that go cold get archived (or marked wl_on /
-// stage 'lost') and drop out of the active board — but plenty of them wanted a
+// stage 'dead') and drop out of the active board — but plenty of them wanted a
 // real space before they fizzled. The existing Waitlist block (wlMatches) only
 // checks for a match when you happen to open that lead's card, and only if you
 // explicitly set wl_locations. This is the proactive version: any lead in the
-// "dead pool" (archived, wl_on, or stage==='lost') gets watched automatically,
+// "dead pool" (archived, wl_on, or stage==='dead') gets watched automatically,
 // falling back to whatever's already on record (unit_sf/sqft) when no explicit
 // waitlist criteria were configured — no extra flagging step required.
 function isDeadPoolLead(lead) {
-  return !!(lead.archived || lead.wl_on || (lead.stage || 'cold') === 'lost');
+  return !!(lead.archived || lead.wl_on || (lead.stage || 'lead') === 'dead');
 }
 
 function isSpaceMatchSnoozed(lead) {
@@ -3126,7 +3203,7 @@ let fuqStoryOpen = true; // show the lead's full details + update history by def
                           // not just the draft itself. Persists across cards in a session.
 
 function dailyQueueItems() {
-  const active = leads.filter(l => !l.archived && !['won', 'lost'].includes(l.stage || 'cold'));
+  const active = leads.filter(l => !l.archived && !['executed', 'dead'].includes(l.stage || 'lead'));
   const followupItems = active.filter(isFollowupDue).map(lead => ({
     lead, kind: 'followup',
     draft: (lead.followup_draft && lead.followup_draft.body) ? lead.followup_draft : followupMsgFor(lead)
@@ -3317,7 +3394,7 @@ function renderLeadCard(lead) {
   const status  = currentStatus(lead);
   const isOpen  = expandedLeadIds.has(lead.id);
   const last    = lead.entries.at(-1);
-  const stage   = LEAD_STAGES[lead.stage || 'cold'] || LEAD_STAGES.cold;
+  const stage   = LEAD_STAGES[lead.stage || 'lead'] || LEAD_STAGES.lead;
   const seg     = LEAD_SEGS[lead.segment] || LEAD_SEGS.other;
   const allRes  = allDone(lead);
   const noteCount = lead.entries.reduce((n,e) => n + (e.notes?.length||0), 0);
@@ -3340,7 +3417,7 @@ function renderLeadCard(lead) {
 
   // Do/Wait chip — the two-column board (its own headers explained Do/Wait) was replaced
   // 2026-07-14 by one flat, sorted list, so that meaning now has to live on the row itself.
-  const statusChip = (!lead.archived && !['won','lost'].includes(lead.stage||'cold'))
+  const statusChip = (!lead.archived && !['executed','dead'].includes(lead.stage||'lead'))
     ? `<span class="badge" style="background:${status==='do' ? 'var(--do-bg)' : 'var(--wait-bg)'};color:${status==='do' ? 'var(--do)' : 'var(--wait)'};border:1px solid ${status==='do' ? 'var(--do-mid)' : 'var(--wait-mid)'}">${status==='do' ? '⚡ Do' : '⏳ Wait'}</span>`
     : '';
 
@@ -3491,7 +3568,7 @@ async function generateFollowup(leadId, e) {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         leadId, company: lead.company || '', first_name: lead.first_name || '', contact: lead.contact || '',
-        segment: lead.segment || '', stage: lead.stage || 'cold', unit: lead.unit || '', unit_sf: lead.unit_sf || '',
+        segment: lead.segment || '', stage: lead.stage || 'lead', unit: lead.unit || '', unit_sf: lead.unit_sf || '',
         conversationId, notesText
       })
     });
@@ -3949,7 +4026,13 @@ function renderLeadDetails(lead) {
     lead.next_due_date && ['📅', 'Next send', fmtDate(lead.next_due_date)],
   ].filter(Boolean);
 
-  const allRows = [...contactRows, ...needRows, ...unitRows, ...seqRows];
+  const yardiRows = [
+    lead.yardi_milestone && ['🏷️', 'Milestone', lead.yardi_milestone],
+    (lead.stage === 'dead' && lead.dead_reason) && ['✗', 'Dead reason', lead.dead_reason],
+    lead.yardi_deal_id && ['🔗', 'Yardi', `<a href="https://apps.commercialcafe.com/dealmanager/content/#/app/deal/${esc(lead.yardi_deal_id)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">View deal in Yardi ↗</a>`],
+  ].filter(Boolean);
+
+  const allRows = [...contactRows, ...needRows, ...unitRows, ...seqRows, ...yardiRows];
   const badges  = [
     lead.is_importer && `<span class="badge" style="background:#f5f3ff;color:#6d28d9;border:1px solid #6d28d920">🚢 Importer</span>`,
   ].filter(Boolean).join(' ');
@@ -3960,7 +4043,7 @@ function renderLeadDetails(lead) {
 
   return `<div class="lead-detail-panel">
     ${badges ? `<div style="margin-bottom:6px;">${badges}</div>` : ''}
-    ${allRows.map(([icon,k,v]) => `<div class="lead-detail-row"><span class="lead-detail-key">${icon} ${k}</span><span class="lead-detail-val">${typeof v === 'string' && v.includes('&lt;') ? v : esc(String(v))}</span></div>`).join('')}
+    ${allRows.map(([icon,k,v]) => `<div class="lead-detail-row"><span class="lead-detail-key">${icon} ${k}</span><span class="lead-detail-val">${typeof v === 'string' && (v.includes('&lt;') || v.includes('<a ')) ? v : esc(String(v))}</span></div>`).join('')}
   </div>`;
 }
 
@@ -4359,7 +4442,8 @@ function _clearLeadModal() {
    'lf-unit','lf-unit-sf','lf-rate','lf-included','lf-alt']
     .forEach(id => { const el = document.getElementById(id); if (el) { el.value = ''; el.classList.remove('err'); } });
   document.getElementById('lf-segment').value   = 'importer';
-  document.getElementById('lf-stage').value     = 'cold';
+  document.getElementById('lf-stage').value     = 'lead';
+  onLeadStageChange(); // repopulates lf-milestone for 'lead' stage + hides the dead-reason field
   document.getElementById('lf-dock').checked    = false;
   document.getElementById('lf-is-importer').checked = false;
   document.getElementById('lf-wl-on').checked   = false;
@@ -4389,7 +4473,11 @@ function openEditLeadDetails(id, e) {
   document.getElementById('lf-contact').value            = lead.contact     || '';
   document.getElementById('lf-phone').value              = lead.phone       || '';
   document.getElementById('lf-segment').value            = lead.segment     || 'other';
-  document.getElementById('lf-stage').value              = lead.stage       || 'cold';
+  document.getElementById('lf-stage').value              = lead.stage       || 'lead';
+  onLeadStageChange(); // repopulates lf-milestone options for this lead's stage, toggles dead-reason field
+  document.getElementById('lf-milestone').value           = lead.yardi_milestone || '';
+  const drSel = document.getElementById('lf-dead-reason');
+  if (drSel) drSel.value = lead.dead_reason || '';
   document.getElementById('lf-location').value           = lead.location    || '';
   document.getElementById('lf-sqft').value               = lead.sqft        || '';
   document.getElementById('lf-lease').value              = lead.leaseLength || '';
@@ -4426,6 +4514,8 @@ async function saveLeadDetails() {
     phone:          document.getElementById('lf-phone').value.trim(),
     segment:        document.getElementById('lf-segment').value,
     stage:          document.getElementById('lf-stage').value,
+    yardi_milestone: document.getElementById('lf-milestone').value || '',
+    dead_reason:    document.getElementById('lf-stage').value === 'dead' ? (document.getElementById('lf-dead-reason').value || '') : '',
     location:       document.getElementById('lf-location').value.trim(),
     sqft:           document.getElementById('lf-sqft').value.trim(),
     leaseLength:    document.getElementById('lf-lease').value.trim(),
@@ -7203,7 +7293,7 @@ async function promotePOToLead(id, e){
   const lead = {
     id: leadId, archived: false, createdAt: new Date().toISOString(), seq_status: 'active',
     company: r.company||'', contact: r.contact||null, location: r.location||null,
-    sqft: (r.sqft!=null ? r.sqft : null), stage: 'contacted',
+    sqft: (r.sqft!=null ? r.sqft : null), stage: 'lead', yardi_milestone: 'Lead Contacted (Sales)', dead_reason: '',
     entries: [{ id:'e'+Date.now(), type:'wait', text: summary, done:false, notes:[], createdAt:new Date().toISOString(), kind:'note', dir:'out' }]
   };
   try {
@@ -7703,7 +7793,7 @@ async function promoteNPToLead(id, e){
   const lead = {
     id: leadId, archived: false, createdAt: new Date().toISOString(), seq_status: 'active',
     company: r.name||'', contact: r.contact_name||null, email: r.contact_email||null, phone: r.phone||r.contact_phone||null,
-    location: r.location||null, stage: 'cold',
+    location: r.location||null, stage: 'lead', yardi_milestone: 'Lead Assigned', dead_reason: '',
     entries: [{ id:'e'+Date.now(), type:'wait', text: summary, done:false, notes:[], createdAt:new Date().toISOString(), kind:'note', dir:'out' }]
   };
   try {
@@ -7938,6 +8028,7 @@ window.closeFuturePlanModal = closeFuturePlanModal;
 window.saveFuturePlan       = saveFuturePlan;
 window.removeFuturePlan     = removeFuturePlan;
 window.openNewLead         = openNewLead;
+window.onLeadStageChange   = onLeadStageChange;
 window.openEditLeadDetails = openEditLeadDetails;
 window.openAddLeadEntry    = openAddLeadEntry;
 window.closeLeadModal      = closeLeadModal;
