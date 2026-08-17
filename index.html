@@ -1577,6 +1577,44 @@
   </div>
 </div>
 
+<!-- ✗ Cancelled tour — always asks Dead-vs-back-to-Lead, never guesses (added 2026-08-17) -->
+<div class="overlay" id="tour-cancel-overlay" onclick="tourCancelOverlayClick(event)">
+  <div class="modal" style="max-width:360px">
+    <h3>Cancel Tour</h3>
+    <p style="font-size:13px;color:var(--text2);margin:0 0 14px;">What happened with <span id="tc-lead-name" style="font-weight:600;color:var(--text)"></span>?</p>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:4px;">
+      <button class="btn dark" style="width:100%" onclick="chooseTourCancelOutcome('dead')">✗ Mark Dead Deal</button>
+      <button class="btn" style="width:100%" onclick="chooseTourCancelOutcome('lead')">↩ Back to Lead — still possible</button>
+    </div>
+    <div id="tc-reason-wrap" style="display:none;margin-top:10px;">
+      <div class="field">
+        <label>Dead Deal Reason</label>
+        <select id="tc-dead-reason">
+          <option value="">— Select —</option>
+          <option>Bad Credit</option>
+          <option>Corporate Ban</option>
+          <option>Went to Competitor</option>
+          <option>Prohibited Goods</option>
+          <option>Other - see deal notes</option>
+          <option>No Longer Interested</option>
+          <option>Price too High</option>
+          <option>Space Requested Not Available</option>
+          <option>Rejected</option>
+          <option>Duplicate Lead/Deal</option>
+          <option>Wrong Deal Type</option>
+          <option>Certificate of Insurance (COI)</option>
+          <option>No Proposal Attached/Required</option>
+          <option>Junk / Scam Lead / Fake Bot Lead</option>
+        </select>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" onclick="closeTourCancel()">Cancel</button>
+        <button class="btn dark" onclick="confirmTourCancel()">Confirm</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Daily follow-up gate — shown once per page load (added 2026-07-10) when
      anything needs a decision (follow-ups due + space matches). Deliberately
      NOT a banner: banners get tuned out after the first ignore, an interrupt
@@ -2606,6 +2644,7 @@ document.addEventListener('keydown', e => {
 let leads = [];
 let unsubLeads = null;
 let editLeadId   = null;
+let leadModalPurpose = null;   // 'reschedule' when the edit modal was opened via 🔁 Reschedule — makes saveLeadDetails() auto-log the date change
 let leadFilter   = 'all';
 let leadSearch   = '';
 let showWonLost  = false;
@@ -3574,6 +3613,7 @@ function renderLeadCard(lead) {
     <div class="thread">
       ${lead.pending_email ? renderEmailPreview(lead) : ''}
       ${lead.followup_draft ? renderFollowupDraftBlock(lead) : (due ? renderFollowupBlock(lead) : '')}
+      ${renderTourActionsBlock(lead)}
       ${renderLeadDetails(lead)}
       ${renderEmailLinks(lead, 'leads')}
       ${lead.wl_on ? renderWaitlistBlock(lead) : (isDeadPoolLead(lead) ? renderSpaceMatchBlock(lead) : '')}
@@ -4369,6 +4409,107 @@ async function logTouch(leadId, kind, e) {
   if (kind === 'text') window.location.href = `sms:${phone}`;
 }
 
+// ── Tour actions (added 2026-08-17) ─────────────────────────────
+// Three quick actions on a tour-stage lead's card, next to the 📅 Tour line:
+// ✅ Toured, 🔁 Reschedule, ✗ Cancelled. Mirrors logTouch's one-tap-then-detail-later
+// pattern rather than opening a full form for the common case.
+
+// ✅ Toured — logs it happened and clears the date off the Upcoming Tours strip.
+// Deliberately does NOT advance stage/milestone — Yardi's own tour-stage flow still has
+// steps after touring (credit app sent/submitted/reviewed) before it becomes a Proposal,
+// and guessing which one happened would just be wrong more often than it's right.
+async function markTourDone(id, e) {
+  if (e) e.stopPropagation();
+  const lead = leads.find(l => l.id === id);
+  if (!lead) return;
+  const entry = { id: 'e' + Date.now(), type: 'wait', kind: 'met', dir: 'out', text: '🤝 Toured', done: false, notes: [], createdAt: new Date().toISOString() };
+  lead.entries = [...(lead.entries || []), entry];
+  lead.tour_date = null;
+  lead.tour_time = null;
+  lead.updatedAt = new Date().toISOString();
+  expandedLeadIds.add(id);   // keep it open so the new entry's 📝 Note is one tap away
+  renderLeadsSection();
+  await persistItem(lead, 'leads');
+}
+
+// 🔁 Reschedule — shortcut into the same Edit Details modal, focused on the tour date/time
+// fields. saveLeadDetails() auto-logs the before/after as a thread entry when it sees this
+// modal was opened for that purpose, so a reschedule never happens silently.
+function openRescheduleTour(id, e) {
+  openEditLeadDetails(id, e, { purpose: 'reschedule' });
+}
+
+// ✗ Cancelled — always asks Dead-vs-back-to-Lead (never guesses); Dead also asks which of
+// the 13 Yardi reasons. Small dedicated overlay rather than a native prompt() since the
+// reason has to be one of a fixed set, not free text.
+let tourCancelLeadId = null;
+function openTourCancel(id, e) {
+  if (e) e.stopPropagation();
+  const lead = leads.find(l => l.id === id);
+  if (!lead) return;
+  tourCancelLeadId = id;
+  document.getElementById('tc-lead-name').textContent = lead.company || '';
+  document.getElementById('tc-reason-wrap').style.display = 'none';
+  document.getElementById('tc-dead-reason').value = '';
+  document.getElementById('tour-cancel-overlay').classList.add('open');
+}
+function closeTourCancel() {
+  document.getElementById('tour-cancel-overlay').classList.remove('open');
+  tourCancelLeadId = null;
+}
+function tourCancelOverlayClick(e) {
+  if (e.target === document.getElementById('tour-cancel-overlay')) closeTourCancel();
+}
+function chooseTourCancelOutcome(outcome) {
+  if (outcome === 'lead') { finalizeTourCancel('lead'); return; }
+  document.getElementById('tc-reason-wrap').style.display = 'block';
+  setTimeout(() => document.getElementById('tc-dead-reason').focus(), 80);
+}
+function confirmTourCancel() {
+  finalizeTourCancel('dead', document.getElementById('tc-dead-reason').value);
+}
+async function finalizeTourCancel(outcome, reason) {
+  const id = tourCancelLeadId;
+  const lead = leads.find(l => l.id === id);
+  if (!lead) { closeTourCancel(); return; }
+  let entryText;
+  if (outcome === 'dead') {
+    lead.stage = 'dead';
+    lead.dead_reason = reason || 'Other - see deal notes';
+    lead.yardi_milestone = '';
+    entryText = `✗ Tour cancelled — marked Dead Deal (${lead.dead_reason}).`;
+  } else {
+    lead.stage = 'lead';
+    lead.yardi_milestone = 'Lead Follow Up';
+    entryText = '✗ Tour cancelled — moved back to Lead.';
+  }
+  lead.tour_date = null;
+  lead.tour_time = null;
+  lead.entries = [...(lead.entries || []), {
+    id: 'e' + Date.now(), type: 'wait', kind: 'note', dir: 'out', done: false, notes: [],
+    text: entryText, createdAt: new Date().toISOString()
+  }];
+  lead.updatedAt = new Date().toISOString();
+  closeTourCancel();
+  renderLeadsSection();
+  await persistItem(lead, 'leads');
+}
+
+function renderTourActionsBlock(lead) {
+  if (lead.archived || (lead.stage || 'lead') !== 'tour') return '';
+  const when = lead.tour_date
+    ? `${fmtDate(lead.tour_date)}${lead.tour_time ? ' · ' + fmtTime12(lead.tour_time) : ''}`
+    : 'no date set yet';
+  return `<div style="margin:8px 0;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+    <span style="font-size:12px;color:var(--text2);">📅 Tour: <b style="color:var(--text)">${esc(when)}</b></span>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+      <button class="btn sm" onclick="markTourDone('${lead.id}',event)">✅ Toured</button>
+      <button class="btn sm" onclick="openRescheduleTour('${lead.id}',event)">🔁 Reschedule</button>
+      <button class="btn sm" onclick="openTourCancel('${lead.id}',event)">✗ Cancelled</button>
+    </div>
+  </div>`;
+}
+
 // ── Claude tooling: log a categorized lead update from a chat assistant ──
 // These run on the live page (browser-side Firestore), driven by Claude in Chrome.
 // `kind` follows the app's update categories; `note` is internal (NOT counted as
@@ -4553,19 +4694,21 @@ function _clearLeadModal() {
 
 function openNewLead() {
   editLeadId = null;
+  leadModalPurpose = null;
   _clearLeadModal();
   document.getElementById('lm-title').textContent = 'New Lead';
   document.getElementById('lead-overlay').classList.add('open');
   setTimeout(() => document.getElementById('lf-company').focus(), 180);
 }
 
-function openEditLeadDetails(id, e) {
+function openEditLeadDetails(id, e, opts) {
   e.stopPropagation();
   const lead = leads.find(l => l.id === id);
   if (!lead) return;
   editLeadId = id;
+  leadModalPurpose = (opts && opts.purpose) || null;
   _clearLeadModal();
-  document.getElementById('lm-title').textContent        = 'Edit Details';
+  document.getElementById('lm-title').textContent        = leadModalPurpose === 'reschedule' ? 'Reschedule Tour' : 'Edit Details';
   document.getElementById('lf-company').value            = lead.company     || '';
   document.getElementById('lf-firstname').value          = lead.first_name  || '';
   document.getElementById('lf-email').value              = lead.email        || '';
@@ -4595,7 +4738,8 @@ function openEditLeadDetails(id, e) {
   document.getElementById('lf-wl-sfmin').value           = lead.wl_sf_min ?? '';
   document.getElementById('lf-wl-sfmax').value           = lead.wl_sf_max ?? '';
   document.getElementById('lead-overlay').classList.add('open');
-  setTimeout(() => document.getElementById('lf-company').focus(), 180);
+  const focusId = leadModalPurpose === 'reschedule' ? 'lf-tour-date' : 'lf-company';
+  setTimeout(() => document.getElementById(focusId).focus(), 180);
 }
 
 async function saveLeadDetails() {
@@ -4646,6 +4790,22 @@ async function saveLeadDetails() {
     updatedAt:      new Date().toISOString(),
   };
 
+  // Reschedule shortcut (🔁 button on the tour-actions block) auto-logs the date change
+  // as a thread entry so it's not a silent edit — same idea as logTouch's quick-log entries.
+  if (leadModalPurpose === 'reschedule' && existing) {
+    const oldD = existing.tour_date || null, oldT = existing.tour_time || null;
+    const newD = lead.tour_date || null, newT = lead.tour_time || null;
+    if (newD !== oldD || newT !== oldT) {
+      const fmtWhen = (d, t) => d ? `${fmtDate(d)}${t ? ' ' + fmtTime12(t) : ''}` : 'no date set';
+      lead.entries = [...(lead.entries || []), {
+        id: 'e' + Date.now(), type: 'wait', kind: 'note', dir: 'out', done: false, notes: [],
+        text: `🔁 Tour rescheduled: ${fmtWhen(oldD, oldT)} → ${fmtWhen(newD, newT)}`,
+        createdAt: new Date().toISOString()
+      }];
+    }
+  }
+  leadModalPurpose = null;
+
   closeLeadModal();
   await persistItem(lead, 'leads');
   if (!editLeadId) expandedLeadIds.add(lead.id);
@@ -4656,7 +4816,7 @@ async function deleteLead(id) {
   try { await setDoc(doc(db, 'leads', id), { _deleted: true, id }); } catch(e) { console.error(e); }
 }
 
-function closeLeadModal() { document.getElementById('lead-overlay').classList.remove('open'); editLeadId = null; }
+function closeLeadModal() { document.getElementById('lead-overlay').classList.remove('open'); editLeadId = null; leadModalPurpose = null; }
 function leadOverlayClick(e) { if (e.target === document.getElementById('lead-overlay')) closeLeadModal(); }
 
 // ── Tab switching ────────────────────────────────────────────
@@ -8140,6 +8300,13 @@ window.saveLeadDetails     = saveLeadDetails;
 window.deleteLead          = deleteLead;
 window.toggleLeadCard      = toggleLeadCard;
 window.jumpToTourLead      = jumpToTourLead;
+window.markTourDone        = markTourDone;
+window.openRescheduleTour  = openRescheduleTour;
+window.openTourCancel      = openTourCancel;
+window.closeTourCancel     = closeTourCancel;
+window.tourCancelOverlayClick = tourCancelOverlayClick;
+window.chooseTourCancelOutcome = chooseTourCancelOutcome;
+window.confirmTourCancel   = confirmTourCancel;
 window.logTouch            = logTouch;
 window.claudeFindLeads     = claudeFindLeads;
 window.claudeLogLeadUpdate = claudeLogLeadUpdate;
