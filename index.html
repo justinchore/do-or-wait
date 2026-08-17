@@ -405,6 +405,26 @@
     .chip-btn.add { color:var(--do); font-weight:700; font-size:15px; }
     .chip-btn.edit { font-size:12px; }
 
+    /* ── Upcoming Tours strip (added 2026-08-17) — horizontally scrollable, one
+       card per tour-stage lead with a tour_date set. Purple border matches
+       LEAD_STAGES.tour's color; today's tours pick up the amber --do accent,
+       past-but-unlogged ones go red so a missed tour doesn't quietly slide by. ── */
+    .tour-strip { display:flex; gap:10px; overflow-x:auto; padding-bottom:4px; -webkit-overflow-scrolling:touch; }
+    .tour-card {
+      flex:0 0 auto; display:flex; align-items:center; gap:10px; min-width:190px;
+      background:var(--surface); border:1.5px solid var(--border); border-left:3px solid #7c3aed;
+      border-radius:14px; padding:8px 14px 8px 12px; cursor:pointer; transition:border-color .15s;
+    }
+    .tour-card:hover { border-color:#9ca3af; }
+    .tour-card.today { border-left-color:var(--do); background:var(--do-bg); }
+    .tour-card.overdue { border-left-color:#dc2626; }
+    .tour-date-badge { display:flex; flex-direction:column; align-items:center; line-height:1.15; min-width:34px; }
+    .tour-date-badge .dow { font-size:9px; font-weight:700; text-transform:uppercase; color:var(--text2); }
+    .tour-date-badge .dom { font-size:16px; font-weight:800; color:var(--text); }
+    .tour-info { display:flex; flex-direction:column; gap:1px; overflow:hidden; }
+    .tour-info .tour-company { font-weight:600; font-size:13px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:180px; }
+    .tour-info .tour-meta { font-size:11px; color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:180px; }
+
     /* ── Email approval UI ──────────────────── */
     .email-preview {
       border: 2px solid #2563eb; border-radius: 10px;
@@ -882,6 +902,13 @@
       <button class="lf-btn sort-btn"        data-sort="az"        onclick="setLeadSort('az')">🔤 A–Z</button>
       <button class="lf-btn sort-btn"        data-sort="stage"     onclick="setLeadSort('stage')">📶 Stage</button>
       <span class="col-badge" id="lead-total-badge" style="margin-left:auto">0</span>
+    </div>
+
+    <!-- Upcoming Tours strip (added 2026-08-17) — tour-stage leads with a tour_date set,
+         sorted soonest first. Click a card to jump to & expand that lead. -->
+    <div id="upcoming-tours-wrap" style="display:none; max-width:1100px; margin:0 auto; padding:12px 16px 0; width:100%;">
+      <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--text2); margin-bottom:8px;">📅 Upcoming Tours</div>
+      <div id="upcoming-tours-list" class="tour-strip"></div>
     </div>
 
     <!-- New leads strip (compact chips) -->
@@ -1453,6 +1480,16 @@
         </select>
       </div>
     </div>
+    <div id="lf-tour-wrap" style="display:none;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="field">
+        <label>📅 Tour Date</label>
+        <input id="lf-tour-date" type="date" />
+      </div>
+      <div class="field">
+        <label>Tour Time</label>
+        <input id="lf-tour-time" type="time" />
+      </div>
+    </div>
 
     <div class="modal-section">Space Requirements</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
@@ -1889,6 +1926,15 @@ function fmtDate(iso) {
 }
 function fmtDur(s) { return `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`; }
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+// "HH:MM" (24h, from an <input type="time">) → "2:30 PM"
+function fmtTime12(t) {
+  const m = /^(\d{1,2}):(\d{2})/.exec(t || '');
+  if (!m) return '';
+  let h = Number(m[1]); const min = m[2];
+  const ap = h >= 12 ? 'PM' : 'AM';
+  h = h % 12; if (h === 0) h = 12;
+  return `${h}:${min} ${ap}`;
+}
 
 // ═══════════════════════════════════════════════════════════════
 //  ORDERING / DRAG-AND-DROP
@@ -2614,6 +2660,8 @@ function onLeadStageChange() {
   if (opts.includes(prev)) msel.value = prev;
   const drWrap = document.getElementById('lf-deadreason-wrap');
   if (drWrap) drWrap.style.display = stage === 'dead' ? '' : 'none';
+  const trWrap = document.getElementById('lf-tour-wrap');
+  if (trWrap) trWrap.style.display = stage === 'tour' ? 'grid' : 'none';
 }
 // followupBucket() maps the new, coarser stage field back onto the follow-up email engine's own tone
 // buckets (cold/contacted/toured/proposal/negotiation) — preserves the pre-2026-08-07 distinction between
@@ -2851,6 +2899,55 @@ unsubLeads = liveSnapshot(collection(db, 'leads'), snap => {
   if (!_leadsFirstSnapshotSeen) { _leadsFirstSnapshotSeen = true; checkFollowupGate(); }
 });
 
+// ── Upcoming Tours strip (added 2026-08-17) ────────────────────
+// Reads tour_date/tour_time directly — deliberately NOT next_due_date, which is
+// already overloaded by the (dead) email sequencer's "next send" date and by
+// follow-up scheduling. Shows every non-archived tour-stage lead that has a
+// tour_date set, soonest first; leads without one just don't show up here yet.
+function renderUpcomingToursStrip() {
+  const wrap = document.getElementById('upcoming-tours-wrap');
+  const list = document.getElementById('upcoming-tours-list');
+  if (!wrap || !list) return;
+  const tours = leads
+    .filter(l => !l.archived && (l.stage || 'lead') === 'tour' && l.tour_date)
+    .sort((a, b) => `${a.tour_date} ${a.tour_time || '00:00'}`.localeCompare(`${b.tour_date} ${b.tour_time || '00:00'}`));
+  wrap.style.display = tours.length ? 'block' : 'none';
+  if (!tours.length) { list.innerHTML = ''; return; }
+  const todayStr = new Date().toISOString().slice(0, 10);
+  list.innerHTML = tours.map(l => {
+    const d = new Date(l.tour_date + 'T00:00:00');
+    const dow = d.toLocaleDateString('en-US', { weekday: 'short' });
+    const mon = d.toLocaleDateString('en-US', { month: 'short' });
+    const cls = l.tour_date < todayStr ? 'overdue' : l.tour_date === todayStr ? 'today' : '';
+    const timeStr = l.tour_time ? fmtTime12(l.tour_time) : '';
+    return `<div class="tour-card ${cls}" onclick="jumpToTourLead('${l.id}')" title="${esc(l.location || '')}">
+      <div class="tour-date-badge"><span class="dow">${esc(dow)}</span><span class="dom">${d.getDate()}</span><span class="dow">${esc(mon)}</span></div>
+      <div class="tour-info">
+        <span class="tour-company">${esc(l.company)}</span>
+        <span class="tour-meta">${timeStr ? esc(timeStr) + ' · ' : ''}${esc(l.location || '—')}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// Jump from the strip to the lead's card: force filters/search out of the way
+// so the card is guaranteed to actually render, then expand + scroll to it.
+function jumpToTourLead(id) {
+  leadFilter = 'all';
+  leadSearch = '';
+  const searchEl = document.getElementById('lead-search');
+  if (searchEl) searchEl.value = '';
+  expandedLeadIds.clear();
+  expandedLeadIds.add(id);
+  renderLeadsSection();
+  populateAudio();
+  refreshCardEmailLinks(id, 'leads');
+  setTimeout(() => {
+    const el = document.getElementById('lc-' + id);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, 60);
+}
+
 // ── Lead renders ──────────────────────────────────────────────
 function leadMatchesSearch(l, q) {
   if (!q) return true;
@@ -2860,6 +2957,7 @@ function leadMatchesSearch(l, q) {
 }
 
 function renderLeadsSection() {
+  renderUpcomingToursStrip(); // independent of the active stage/search filters below — always shows all upcoming tours
   const closed  = ['executed','dead'];
   const active  = leads.filter(l => !l.archived && !closed.includes(l.stage || 'lead'));
   let wonlost = leads.filter(l => l.archived || closed.includes(l.stage || 'lead'));
@@ -4439,7 +4537,8 @@ function toggleHideWaitlist() {
 function _clearLeadModal() {
   ['lf-company','lf-firstname','lf-email','lf-contact','lf-phone',
    'lf-location','lf-sqft','lf-lease','lf-movein',
-   'lf-unit','lf-unit-sf','lf-rate','lf-included','lf-alt']
+   'lf-unit','lf-unit-sf','lf-rate','lf-included','lf-alt',
+   'lf-tour-date','lf-tour-time']
     .forEach(id => { const el = document.getElementById(id); if (el) { el.value = ''; el.classList.remove('err'); } });
   document.getElementById('lf-segment').value   = 'importer';
   document.getElementById('lf-stage').value     = 'lead';
@@ -4478,6 +4577,8 @@ function openEditLeadDetails(id, e) {
   document.getElementById('lf-milestone').value           = lead.yardi_milestone || '';
   const drSel = document.getElementById('lf-dead-reason');
   if (drSel) drSel.value = lead.dead_reason || '';
+  document.getElementById('lf-tour-date').value           = lead.tour_date || '';
+  document.getElementById('lf-tour-time').value           = lead.tour_time || '';
   document.getElementById('lf-location').value           = lead.location    || '';
   document.getElementById('lf-sqft').value               = lead.sqft        || '';
   document.getElementById('lf-lease').value              = lead.leaseLength || '';
@@ -4516,6 +4617,8 @@ async function saveLeadDetails() {
     stage:          document.getElementById('lf-stage').value,
     yardi_milestone: document.getElementById('lf-milestone').value || '',
     dead_reason:    document.getElementById('lf-stage').value === 'dead' ? (document.getElementById('lf-dead-reason').value || '') : '',
+    tour_date:      document.getElementById('lf-stage').value === 'tour' ? (document.getElementById('lf-tour-date').value || null) : (existing?.tour_date ?? null),
+    tour_time:      document.getElementById('lf-stage').value === 'tour' ? (document.getElementById('lf-tour-time').value || null) : (existing?.tour_time ?? null),
     location:       document.getElementById('lf-location').value.trim(),
     sqft:           document.getElementById('lf-sqft').value.trim(),
     leaseLength:    document.getElementById('lf-lease').value.trim(),
@@ -8036,6 +8139,7 @@ window.leadOverlayClick    = leadOverlayClick;
 window.saveLeadDetails     = saveLeadDetails;
 window.deleteLead          = deleteLead;
 window.toggleLeadCard      = toggleLeadCard;
+window.jumpToTourLead      = jumpToTourLead;
 window.logTouch            = logTouch;
 window.claudeFindLeads     = claudeFindLeads;
 window.claudeLogLeadUpdate = claudeLogLeadUpdate;

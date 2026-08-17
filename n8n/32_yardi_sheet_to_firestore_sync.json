@@ -1,0 +1,244 @@
+{
+  "name": "CW — 32. Yardi Sheet → Firestore Lead Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "yardi-sheet-sync",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "cw-32-001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-800, 0],
+      "webhookId": "yardi-sheet-sync"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "1HeI-r8YxnvZqWSYCARiy_nFB6eZZyv7NMRyMmkOS848",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "0",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "cw-32-002",
+      "name": "Read Yardi Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [-580, 0],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "WM_Service_Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parses one raw Sheet row (as written by yardi_export.py's header names)\n// into the fields the rest of this workflow needs. Mirrors the same\n// regex-based email/phone extraction the Python script itself uses on\n// TENANT CONTACT, since the Sheet only has that field pre-flattened to a\n// single string (no separate email/phone columns).\n//\n// The native Google Sheets node's \"read\" operation auto-detects the first\n// row as headers, so each item here is already keyed by the Sheet's own\n// column names (TENANT, TENANT CONTACT, PROPERTY, etc.) -- no separate\n// grid-parsing step needed.\n//\n// UPDATED 2026-08-13: Yardi's \"Tenant Direct\" contact type is sometimes\n// phone-only -- no email at all. Confirmed live on a real lead, \"Luis F.\",\n// whose TENANT CONTACT was just \"Luis F.\\nTenant Direct\\n4706365654\\n\".\n// The old version required an email and silently dropped anything without\n// one -- not even left for manual review, just gone. Now a row is only\n// dropped if it has NEITHER an email NOR a phone number.\n\nconst out = [];\n\nfor (const item of $input.all()) {\n  const row = item.json;\n  const tenant = (row['TENANT'] || '').toString().trim();\n  if (!tenant) continue; // skip any stray blank rows\n\n  const rawContact = (row['TENANT CONTACT'] || '').toString();\n  const emailMatch = rawContact.match(/[\\w.+-]+@[\\w-]+\\.[\\w.-]+/);\n  const phoneMatch = rawContact.match(/\\b\\d{10}\\b|\\b\\d{3}[-.]\\d{3}[-.]\\d{4}\\b/);\n\n  const email = emailMatch ? emailMatch[0].toLowerCase() : '';\n  const phoneDigits = phoneMatch ? phoneMatch[0].replace(/\\D/g, '') : '';\n\n  // A row needs SOME usable contact info (email or phone) to sync -- no way\n  // to reach the contact means no reliable way to dedupe either, and fuzzy\n  // name-matching already proved unsafe (see the 'Mark Lopez' false match\n  // from the manual backfill comparison). Those rows just stay visible in\n  // the Sheet for a manual look instead.\n  if (!email && !phoneDigits) continue;\n\n  out.push({\n    json: {\n      tenant,\n      email,\n      phone: phoneDigits,\n      // Dedup key used downstream: email when we have one, otherwise the\n      // digits-only phone. Keeping this as its own field means the dedup\n      // query node doesn't need to re-derive the email-vs-phone choice.\n      dedupe_field: email ? 'email' : 'phone_digits',\n      dedupe_value: email || phoneDigits,\n      first_name: tenant.split(/[ ,]+/)[0] || '',\n      property: (row['PROPERTY'] || '').toString(),\n      address: (row['PROPERTY ADDRESS'] || '').toString(),\n      stage_raw: (row['STAGE'] || '').toString(),\n      sub_stage: (row['SUB STAGE'] || '').toString(),\n      last_activity_comment: (row['LAST ACTIVITY COMMENT'] || '').toString(),\n      date_created: (row['DATE CREATED'] || '').toString(),\n    },\n  });\n}\n\nreturn out;"
+      },
+      "id": "cw-32-003",
+      "name": "Parse Rows (extract email/phone)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-360, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents:runQuery",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ structuredQuery: { from: [{ collectionId: \"leads\" }], where: { fieldFilter: { field: { fieldPath: $json.dedupe_field }, op: \"EQUAL\", value: { stringValue: $json.dedupe_value } } }, limit: 1 } }) }}",
+        "options": {}
+      },
+      "id": "cw-32-004",
+      "name": "Query Firestore for existing email/phone",
+      "notes": "Queries by email when Parse Rows found one; otherwise falls back to phone_digits (set on every lead this workflow creates -- see Create Lead node). Pre-existing leads entered by hand may not have a phone_digits field or may store phone with punctuation, so this can miss a true duplicate for those older docs -- same class of tradeoff already accepted for email-only exact-match dedup.",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-140, 0],
+      "credentials": {
+        "googleApi": {
+          "id": "7IVvQuErxEJPoaMY",
+          "name": "Firebase_SDK_do_or_wait"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Firestore's runQuery returns an array of result entries per call. \"Query\n// Firestore for existing email\" fires one call per input item, in the same\n// order Parse Rows emitted them, so queryResults[i] always corresponds to\n// parsedLeads[i]. This node runs once for ALL items (n8n Code node's\n// default execution mode) and must return one output item per input item.\n//\n// BUG FOUND LIVE 2026-08-11: an earlier version used $input.first() and\n// $(...).item (singular), which only ever look at the FIRST item -- with\n// multiple rows in the Sheet, that silently dropped every row after the\n// first from the sync with no error (the execution still reported\n// \"success\", it just produced 1 output instead of N). Looping over every\n// item explicitly here is the fix.\n\nconst queryResults = $input.all();\nconst parsedLeads = $('Parse Rows (extract email/phone)').all();\n\nconst out = [];\nfor (let i = 0; i < queryResults.length; i++) {\n  const raw = queryResults[i].json;\n  const body = Array.isArray(raw) ? raw : [raw];\n  const matched = body.some((r) => r && r.document);\n  const lead = (parsedLeads[i] && parsedLeads[i].json) || {};\n  out.push({ json: { ...lead, matched } });\n}\nreturn out;"
+      },
+      "id": "cw-32-005",
+      "name": "Check Match",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [80, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "no-match-cond",
+              "leftValue": "={{ $json.matched }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cw-32-006",
+      "name": "IF no existing lead",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [300, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://plain-credit-5962.jchoustin91.workers.dev/webhook/firestore-write",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ collection: \"leads\", action: \"create\", fields: { company: $json.tenant, contact: $json.tenant, email: $json.email, phone: $json.phone, phone_digits: $json.phone, first_name: $json.first_name, location: ($json.property + (($json.address) ? (\" (\" + $json.address + \")\") : \"\")), stage: \"lead\", yardi_milestone: $json.sub_stage, notes: (\"From Yardi: \" + $json.last_activity_comment), status: \"new\" } }) }}",
+        "options": {}
+      },
+      "id": "cw-32-007",
+      "name": "Create Lead (via workflow 20)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [520, -80]
+    },
+    {
+      "parameters": {},
+      "id": "cw-32-008",
+      "name": "Skip (already exists)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [520, 80]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://default091ba9e63b95480c82d790e84ab87a.eb.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/22/workflows/03323e8fee6544199cb855987e85d5df/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=-7VK5Ox4jpxIc1mymO0XFeHnUTUBO9LKIFQFA1hxpM4",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: \"\", attachments: [ { contentType: \"application/vnd.microsoft.card.adaptive\", content: { type: \"AdaptiveCard\", $schema: \"http://adaptivecards.io/schemas/adaptive-card.json\", version: \"1.4\", body: [ { type: \"TextBlock\", text: \"🆕 New Yardi Lead\", weight: \"Bolder\", size: \"Medium\", color: \"Accent\" }, { type: \"TextBlock\", text: $json.tenant, weight: \"Bolder\", size: \"Large\", wrap: true }, { type: \"FactSet\", facts: [ { title: \"Contact\", value: $json.first_name }, { title: \"Email\", value: $json.email }, { title: \"Phone\", value: $json.phone }, { title: \"Location\", value: ($json.property + (($json.address) ? (\" (\" + $json.address + \")\") : \"\")) }, { title: \"Milestone\", value: $json.sub_stage } ] }, { type: \"TextBlock\", text: (\"📝 \" + ($json.last_activity_comment || \"(no note)\")), wrap: true, isSubtle: true, spacing: \"Medium\" } ] } } ] }) }}",
+        "options": {}
+      },
+      "id": "cw-32-009",
+      "name": "Notify Teams - New Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [520, -240]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Read Yardi Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Yardi Sheet": {
+      "main": [
+        [
+          {
+            "node": "Parse Rows (extract email/phone)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Rows (extract email/phone)": {
+      "main": [
+        [
+          {
+            "node": "Query Firestore for existing email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Firestore for existing email": {
+      "main": [
+        [
+          {
+            "node": "Check Match",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Match": {
+      "main": [
+        [
+          {
+            "node": "IF no existing lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF no existing lead": {
+      "main": [
+        [
+          {
+            "node": "Create Lead (via workflow 20)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notify Teams - New Lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip (already exists)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "cw-workflow-032"
+}
