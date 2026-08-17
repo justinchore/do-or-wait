@@ -1577,19 +1577,23 @@
   </div>
 </div>
 
-<!-- ✗ Cancelled tour — always asks Dead-vs-back-to-Lead, never guesses (added 2026-08-17) -->
-<div class="overlay" id="tour-cancel-overlay" onclick="tourCancelOverlayClick(event)">
+<!-- Stage-resolve overlay (added 2026-08-17, generalized same day) — a small reusable
+     "what's the real status here" prompt. Two entry points: ✗ Cancelled on a tour-stage
+     lead's card (Dead vs back-to-Lead), and ✅/✗ on a follow-up-due block (Dead vs
+     Executed/Won) — see openTourCancel()/openFollowupResolve() below. Always asks rather
+     than guessing; Dead always asks which of the 13 Yardi reasons too. -->
+<div class="overlay" id="stage-resolve-overlay" onclick="stageResolveOverlayClick(event)">
   <div class="modal" style="max-width:360px">
-    <h3>Cancel Tour</h3>
-    <p style="font-size:13px;color:var(--text2);margin:0 0 14px;">What happened with <span id="tc-lead-name" style="font-weight:600;color:var(--text)"></span>?</p>
+    <h3 id="sr-title">Update Stage</h3>
+    <p style="font-size:13px;color:var(--text2);margin:0 0 14px;" id="sr-question"></p>
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:4px;">
-      <button class="btn dark" style="width:100%" onclick="chooseTourCancelOutcome('dead')">✗ Mark Dead Deal</button>
-      <button class="btn" style="width:100%" onclick="chooseTourCancelOutcome('lead')">↩ Back to Lead — still possible</button>
+      <button class="btn dark" style="width:100%" onclick="chooseStageResolveOutcome('dead')">✗ Mark Dead Deal</button>
+      <button class="btn" style="width:100%" id="sr-alt-btn" onclick="chooseStageResolveOutcome('alt')"></button>
     </div>
-    <div id="tc-reason-wrap" style="display:none;margin-top:10px;">
+    <div id="sr-reason-wrap" style="display:none;margin-top:10px;">
       <div class="field">
         <label>Dead Deal Reason</label>
-        <select id="tc-dead-reason">
+        <select id="sr-dead-reason">
           <option value="">— Select —</option>
           <option>Bad Credit</option>
           <option>Corporate Ban</option>
@@ -1608,8 +1612,8 @@
         </select>
       </div>
       <div class="modal-foot">
-        <button class="btn" onclick="closeTourCancel()">Cancel</button>
-        <button class="btn dark" onclick="confirmTourCancel()">Confirm</button>
+        <button class="btn" onclick="closeStageResolve()">Cancel</button>
+        <button class="btn dark" onclick="confirmStageResolveDead()">Confirm</button>
       </div>
     </div>
   </div>
@@ -1648,6 +1652,7 @@
       <button class="btn" onclick="closeFollowupQueue()">Close</button>
       <div style="display:flex;gap:8px;">
         <button class="btn" onclick="fuqArchive()" title="Archived leads stop showing as follow-ups due, but can still surface here as a space match if a size/location match comes up.">📁 Archive</button>
+        <button class="btn" id="fuq-resolve-btn" onclick="fuqResolveStage()" title="Already executed or dead? Update the stage instead of sending a follow-up.">🏁 Update stage</button>
         <button class="btn" id="fuq-snooze-btn" onclick="fuqSnooze()">Snooze</button>
         <button class="btn" onclick="fuqSkip()">Skip</button>
         <button class="btn dark" onclick="fuqSend()">✉️ Send</button>
@@ -3409,6 +3414,8 @@ function renderFuqCard() {
   document.getElementById('fuq-progress').textContent = (fuqIdx + 1) + ' of ' + fuQueue.length;
   document.getElementById('fuq-lead-name').textContent = (lead.company || lead.contact || 'Lead') + (lead.contact && lead.company ? ' — ' + lead.contact : '');
   document.getElementById('fuq-snooze-btn').textContent = isFU ? 'Snooze 3d' : 'Snooze 14d';
+  const resolveBtn = document.getElementById('fuq-resolve-btn');
+  if (resolveBtn) resolveBtn.style.display = isFU ? '' : 'none';   // only meaningful for real follow-ups, not space-match suggestions
 
   const matchLine = (!isFU && draft.match)
     ? `<div style="font-size:12px;color:var(--text2);margin-bottom:8px;">${esc(draft.match.property)} · ${esc(draft.match.unit)} · ${draft.match.sf} sf${draft.extra ? ` (+${draft.extra} more)` : ''}<br>${esc(availExpSyncLabel(draft.match.synced_at))}</div>`
@@ -3525,6 +3532,17 @@ async function fuqArchive() {
   const lead = findItem(item.lead.id, 'leads');
   if (lead && !lead.archived) await toggleArchive(lead.id, 'leads');
   fuqAdvance();
+}
+
+// 🏁 Update stage — for when the queue is nagging about a follow-up on a deal that's
+// actually already resolved (e.g. a legacy/mis-synced stage value the closed-stage
+// check doesn't recognize). Opens the shared stage-resolve overlay on top of the
+// queue; finalizeStageResolve() below re-renders this card once it's done, which
+// naturally drops the now-resolved lead and advances to the next one.
+function fuqResolveStage() {
+  const item = fuQueue[fuqIdx];
+  if (!item) return;
+  openFollowupResolve(item.lead.id, null);
 }
 
 function renderLeadCard(lead) {
@@ -3664,6 +3682,7 @@ function renderFollowupBlock(lead) {
       <button class="email-snooze-btn" onclick="copyFollowupMsg('${lead.id}',event)">📋 Copy</button>
       <button class="email-skip-btn" onclick="snoozeFollowup('${lead.id}',event)">Snooze ${FOLLOWUP_DAYS} days</button>
       <button class="email-skip-btn" onclick="moveToWaitlist('${lead.id}',event)" title="Stop follow-ups — just watch for matching space">⏳ Move to waitlist</button>
+      <button class="email-skip-btn" onclick="openFollowupResolve('${lead.id}',event)" title="Already executed or dead? Update the stage so it stops nagging.">🏁 Update stage</button>
     </div>
   </div>`;
 }
@@ -3755,6 +3774,7 @@ function renderFollowupDraftBlock(lead) {
       ${lead.email ? `<button class="approve-btn" onclick="openGeneratedFollowupEmail('${lead.id}',event)">✉️ Open in email</button>` : ''}
       <button class="email-snooze-btn" onclick="copyGeneratedFollowupMsg('${lead.id}',event)">📋 Copy</button>
       <button class="email-skip-btn" onclick="dismissFollowupDraft('${lead.id}',event)">✕ Dismiss</button>
+      <button class="email-skip-btn" onclick="openFollowupResolve('${lead.id}',event)" title="Already executed or dead? Update the stage so it stops nagging.">🏁 Update stage</button>
     </div>
   </div>`;
 }
@@ -4439,45 +4459,77 @@ function openRescheduleTour(id, e) {
   openEditLeadDetails(id, e, { purpose: 'reschedule' });
 }
 
-// ✗ Cancelled — always asks Dead-vs-back-to-Lead (never guesses); Dead also asks which of
-// the 13 Yardi reasons. Small dedicated overlay rather than a native prompt() since the
-// reason has to be one of a fixed set, not free text.
-let tourCancelLeadId = null;
-function openTourCancel(id, e) {
+// ── Stage-resolve overlay (generalized 2026-08-17) ─────────────
+// Shared "what's the real status here" prompt, always asks rather than guessing.
+// Two entry points, same overlay, different second choice:
+//   openTourCancel()      — ✗ Cancelled on a tour-stage lead: Dead vs back-to-Lead.
+//   openFollowupResolve() — follow-up-due nag on ANY stalled lead: Dead vs Executed/Won.
+// Dead always asks which of the 13 Yardi reasons (fixed set, hence a real overlay
+// instead of a native prompt()). Prompted by realizing "the app thinks this is due
+// for a follow-up but it's already executed" was happening because a couple of
+// pre-migration leads still carried invalid legacy stage strings (e.g. 'won',
+// 'contract_sent') that isFollowupDue()/the closed-stage check don't recognize —
+// this gives a one-tap way to correct that instead of a chat round-trip each time.
+let stageResolveLeadId = null;
+let stageResolveAltOutcome = 'lead';   // 'lead' | 'executed' — what the non-dead button does
+function openStageResolve(id, e, opts) {
   if (e) e.stopPropagation();
   const lead = leads.find(l => l.id === id);
   if (!lead) return;
-  tourCancelLeadId = id;
-  document.getElementById('tc-lead-name').textContent = lead.company || '';
-  document.getElementById('tc-reason-wrap').style.display = 'none';
-  document.getElementById('tc-dead-reason').value = '';
-  document.getElementById('tour-cancel-overlay').classList.add('open');
+  stageResolveLeadId = id;
+  stageResolveAltOutcome = opts.altOutcome;
+  document.getElementById('sr-title').textContent = opts.title;
+  document.getElementById('sr-question').innerHTML = `${esc(opts.questionPre)} <span style="font-weight:600;color:var(--text)">${esc(lead.company || '')}</span>${esc(opts.questionPost)}`;
+  document.getElementById('sr-alt-btn').textContent = opts.altLabel;
+  document.getElementById('sr-reason-wrap').style.display = 'none';
+  document.getElementById('sr-dead-reason').value = '';
+  document.getElementById('stage-resolve-overlay').classList.add('open');
 }
-function closeTourCancel() {
-  document.getElementById('tour-cancel-overlay').classList.remove('open');
-  tourCancelLeadId = null;
+function openTourCancel(id, e) {
+  openStageResolve(id, e, {
+    altOutcome: 'lead', title: 'Cancel Tour',
+    questionPre: 'What happened with', questionPost: '?',
+    altLabel: '↩ Back to Lead — still possible'
+  });
 }
-function tourCancelOverlayClick(e) {
-  if (e.target === document.getElementById('tour-cancel-overlay')) closeTourCancel();
+// Follow-up-due block's own quick resolve — same overlay, Executed instead of back-to-Lead.
+function openFollowupResolve(id, e) {
+  openStageResolve(id, e, {
+    altOutcome: 'executed', title: 'Update Stage',
+    questionPre: "What's the real status with", questionPost: '?',
+    altLabel: '✅ Mark Executed (Won)'
+  });
 }
-function chooseTourCancelOutcome(outcome) {
-  if (outcome === 'lead') { finalizeTourCancel('lead'); return; }
-  document.getElementById('tc-reason-wrap').style.display = 'block';
-  setTimeout(() => document.getElementById('tc-dead-reason').focus(), 80);
+function closeStageResolve() {
+  document.getElementById('stage-resolve-overlay').classList.remove('open');
+  stageResolveLeadId = null;
 }
-function confirmTourCancel() {
-  finalizeTourCancel('dead', document.getElementById('tc-dead-reason').value);
+function stageResolveOverlayClick(e) {
+  if (e.target === document.getElementById('stage-resolve-overlay')) closeStageResolve();
 }
-async function finalizeTourCancel(outcome, reason) {
-  const id = tourCancelLeadId;
+function chooseStageResolveOutcome(outcome) {
+  if (outcome === 'alt') { finalizeStageResolve(stageResolveAltOutcome); return; }
+  document.getElementById('sr-reason-wrap').style.display = 'block';
+  setTimeout(() => document.getElementById('sr-dead-reason').focus(), 80);
+}
+function confirmStageResolveDead() {
+  finalizeStageResolve('dead', document.getElementById('sr-dead-reason').value);
+}
+async function finalizeStageResolve(outcome, reason) {
+  const id = stageResolveLeadId;
   const lead = leads.find(l => l.id === id);
-  if (!lead) { closeTourCancel(); return; }
+  if (!lead) { closeStageResolve(); return; }
+  const fromTour = (lead.stage || 'lead') === 'tour';
   let entryText;
   if (outcome === 'dead') {
     lead.stage = 'dead';
     lead.dead_reason = reason || 'Other - see deal notes';
     lead.yardi_milestone = '';
-    entryText = `✗ Tour cancelled — marked Dead Deal (${lead.dead_reason}).`;
+    entryText = fromTour ? `✗ Tour cancelled — marked Dead Deal (${lead.dead_reason}).` : `✗ Marked Dead Deal (${lead.dead_reason}).`;
+  } else if (outcome === 'executed') {
+    lead.stage = 'executed';
+    lead.yardi_milestone = '';
+    entryText = '✅ Marked Executed — won.';
   } else {
     lead.stage = 'lead';
     lead.yardi_milestone = 'Lead Follow Up';
@@ -4490,8 +4542,12 @@ async function finalizeTourCancel(outcome, reason) {
     text: entryText, createdAt: new Date().toISOString()
   }];
   lead.updatedAt = new Date().toISOString();
-  closeTourCancel();
+  closeStageResolve();
   renderLeadsSection();
+  // If this was resolved from inside the daily follow-up queue, refresh that card too —
+  // renderFuqCard() re-filters live off `leads`, so a lead that's no longer due just
+  // quietly drops out and the queue advances, same self-healing behavior it already has.
+  if (document.getElementById('fuqueue-overlay').classList.contains('open')) renderFuqCard();
   await persistItem(lead, 'leads');
 }
 
@@ -8303,10 +8359,11 @@ window.jumpToTourLead      = jumpToTourLead;
 window.markTourDone        = markTourDone;
 window.openRescheduleTour  = openRescheduleTour;
 window.openTourCancel      = openTourCancel;
-window.closeTourCancel     = closeTourCancel;
-window.tourCancelOverlayClick = tourCancelOverlayClick;
-window.chooseTourCancelOutcome = chooseTourCancelOutcome;
-window.confirmTourCancel   = confirmTourCancel;
+window.openFollowupResolve = openFollowupResolve;
+window.closeStageResolve   = closeStageResolve;
+window.stageResolveOverlayClick = stageResolveOverlayClick;
+window.chooseStageResolveOutcome = chooseStageResolveOutcome;
+window.confirmStageResolveDead = confirmStageResolveDead;
 window.logTouch            = logTouch;
 window.claudeFindLeads     = claudeFindLeads;
 window.claudeLogLeadUpdate = claudeLogLeadUpdate;
@@ -8388,6 +8445,7 @@ window.fuqSend             = fuqSend;
 window.fuqSkip              = fuqSkip;
 window.fuqSnooze           = fuqSnooze;
 window.fuqArchive          = fuqArchive;
+window.fuqResolveStage     = fuqResolveStage;
 window.toggleFuqStory      = toggleFuqStory;
 window.openSpaceMatchEmail = openSpaceMatchEmail;
 window.onPOSearch          = onPOSearch;
