@@ -1655,7 +1655,7 @@
         <button class="btn" id="fuq-resolve-btn" onclick="fuqResolveStage()" title="Already executed or dead? Update the stage instead of sending a follow-up.">🏁 Update stage</button>
         <button class="btn" id="fuq-snooze-btn" onclick="fuqSnooze()">Snooze</button>
         <button class="btn" onclick="fuqSkip()">Skip</button>
-        <button class="btn dark" onclick="fuqSend()">✉️ Send</button>
+        <button class="btn dark" id="fuq-send-btn" onclick="fuqSend()">✉️ Send</button>
       </div>
     </div>
   </div>
@@ -2765,6 +2765,26 @@ function contactInfo(lead) {
   const events = [];
   if (lead.last_contact_date) events.push({ t: Date.parse(lead.last_contact_date), dir: lead.last_contact_dir === 'in' ? 'in' : 'out' });
   if (lead.last_touch_date)   events.push({ t: Date.parse(lead.last_touch_date),   dir: 'out' });
+  // A PASSED tour_date counts as a fresh contact-recency anchor too (2026-08-19,
+  // Justin's follow-up to isTourPending — "the follow-up timer resets on that
+  // day, then starts up again"). Without this, isTourPending() only masked the
+  // due flag while waiting; the instant the tour date passed, the clock would
+  // silently resume from whatever OLDER contact got the tour booked in the
+  // first place (e.g. a single call two weeks earlier) — which could already
+  // be past the 3-day threshold, nagging immediately instead of giving 3 fresh
+  // business days from the tour date itself. A FUTURE tour_date is deliberately
+  // excluded — isTourPending() already suppresses isFollowupDue entirely while
+  // it's still pending, so this only ever matters once the date has passed.
+  // If something more recent got logged (✅ Toured, 🚫 No-show, an email), that
+  // wins anyway since this is just one more candidate in the "most recent"
+  // comparison below, not an override.
+  if (lead.tour_date) {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    if (lead.tour_date <= todayStr) {
+      const t = Date.parse(lead.tour_date);
+      if (!isNaN(t)) events.push({ t, dir: 'out' });
+    }
+  }
   // Only contact briefs count toward the follow-up clock — internal notes don't.
   // Legacy entries (no kind) are grandfathered as contact; kind==='note' is excluded.
   (lead.entries || []).forEach(e => {
@@ -2785,12 +2805,35 @@ function isFollowupSnoozed(lead) {
   return !!(s && String(s) >= today);
 }
 
+// A scheduled-but-not-yet-happened tour isn't disengagement — it's just
+// waiting for the calendar (2026-08-19, Justin's call: "yes, suppress until
+// the tour date passes"). Once tour_date is today or in the past, normal
+// silence-counting resumes on its own — whether or not ✅ Toured got tapped
+// (if the tour date came and went with nothing logged, that's genuinely
+// worth a nag, so this deliberately does NOT also require markTourDone).
+function isTourPending(lead) {
+  if ((lead.stage || 'lead') !== 'tour' || !lead.tour_date) return false;
+  const today = new Date().toISOString().slice(0, 10);
+  return lead.tour_date >= today;
+}
+// Once a real agreement is out for signature, a Nudge/Value/Break-up sales-nurture
+// email doesn't make sense any more — it's now a paperwork/legal wait, not something
+// a "just checking in" email helps with (2026-08-19, Justin's call: stop on EITHER
+// milestone hitting, regardless of which top-level stage — proposal vs negotiation —
+// it happens to be tagged under, since Yardi's own substage timing can lag the
+// top-level stage flip).
+const FOLLOWUP_STOP_MILESTONES = [
+  'Proposal Agreement Drafted (Submitted to Sales)',   // proposal-stage substage
+  'Signed Proposal Uploaded (Sales)',                  // negotiation-stage substage
+];
 function isFollowupDue(lead) {
   if (lead.archived) return false;
   if (lead.wl_on) return false;   // waitlist leads aren't chased — you watch for matching space instead
   if (['executed', 'dead'].includes(lead.stage || 'lead')) return false;
+  if (FOLLOWUP_STOP_MILESTONES.includes(lead.yardi_milestone)) return false;
   if (lead.seq_status === 'replied') return false;
   if (isFollowupSnoozed(lead)) return false;
+  if (isTourPending(lead)) return false;   // NOT a full stop — conditional only, see isTourPending
   const { bizDays, dir } = contactInfo(lead);
   return dir === 'out' && bizDays !== null && bizDays >= FOLLOWUP_DAYS;   // outbound-cold, business days
 }
@@ -2927,9 +2970,80 @@ function followupMsgsFor(lead){
   const base = FOLLOWUP_BY_STAGE[followupBucket(lead)] || FOLLOWUP_BY_STAGE.cold;
   return base.concat([FOLLOWUP_NUDGE, FOLLOWUP_VALUE, FOLLOWUP_BREAKUP]);
 }
+// Auto-escalation (added 2026-08-19, Justin's ask — "automated followups").
+// followupTplIdx used to default to 0 forever (it's in-memory only, so it
+// reset on every page load) which meant a lead due for its 4th follow-up
+// still showed the stage's first-touch message again. This decides the
+// DEFAULT rung of the ladder from real, persisted signals instead. Only the
+// DEFAULT — an explicit pick via ↻ or the queue's template buttons
+// (followupTplIdx.has(lead.id)) still wins, same as before.
+
+// Master kill switch (2026-08-19, Justin's ask — "sandbox this" before it
+// touches real leads). Ships OFF. While false, every lead behaves exactly
+// like before this feature existed: the ladder always shows the
+// stage-specific first message by default (index 0), no auto-escalation, and
+// no post-break-up "resolve this" prompt (see isPostBreakupSilence below).
+// Flip to true (then git push) once you've watched it behave correctly on a
+// real or dummy lead.
+const FOLLOWUP_AUTO_ESCALATE_ENABLED = false;
+
+// Most recent INBOUND-contact timestamp across all signals (an explicit
+// inbound log entry, or the scanner's own last_contact_date/last_contact_dir),
+// or null if they've never replied. This is what "resets" the ladder — a
+// reply should always send the NEXT ghost-cycle back to the top, never pick
+// up wherever the last cycle left off (jumping straight back to Break-up
+// tone right after they just engaged would read as tone-deaf).
+// A completed tour counts too (2026-08-19, Justin's call: "treat a tour like
+// a reply") — markTourDone() always logs its 🤝 entry as kind:'met',
+// dir:'out' (it's an outbound-direction touch for silence-clock purposes),
+// but a tour is real two-way engagement, arguably a stronger signal than an
+// email reply, so it resets the ESCALATION ladder the same way a reply does.
+function lastInboundTs(lead) {
+  let max = null;
+  (lead.entries || []).forEach(e => {
+    if (e && e.createdAt && (e.dir === 'in' || e.kind === 'met')) {
+      const t = Date.parse(e.createdAt);
+      if (!isNaN(t) && (max === null || t > max)) max = t;
+    }
+  });
+  if (lead.last_contact_dir === 'in' && lead.last_contact_date) {
+    const t = Date.parse(lead.last_contact_date);
+    if (!isNaN(t) && (max === null || t > max)) max = t;
+  }
+  return max;
+}
+// Follow-ups sent SINCE that last reply (all-time if they've never replied).
+// This — not nextFollowupNum()'s all-time count — drives which rung shows by
+// default. nextFollowupNum() still numbers the log entries continuously
+// across the whole relationship ("Follow-up #4 sent"), which is right for a
+// human reading the history, but the ESCALATION ladder restarts every time
+// they actually respond.
+function followupSentSinceReply(lead) {
+  const since = lastInboundTs(lead);
+  return (lead.entries || [])
+    .filter(e => e && e.kind === 'email' && e.dir !== 'in' && Number(e.followupNum) > 0)
+    .filter(e => since === null || Date.parse(e.createdAt) > since)
+    .length;
+}
+function followupDefaultIdx(lead, listLen) {
+  if (!FOLLOWUP_AUTO_ESCALATE_ENABLED) return 0;
+  const sent = followupSentSinceReply(lead);
+  return Math.min(Math.max(sent, 0), listLen - 1);
+}
+// True once the ladder has already run all the way to Break-up since the
+// last reply (or ever, if they've never replied) AND the lead has gone quiet
+// again after that — a full Nudge -> Value -> Break-up cycle with zero
+// response. Rather than keep re-showing Break-up forever, this lead should
+// come OUT of the normal "here's a ready draft" flow and instead ask you to
+// actually resolve it — see renderFollowupBlock/renderFuqCard, both of which
+// check this first.
+function isPostBreakupSilence(lead) {
+  if (!FOLLOWUP_AUTO_ESCALATE_ENABLED) return false;
+  return followupSentSinceReply(lead) >= followupMsgsFor(lead).length;
+}
 function followupMsgFor(lead) {
   const list = followupMsgsFor(lead);
-  const idx = (followupTplIdx.get(lead.id) || 0) % list.length;
+  const idx = followupTplIdx.has(lead.id) ? (followupTplIdx.get(lead.id) % list.length) : followupDefaultIdx(lead, list.length);
   return { idx, label: list[idx].label, ...list[idx].build(lead) };
 }
 
@@ -3407,15 +3521,31 @@ function renderFuqCard() {
   const item = fuQueue[fuqIdx];
   const lead = leads.find(l => l.id === item.lead.id) || item.lead;
   const isFU = item.kind === 'followup';
+  // Full ladder already ran with zero response since the last reply — stop
+  // offering a draft/Send at all here too (2026-08-19), same as the inline
+  // card (renderFollowupResolveBlock). Only meaningful for real follow-ups.
+  const isResolveOnly = isFU && isPostBreakupSilence(lead);
   const draft = isFU ? ((lead.followup_draft && lead.followup_draft.body) ? lead.followup_draft : followupMsgFor(lead)) : spaceMatchMsgFor(lead);
   if (!draft) { fuqAdvance(); return; } // lead resolved itself between renders
 
-  document.getElementById('fuq-kind-title').textContent = isFU ? '🔔 Follow-up' : '🏢 Space match';
+  document.getElementById('fuq-kind-title').textContent = isFU ? (isResolveOnly ? '🔕 Break-up sent — still silent' : '🔔 Follow-up') : '🏢 Space match';
   document.getElementById('fuq-progress').textContent = (fuqIdx + 1) + ' of ' + fuQueue.length;
   document.getElementById('fuq-lead-name').textContent = (lead.company || lead.contact || 'Lead') + (lead.contact && lead.company ? ' — ' + lead.contact : '');
   document.getElementById('fuq-snooze-btn').textContent = isFU ? 'Snooze 3d' : 'Snooze 14d';
   const resolveBtn = document.getElementById('fuq-resolve-btn');
   if (resolveBtn) resolveBtn.style.display = isFU ? '' : 'none';   // only meaningful for real follow-ups, not space-match suggestions
+  const sendBtn = document.getElementById('fuq-send-btn');
+  if (sendBtn) sendBtn.style.display = isResolveOnly ? 'none' : '';   // no more auto-drafts once the ladder's fully run dry
+
+  if (isResolveOnly) {
+    document.getElementById('fuq-body').innerHTML = `
+      ${renderFuqStory(lead)}
+      <div style="font-size:13px;color:var(--text);background:rgba(185,28,28,.06);border:1px solid rgba(185,28,28,.25);border-radius:8px;padding:10px 12px;">
+        Nudge, Value, and Break-up have all gone out with no response. Auto-drafting stops here — use 🏁 Update stage to mark it dead, or Snooze/Skip if you want to try again manually later.
+      </div>
+    `;
+    return;
+  }
 
   const matchLine = (!isFU && draft.match)
     ? `<div style="font-size:12px;color:var(--text2);margin-bottom:8px;">${esc(draft.match.property)} · ${esc(draft.match.unit)} · ${draft.match.sf} sf${draft.extra ? ` (+${draft.extra} more)` : ''}<br>${esc(availExpSyncLabel(draft.match.synced_at))}</div>`
@@ -3428,7 +3558,7 @@ function renderFuqCard() {
   const hasClaudeDraft = !!(lead.followup_draft && lead.followup_draft.body);
   const tplPicker = (isFU && !hasClaudeDraft) ? (() => {
     const list = followupMsgsFor(lead);
-    const curIdx = (followupTplIdx.get(lead.id) || 0) % list.length;
+    const curIdx = followupTplIdx.has(lead.id) ? (followupTplIdx.get(lead.id) % list.length) : followupDefaultIdx(lead, list.length);
     const btns = list.map((t, i) => `<button onclick="pickFollowupTpl('${lead.id}',${i},event)"
         style="font-size:11px;border:1px solid ${i === curIdx ? 'var(--text)' : 'var(--border)'};background:${i === curIdx ? 'var(--text)' : 'var(--surface)'};color:${i === curIdx ? 'var(--bg)' : 'var(--text)'};border-radius:8px;padding:4px 10px;cursor:pointer;">${esc(t.label)}</button>`).join('');
     return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">${btns}</div>`;
@@ -3650,7 +3780,33 @@ function renderLeadCard(lead) {
   </div>`;
 }
 
+// Shown instead of renderFollowupBlock once isPostBreakupSilence(lead) is
+// true (2026-08-19) — deliberately no draft, no ↻ cycle, no Send. The point
+// is to stop the ladder from quietly re-sending "One last note" forever and
+// force an actual decision: is this lead dead, or does it need a real,
+// hand-written nudge outside the automated cadence?
+function renderFollowupResolveBlock(lead) {
+  return `
+  <div class="email-preview" style="border-color:#b91c1c;background:rgba(185,28,28,.04);">
+    <div class="email-preview-hd">
+      <span class="email-ready-badge" style="background:#b91c1c;">🔕 Break-up sent — still silent</span>
+    </div>
+    <div style="font-size:13px;color:var(--text);margin-bottom:10px;">
+      Nudge, Value, and Break-up have all gone out with no response. Auto-drafting stops here — this needs a real decision, not another automated email.
+    </div>
+    <div class="email-actions">
+      <button class="approve-btn" onclick="openFollowupResolve('${lead.id}',event)" title="Mark dead, or keep it open if you want to try again manually.">🏁 Resolve this lead</button>
+      <button class="email-skip-btn" onclick="snoozeFollowup('${lead.id}',event)">Snooze ${FOLLOWUP_DAYS} days</button>
+      <button class="email-skip-btn" onclick="moveToWaitlist('${lead.id}',event)" title="Stop follow-ups — just watch for matching space">⏳ Move to waitlist</button>
+    </div>
+  </div>`;
+}
+
 function renderFollowupBlock(lead) {
+  // Full Nudge -> Value -> Break-up cycle already went out since the last
+  // reply and they're still silent — stop auto-drafting and ask for a real
+  // decision instead of re-showing "One last note" forever.
+  if (isPostBreakupSilence(lead)) return renderFollowupResolveBlock(lead);
   const ci  = contactInfo(lead);
   const msg = followupMsgFor(lead);
   const when = ci.contacted
@@ -4182,6 +4338,11 @@ function renderLeadDetails(lead) {
       `Step ${lead.current_step || 0}/5 · ${lead.seq_status}`
     ],
     lead.next_due_date && ['📅', 'Next send', fmtDate(lead.next_due_date)],
+    // Glance-friendly mirror of the last logged follow-up (2026-08-19) — same
+    // fields written by logFollowupSent(); shows in the app UI, not just Firestore.
+    lead.last_followup_sent_at && ['✉️', 'Last follow-up',
+      `#${lead.last_followup_num || '?'}${lead.last_followup_label ? ' — ' + lead.last_followup_label : ''} · ${fmtDate(lead.last_followup_sent_at)}`
+    ],
   ].filter(Boolean);
 
   const yardiRows = [
@@ -4338,6 +4499,11 @@ function nextFollowupNum(lead) {
 }
 function logFollowupSent(lead, { subject, body, label }) {
   const num = nextFollowupNum(lead);
+  // Clear any explicit same-session template override now that a real send
+  // bumped the persisted count — if this lead comes due again later in the
+  // same session, it should show the newly-escalated rung by default, not a
+  // stale manual pick from before this send.
+  followupTplIdx.delete(lead.id);
   const entry = {
     id: 'e' + Date.now(), type: 'wait', kind: 'email', dir: 'out',
     text: `✉️ Follow-up #${num} sent${label ? ' — ' + label : ''}`,
@@ -4346,6 +4512,15 @@ function logFollowupSent(lead, { subject, body, label }) {
     createdAt: new Date().toISOString()
   };
   lead.entries = [...(lead.entries || []), entry];
+  // Glance-friendly mirror on the lead doc itself (2026-08-19, Justin's ask —
+  // "having simple fields to see it at a glance is helpful"). Purely a
+  // convenience copy of what entries[] already has — the escalation/due logic
+  // above (followupSentSinceReply, contactInfo, etc.) still reads entries[]
+  // directly and does NOT depend on these, so a stale or missing value here
+  // can never break the actual ladder, only the at-a-glance view of it.
+  lead.last_followup_label = label || '';
+  lead.last_followup_num = num;
+  lead.last_followup_sent_at = entry.createdAt;
   lead.updatedAt = new Date().toISOString();
   expandedLeadIds.clear(); expandedLeadIds.add(lead.id);
   renderLeadsSection();
@@ -4429,10 +4604,11 @@ async function logTouch(leadId, kind, e) {
   if (kind === 'text') window.location.href = `sms:${phone}`;
 }
 
-// ── Tour actions (added 2026-08-17) ─────────────────────────────
-// Three quick actions on a tour-stage lead's card, next to the 📅 Tour line:
-// ✅ Toured, 🔁 Reschedule, ✗ Cancelled. Mirrors logTouch's one-tap-then-detail-later
-// pattern rather than opening a full form for the common case.
+// ── Tour actions (added 2026-08-17, 🚫 No-show added 2026-08-19) ─
+// Quick actions on a tour-stage lead's card, next to the 📅 Tour line:
+// ✅ Toured, 🚫 No-show, 🔁 Reschedule, ✗ Cancelled. Mirrors logTouch's
+// one-tap-then-detail-later pattern rather than opening a full form for the
+// common case.
 
 // ✅ Toured — logs it happened and clears the date off the Upcoming Tours strip.
 // Deliberately does NOT advance stage/milestone — Yardi's own tour-stage flow still has
@@ -4443,6 +4619,34 @@ async function markTourDone(id, e) {
   const lead = leads.find(l => l.id === id);
   if (!lead) return;
   const entry = { id: 'e' + Date.now(), type: 'wait', kind: 'met', dir: 'out', text: '🤝 Toured', done: false, notes: [], createdAt: new Date().toISOString() };
+  lead.entries = [...(lead.entries || []), entry];
+  lead.tour_date = null;
+  lead.tour_time = null;
+  lead.updatedAt = new Date().toISOString();
+  expandedLeadIds.add(id);   // keep it open so the new entry's 📝 Note is one tap away
+  renderLeadsSection();
+  await persistItem(lead, 'leads');
+}
+
+// 🚫 No-show — they didn't show up. Distinct from ✅ Toured (no real engagement
+// happened) and from ✗ Cancelled (that's for a lead who proactively backed out or
+// is being marked dead/back-to-lead right now — a no-show might just be a
+// scheduling mishap, not necessarily the end of the deal, so this deliberately
+// does NOT force an immediate stage decision the way Cancelled does).
+// Logs a real dated contact-brief entry (kind:'noshow', dir:'out') so the
+// follow-up clock anchors HERE rather than resuming from whatever older contact
+// got the tour booked in the first place — same reasoning as the tour_date
+// fallback in contactInfo() below, just an explicit version for when you want
+// to log it the moment you know, rather than waiting for tour_date to lapse.
+// Deliberately NOT treated as a ladder-reset signal (unlike kind:'met' for a
+// completed tour) — lastInboundTs() only resets on 'in'/'met', so a no-show
+// lets the Nudge/Value/Break-up escalation keep advancing normally instead of
+// getting a fresh friendly restart it hasn't earned.
+async function markTourNoShow(id, e) {
+  if (e) e.stopPropagation();
+  const lead = leads.find(l => l.id === id);
+  if (!lead) return;
+  const entry = { id: 'e' + Date.now(), type: 'wait', kind: 'noshow', dir: 'out', text: '🚫 No-show — tour missed', done: false, notes: [], createdAt: new Date().toISOString() };
   lead.entries = [...(lead.entries || []), entry];
   lead.tour_date = null;
   lead.tour_time = null;
@@ -4560,6 +4764,7 @@ function renderTourActionsBlock(lead) {
     <span style="font-size:12px;color:var(--text2);">📅 Tour: <b style="color:var(--text)">${esc(when)}</b></span>
     <div style="display:flex;gap:6px;flex-wrap:wrap;">
       <button class="btn sm" onclick="markTourDone('${lead.id}',event)">✅ Toured</button>
+      <button class="btn sm" onclick="markTourNoShow('${lead.id}',event)" title="They didn't show — doesn't force a stage decision, just logs it and starts the follow-up clock fresh">🚫 No-show</button>
       <button class="btn sm" onclick="openRescheduleTour('${lead.id}',event)">🔁 Reschedule</button>
       <button class="btn sm" onclick="openTourCancel('${lead.id}',event)">✗ Cancelled</button>
     </div>
@@ -4570,7 +4775,7 @@ function renderTourActionsBlock(lead) {
 // These run on the live page (browser-side Firestore), driven by Claude in Chrome.
 // `kind` follows the app's update categories; `note` is internal (NOT counted as
 // contact by contactInfo), the rest are contact briefs that reset the follow-up clock.
-const CLAUDE_LEAD_KINDS = ['note','email','call','text','met','inbound'];
+const CLAUDE_LEAD_KINDS = ['note','email','call','text','met','inbound','noshow'];
 
 // Find leads matching a free-text query (id / company / name / contact / email).
 // Returns a lightweight list so Claude can pick or disambiguate before writing.
@@ -8357,6 +8562,7 @@ window.deleteLead          = deleteLead;
 window.toggleLeadCard      = toggleLeadCard;
 window.jumpToTourLead      = jumpToTourLead;
 window.markTourDone        = markTourDone;
+window.markTourNoShow      = markTourNoShow;
 window.openRescheduleTour  = openRescheduleTour;
 window.openTourCancel      = openTourCancel;
 window.openFollowupResolve = openFollowupResolve;
