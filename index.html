@@ -2916,7 +2916,11 @@ function followupTargetSf(l){
 
 const FOLLOWUP_BY_STAGE = {
   cold:      [{ label: 'First touch', build: l => ({ subject: `Flexible, all-inclusive space for ${l.company || 'you'}`,
-      body: `${fuHi(l)}\n\nWanted to put Cubework on your radar. ${FU_INCLUSIVE} ${FU_FLEX} And ${fuHook(l)}.\n\n${FU_FAST} Worth a quick 15-minute look to see if it fits ${l.company || 'your operation'}?${FU_SIGN}` }) }],
+      // "back on your radar" (not "put ... on your radar") — 2026-08-19, Justin's call:
+      // this is the first FOLLOW-UP after the qualifying email already introduced Cubework
+      // (workflow 33 or a manual first-touch), so "put on your radar" reads like a second
+      // cold intro/repeats itself. "Back" acknowledges they've already heard from us once.
+      body: `${fuHi(l)}\n\nWanted to put Cubework back on your radar. ${FU_INCLUSIVE} ${FU_FLEX} And ${fuHook(l)}.\n\n${FU_FAST} Worth a quick 15-minute look to see if it fits ${l.company || 'your operation'}?${FU_SIGN}` }) }],
   contacted: [{ label: 'Check-in', build: l => ({ subject: `Still here when you're ready`,
       body: `${fuHi(l)}\n\n${FU_INCLUSIVE} ${FU_FLEX}\n\nStill worth exploring, or is timing off right now?${FU_SIGN}` }) }],
   toured:    [{ label: 'Post-tour', build: l => ({ subject: `Next steps on ${fuSpace(l)}`,
@@ -4197,6 +4201,15 @@ async function resolveThreadLink(id, coll, linkId, ev) {
       link.url = data.webLink;
       link.resolveErr = '';
       if (data.conversationId) link.conversationId = data.conversationId;
+      // graphMessageId (added 2026-08-20, workflow 11 now returns it too — see
+      // 11_resolve_thread.json) — the raw Graph id of whichever message this
+      // resolve found newest. Needed the same way workflow 33's capture is:
+      // a future "send follow-up as a real reply" action calls Graph's
+      // POST /messages/{id}/reply against this, not just a human clicking url.
+      // Always takes the latest resolve's id (matches "newest message" intent —
+      // replying should target the most recent message in the thread, not
+      // whichever one was first linked).
+      if (data.graphMessageId) link.graphMessageId = data.graphMessageId;
     } else {
       if (!hadUrl) { link.url = ''; link.resolveErr = 'nomatch'; }  // searched OK, but no message matched (first resolve only)
     }

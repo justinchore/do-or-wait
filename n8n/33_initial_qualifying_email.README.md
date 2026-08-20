@@ -113,6 +113,28 @@ No new Azure app, no new credentials. Reuses:
   correctly into property + address. Locations with no address on file (just the bare
   property name, no parens) fall back to the template's cold "share your location
   preference" line instead of a broken "on undefined."
+- **`graphMessageId` — added 2026-08-19, needs the same live-send confirmation as
+  webLink above.** Justin's call: don't throw away the raw Graph message id the
+  "Create draft message" response returns — a future workflow that sends real
+  follow-ups as actual in-thread replies (rather than a disconnected new email) needs
+  it to call Graph's `POST /messages/{id}/reply`, and `webLink`/`conversationId` alone
+  aren't enough for that (they're click-to-open-only, not send-a-reply-to). Now stored
+  as `email_links[].graphMessageId` in the "Build lead patch" node, captured from
+  `draft.id` before the `/send` call moves the item to Sent Items — same timing as the
+  existing `webLink` capture.
+  **Immutable-id header — checked and added directly to `33_initial_qualifying_email.json`
+  (2026-08-19), not left as a to-do:** Graph message ids are only guaranteed stable
+  across a folder move (Drafts → Sent Items counts) if the request used the `Prefer:
+  IdType="ImmutableId"` header. Checked both Graph HTTP Request nodes directly — neither
+  **"Create draft message"** nor **"Send draft message"** had it. Added
+  `sendHeaders: true` + a `Prefer: IdType="ImmutableId"` header parameter to both (same
+  `headerParameters` shape workflow 17's Claude node already uses for its
+  `anthropic-version` header). **Still needs a real live send to fully confirm**
+  end-to-end — this only guarantees the id itself won't change across the folder move;
+  it doesn't yet prove a `/reply` call against that id actually lands in the same
+  Outlook conversation the way clicking Reply on the webLink would. Confirm on the first
+  live send: capture the id, send, then immediately try a Graph `GET /messages/{id}`
+  against the captured id to see if it still resolves post-send.
 
 ## Deploy
 

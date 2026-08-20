@@ -124,7 +124,16 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ subject: $json.subject, body: { contentType: 'HTML', content: $json.body }, toRecipients: [ { emailAddress: { address: $json.to } } ] }) }}",
-        "options": {}
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "IdType=\"ImmutableId\""
+            }
+          ]
+        }
       },
       "id": "c5112eab-c1a7-4a11-b9d1-543fbcf95212",
       "name": "Create draft message",
@@ -178,7 +187,16 @@
         "url": "=https://graph.microsoft.com/v1.0/users/justin.cho@cubework.com/messages/{{ $json.id }}/send",
         "authentication": "genericCredentialType",
         "genericAuthType": "oAuth2Api",
-        "options": {}
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "IdType=\"ImmutableId\""
+            }
+          ]
+        }
       },
       "id": "e47a1784-4478-47db-8a7d-ecefc974b561",
       "name": "Send draft message",
@@ -209,7 +227,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const rendered = $('Render qualifying email').item.json;\nconst draft = $('Create draft message').item.json || {};\nconst lead  = $('Loop pending leads').first().json;\n\n// Graph's webLink comes back in a form that fails with \"This message might\n// have been moved or deleted\" -- see resolve_thread.nodes.js / index.html's\n// fixThreadUrl() for the full story. Reusing the exact same fix here so a\n// thread we link ourselves opens the same way a manually-resolved one does.\nfunction fixThreadUrl(u) {\n  if (!u || typeof u !== 'string') return u;\n  const m = /[?&]ItemID=([^&]+)/i.exec(u);\n  if (!m) return u.replace(/^(https?:\\/\\/)outlook\\.cloud\\.microsoft\\//i, '$1outlook.office365.com/');\n  const itemId = m[1];\n  const pathId = itemId.replace(/%2F/gi, '-').replace(/%2B/gi, '-');\n  return 'https://outlook.office365.com/mail/deeplink/read/' + pathId + '?ItemID=' + itemId + '&exvsurl=1';\n}\n\nconst now = new Date().toISOString();\nconst webLink = fixThreadUrl(draft.webLink || '');\n\n// Same email_links shape the app already renders (see leadThreadConversationId\n// / renderEmailLinks in index.html) -- pre-resolved at send time instead of\n// going through the workflow-11 subject/contact search, since we already\n// know exactly which message this is.\nconst newLink = {\n  id: 'el' + Date.now(),\n  label: 'Qualifying email',\n  subject: rendered.subject,\n  contact: rendered.to,\n  url: webLink,\n  conversationId: draft.conversationId || ''\n};\nconst existingLinks = Array.isArray(lead.email_links) ? lead.email_links : [];\n\nconst newEntry = {\n  id: 'e' + Date.now(),\n  text: 'Sent first-touch qualifying email (auto, General template)' + (rendered.property ? (' re: ' + rendered.property + ' location.') : '.') + ' Asked to confirm sqft needs and move-in timeline.',\n  kind: 'email',\n  type: 'wait',\n  dir: 'out',\n  done: false,\n  createdAt: now\n};\nconst existingEntries = Array.isArray(lead.entries) ? lead.entries : [];\n\n// Minimal JS -> Firestore REST value encoder -- just the shapes this doc\n// actually uses (string / bool / null / array-of-object / object).\nfunction toFs(v) {\n  if (v === null || v === undefined) return { nullValue: null };\n  if (typeof v === 'boolean') return { booleanValue: v };\n  if (typeof v === 'number') return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };\n  if (Array.isArray(v)) return { arrayValue: { values: v.map(toFs) } };\n  if (typeof v === 'object') {\n    const fields = {};\n    for (const [k, val] of Object.entries(v)) fields[k] = toFs(val);\n    return { mapValue: { fields } };\n  }\n  return { stringValue: String(v) };\n}\n\nconst patchFields = {\n  qualifying_email_status: toFs('sent'),\n  qualifying_email_sent_at: toFs(now),\n  updatedAt: toFs(now),\n  email_links: toFs([...existingLinks, newLink]),\n  entries: toFs([...existingEntries, newEntry])\n};\n\nreturn [{ json: {\n  leadId: lead.id,\n  patchBody: { fields: patchFields },\n  updateMask: Object.keys(patchFields).join('&updateMask.fieldPaths='),\n  contact: lead.contact || lead.company || rendered.to,\n  company: lead.company || '',\n  property: rendered.property\n} }];"
+        "jsCode": "const rendered = $('Render qualifying email').item.json;\nconst draft = $('Create draft message').item.json || {};\nconst lead  = $('Loop pending leads').first().json;\n\n// Graph's webLink comes back in a form that fails with \"This message might\n// have been moved or deleted\" -- see resolve_thread.nodes.js / index.html's\n// fixThreadUrl() for the full story. Reusing the exact same fix here so a\n// thread we link ourselves opens the same way a manually-resolved one does.\nfunction fixThreadUrl(u) {\n  if (!u || typeof u !== 'string') return u;\n  const m = /[?&]ItemID=([^&]+)/i.exec(u);\n  if (!m) return u.replace(/^(https?:\\/\\/)outlook\\.cloud\\.microsoft\\//i, '$1outlook.office365.com/');\n  const itemId = m[1];\n  const pathId = itemId.replace(/%2F/gi, '-').replace(/%2B/gi, '-');\n  return 'https://outlook.office365.com/mail/deeplink/read/' + pathId + '?ItemID=' + itemId + '&exvsurl=1';\n}\n\nconst now = new Date().toISOString();\nconst webLink = fixThreadUrl(draft.webLink || '');\n\n// Same email_links shape the app already renders (see leadThreadConversationId\n// / renderEmailLinks in index.html) -- pre-resolved at send time instead of\n// going through the workflow-11 subject/contact search, since we already\n// know exactly which message this is.\nconst newLink = {\n  id: 'el' + Date.now(),\n  label: 'Qualifying email',\n  subject: rendered.subject,\n  contact: rendered.to,\n  url: webLink,\n  conversationId: draft.conversationId || '',\n  graphMessageId: draft.id || ''\n};\nconst existingLinks = Array.isArray(lead.email_links) ? lead.email_links : [];\n\nconst newEntry = {\n  id: 'e' + Date.now(),\n  text: 'Sent first-touch qualifying email (auto, General template)' + (rendered.property ? (' re: ' + rendered.property + ' location.') : '.') + ' Asked to confirm sqft needs and move-in timeline.',\n  kind: 'email',\n  type: 'wait',\n  dir: 'out',\n  done: false,\n  createdAt: now\n};\nconst existingEntries = Array.isArray(lead.entries) ? lead.entries : [];\n\n// Minimal JS -> Firestore REST value encoder -- just the shapes this doc\n// actually uses (string / bool / null / array-of-object / object).\nfunction toFs(v) {\n  if (v === null || v === undefined) return { nullValue: null };\n  if (typeof v === 'boolean') return { booleanValue: v };\n  if (typeof v === 'number') return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };\n  if (Array.isArray(v)) return { arrayValue: { values: v.map(toFs) } };\n  if (typeof v === 'object') {\n    const fields = {};\n    for (const [k, val] of Object.entries(v)) fields[k] = toFs(val);\n    return { mapValue: { fields } };\n  }\n  return { stringValue: String(v) };\n}\n\nconst patchFields = {\n  qualifying_email_status: toFs('sent'),\n  qualifying_email_sent_at: toFs(now),\n  updatedAt: toFs(now),\n  email_links: toFs([...existingLinks, newLink]),\n  entries: toFs([...existingEntries, newEntry])\n};\n\nreturn [{ json: {\n  leadId: lead.id,\n  patchBody: { fields: patchFields },\n  updateMask: Object.keys(patchFields).join('&updateMask.fieldPaths='),\n  contact: lead.contact || lead.company || rendered.to,\n  company: lead.company || '',\n  property: rendered.property\n} }];"
       },
       "id": "99064f99-9481-49b5-8abe-3f9e26b8872f",
       "name": "Build lead patch",

@@ -1,5 +1,5 @@
 {
-  "name": "CW — 11. Resolve Thread Link",
+  "name": "CW \u2014 11. Resolve Thread Link",
   "nodes": [
     {
       "parameters": {
@@ -10,27 +10,27 @@
           "allowedOrigins": "*"
         }
       },
-      "id": "4aa182a7-f0a7-4c98-9173-746c7b13926c",
+      "id": "791e91bf-87e6-41fa-8d1e-62920ed81565",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
-        1520,
-        304
+        3472,
+        656
       ],
       "webhookId": "resolve-thread"
     },
     {
       "parameters": {
-        "jsCode": "// Turn the {subject, contact} the app posts into a Graph $search string.\n// Subject stays free-text (no subject:\"...\" KQL — nesting quotes inside the\n// already-quoted $search value breaks it). A contact that's an EMAIL uses the\n// participants: keyword (precise); a name is added as free text. KQL keywords\n// are fine inside the outer quotes; only nested double-quotes are the problem.\nconst b = ($json.body && typeof $json.body === 'object') ? $json.body : $json;\nconst clean = s => String(s || '').replace(/[\"\\r\\n]/g, ' ').trim();\nconst subject = clean(b.subject);\nconst contact = clean(b.contact);\nconst terms = [];\nif (subject) terms.push(subject);\nif (contact) terms.push(contact.includes('@') ? ('participants:' + contact) : contact);\nconst search = terms.join(' ').trim();\nreturn [{ json: { search, subject, contact, hasQuery: !!search } }];"
+        "jsCode": "// Turn the {subject, contact} the app posts into a Graph $search string.\n// Subject stays free-text (no subject:\"...\" KQL \u2014 nesting quotes inside the\n// already-quoted $search value breaks it). A contact that's an EMAIL uses the\n// participants: keyword (precise); a name is added as free text. KQL keywords\n// are fine inside the outer quotes; only nested double-quotes are the problem.\nconst b = ($json.body && typeof $json.body === 'object') ? $json.body : $json;\nconst clean = s => String(s || '').replace(/[\"\\r\\n]/g, ' ').trim();\nconst subject = clean(b.subject);\nconst contact = clean(b.contact);\nconst terms = [];\nif (subject) terms.push(subject);\nif (contact) terms.push(contact.includes('@') ? ('participants:' + contact) : contact);\nconst search = terms.join(' ').trim();\nreturn [{ json: { search, subject, contact, hasQuery: !!search } }];"
       },
-      "id": "ef9d19a5-3a95-407d-9cc4-25c84881cbb8",
+      "id": "0c6a5b5e-773a-4f36-a888-371aefff07c0",
       "name": "Build search",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1744,
-        304
+        3696,
+        656
       ]
     },
     {
@@ -47,7 +47,7 @@
             },
             {
               "name": "$select",
-              "value": "webLink,subject,from,receivedDateTime,sentDateTime,conversationId"
+              "value": "id,webLink,subject,from,receivedDateTime,sentDateTime,conversationId"
             },
             {
               "name": "$top",
@@ -55,15 +55,24 @@
             }
           ]
         },
-        "options": {}
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "IdType=\"ImmutableId\""
+            }
+          ]
+        }
       },
-      "id": "93f4f869-a9ac-44bf-9d9b-bffcfc759ad2",
+      "id": "0bd80818-0804-473b-94c2-a420a3ba2ccb",
       "name": "Search messages",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1968,
-        304
+        3920,
+        656
       ],
       "credentials": {
         "microsoftOAuth2Api": {
@@ -79,15 +88,15 @@
     },
     {
       "parameters": {
-        "jsCode": "// Pick the newest message across the relevance-ranked hits and return its\n// webLink — the official Graph property that OPENS that message/thread in\n// Outlook on the web. $search can't be combined with $orderby, so we sort in\n// code. If Graph errored (continueOnFail) or returned nothing, found:false.\nconst resp = $input.first().json || {};\nconst msgs = Array.isArray(resp.value) ? resp.value : [];\nlet best = null, bestMs = null;\nfor (const m of msgs) {\n  if (!m) continue;\n  const t = Date.parse(m.receivedDateTime || m.sentDateTime || '');\n  if (isNaN(t)) continue;\n  if (bestMs === null || t > bestMs) { bestMs = t; best = m; }\n}\nif (!best || !best.webLink) {\n  return [{ json: { found: false } }];\n}\n// Graph's webLink comes back as either the classic outlook.office365.com/owa/?ItemID=…\n// &viewmodel=ReadMessageItem form or the new outlook.cloud.microsoft/mail/deeplink/read/…\n// form — and BOTH fail with \"This message might have been moved or deleted\" (the owa form\n// redirects into the same broken new-Outlook reader). The ONE form that opens is:\n//   https://outlook.office365.com/mail/deeplink/read/<pathId>?ItemID=<ItemID>&exvsurl=1\n// where <pathId> = the ItemID with base64 '/' and '+' swapped to '-'. So extract the\n// ItemID from whatever Graph returns and rebuild that working URL before storing.\n// (Confirmed working 2026-06-25.) The app also rebuilds at render time as a backstop.\nfunction fixThreadUrl(u) {\n  if (!u || typeof u !== 'string') return u;\n  const m = /[?&]ItemID=([^&]+)/i.exec(u);\n  if (!m) return u.replace(/^(https?:\\/\\/)outlook\\.cloud\\.microsoft\\//i, '$1outlook.office365.com/');\n  const itemId = m[1];\n  const pathId = itemId.replace(/%2F/gi, '-').replace(/%2B/gi, '-');\n  return 'https://outlook.office365.com/mail/deeplink/read/' + pathId + '?ItemID=' + itemId + '&exvsurl=1';\n}\nconst webLink = fixThreadUrl(best.webLink);\nreturn [{ json: {\n  found: true,\n  webLink,\n  conversationId: best.conversationId || '',\n  subject: best.subject || '',\n  from: (best.from && best.from.emailAddress && best.from.emailAddress.address) || '',\n  date: best.receivedDateTime || best.sentDateTime || ''\n} }];"
+        "jsCode": "// Pick the newest message across the relevance-ranked hits and return its\n// webLink \u2014 the official Graph property that OPENS that message/thread in\n// Outlook on the web. $search can't be combined with $orderby, so we sort in\n// code. If Graph errored (continueOnFail) or returned nothing, found:false.\nconst resp = $input.first().json || {};\nconst msgs = Array.isArray(resp.value) ? resp.value : [];\nlet best = null, bestMs = null;\nfor (const m of msgs) {\n  if (!m) continue;\n  const t = Date.parse(m.receivedDateTime || m.sentDateTime || '');\n  if (isNaN(t)) continue;\n  if (bestMs === null || t > bestMs) { bestMs = t; best = m; }\n}\nif (!best || !best.webLink) {\n  return [{ json: { found: false } }];\n}\n// Graph's webLink comes back as either the classic outlook.office365.com/owa/?ItemID=\u2026\n// &viewmodel=ReadMessageItem form or the new outlook.cloud.microsoft/mail/deeplink/read/\u2026\n// form \u2014 and BOTH fail with \"This message might have been moved or deleted\" (the owa form\n// redirects into the same broken new-Outlook reader). The ONE form that opens is:\n//   https://outlook.office365.com/mail/deeplink/read/<pathId>?ItemID=<ItemID>&exvsurl=1\n// where <pathId> = the ItemID with base64 '/' and '+' swapped to '-'. So extract the\n// ItemID from whatever Graph returns and rebuild that working URL before storing.\n// (Confirmed working 2026-06-25.) The app also rebuilds at render time as a backstop.\nfunction fixThreadUrl(u) {\n  if (!u || typeof u !== 'string') return u;\n  const m = /[?&]ItemID=([^&]+)/i.exec(u);\n  if (!m) return u.replace(/^(https?:\\/\\/)outlook\\.cloud\\.microsoft\\//i, '$1outlook.office365.com/');\n  const itemId = m[1];\n  const pathId = itemId.replace(/%2F/gi, '-').replace(/%2B/gi, '-');\n  return 'https://outlook.office365.com/mail/deeplink/read/' + pathId + '?ItemID=' + itemId + '&exvsurl=1';\n}\nconst webLink = fixThreadUrl(best.webLink);\nreturn [{ json: {\n  found: true,\n  webLink,\n  conversationId: best.conversationId || '',\n  graphMessageId: best.id || '',\n  subject: best.subject || '',\n  from: (best.from && best.from.emailAddress && best.from.emailAddress.address) || '',\n  date: best.receivedDateTime || best.sentDateTime || ''\n} }];"
       },
-      "id": "4810125c-e2dd-4900-af37-995736dd220c",
+      "id": "cfe7b8bd-541e-4e7d-ad2f-5c488ee59301",
       "name": "Pick newest hit",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2192,
-        304
+        4144,
+        656
       ]
     },
     {
@@ -104,13 +113,13 @@
           }
         }
       },
-      "id": "c74b1aa9-b964-49a4-a146-1d144eb72661",
+      "id": "c716ecc0-1b5f-4ce1-9c84-83f1a5dc2117",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        2400,
-        304
+        4352,
+        656
       ]
     }
   ],
@@ -166,7 +175,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "ab11eed4-1422-4b50-91e8-ededee275b6e",
+  "versionId": "977ba24e-2494-41da-b208-16aff92026e0",
   "meta": {
     "instanceId": "576f1552f658e6ccbe293a5c310c12c03fc3f516211957ae27ecb76646f5be19"
   },

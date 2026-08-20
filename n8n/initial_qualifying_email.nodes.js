@@ -141,13 +141,35 @@ const webLink = fixThreadUrl(draft.webLink || '');
 // / renderEmailLinks in index.html) -- pre-resolved at send time instead of
 // going through the workflow-11 subject/contact search, since we already
 // know exactly which message this is.
+//
+// graphMessageId (added 2026-08-19, Justin's call — "we need to save that
+// initial qualifying message id, if we're just throwing it away that's like
+// throwing away our solution"): this is the raw Graph message id from the
+// "Create draft message" response, captured BEFORE the /send call moves it
+// out of Drafts. It's the thing a future "send follow-up as a real reply"
+// workflow will need to call POST /messages/{id}/reply against — webLink and
+// conversationId alone aren't enough for that, only for a human to click open.
+//
+// REAL RISK, not yet resolved: Graph message ids are not guaranteed stable
+// across a folder move unless the request used the `Prefer:
+// IdType="ImmutableId"` header — and sending a draft IS a folder move
+// (Drafts -> Sent Items). If that header isn't already on the "Create draft
+// message" and "Send draft message" HTTP Request nodes in n8n, this captured
+// id may go stale the instant the send completes, and a later /reply call
+// against it could 404. Add that header to BOTH Graph HTTP nodes in this
+// workflow (can't edit them directly here — their config lives in
+// 33_initial_qualifying_email.json, not in this Code-node file) before
+// building anything that actually depends on this id for a real send.
+// Same open question the webLink already had (see the README's "Things to
+// verify" section) — needs a real live send to confirm either way.
 const newLink = {
   id: 'el' + Date.now(),
   label: 'Qualifying email',
   subject: rendered.subject,
   contact: rendered.to,
   url: webLink,
-  conversationId: draft.conversationId || ''
+  conversationId: draft.conversationId || '',
+  graphMessageId: draft.id || ''
 };
 const existingLinks = Array.isArray(lead.email_links) ? lead.email_links : [];
 
