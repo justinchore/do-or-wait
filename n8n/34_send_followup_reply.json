@@ -1,0 +1,616 @@
+{
+  "name": "CW \u2014 34. Send Follow-up Reply",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "send-followup-reply",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "a1b1c1d1-0001-4000-8000-000000000001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -5264,
+        1536
+      ],
+      "webhookId": "send-followup-reply"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "test-lead-only",
+              "leftValue": "={{ $json.body.leadId }}",
+              "rightValue": "le178725127597794851",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b1c1d1-0001-4000-8000-000000000002",
+      "name": "Test lead only?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -5040,
+        1536
+      ],
+      "notes": "TEMPORARY SAFETY GATE (Justin's explicit call, 2026-08-20): while this workflow is still unproven, it may only send against the Bot Fake dummy lead (le178725127597794851, contact jchoustin91@gmail.com) -- everything else gets blocked with no Graph calls made at all. Remove or replace this gate with the real batch-approve safety design once workflow 34 has been live-tested and Justin explicitly signs off on widening it. Hardcoding the id here (rather than e.g. checking a lead flag) is deliberate -- it's the simplest thing that can't accidentally match a real lead."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/leads/{{ $json.body.leadId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "options": {}
+      },
+      "id": "a1b1c1d1-0001-4000-8000-000000000003",
+      "name": "Get lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -4816,
+        1424
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "7IVvQuErxEJPoaMY",
+          "name": "Firebase_SDK_do_or_wait"
+        }
+      },
+      "continueOnFail": true,
+      "notes": "GET, not runQuery -- we already have the exact doc id from the webhook payload, no need to search. continueOnFail so a bad/deleted leadId lands here as an error body instead of killing the run; 'Pick reply target' below checks doc.fields directly and treats anything without it as not-found."
+    },
+    {
+      "parameters": {
+        "jsCode": "function fsVal(field) {\n  if (!field) return null;\n  if (field.stringValue  !== undefined) return field.stringValue;\n  if (field.integerValue !== undefined) return Number(field.integerValue);\n  if (field.doubleValue  !== undefined) return field.doubleValue;\n  if (field.booleanValue !== undefined) return field.booleanValue;\n  if (field.nullValue    !== undefined) return null;\n  if (field.mapValue) {\n    const out = {};\n    for (const [k, v] of Object.entries(field.mapValue.fields || {})) out[k] = fsVal(v);\n    return out;\n  }\n  if (field.arrayValue) return (field.arrayValue.values || []).map(fsVal);\n  return null;\n}\n\nconst doc = $json;\nconst payload = ($('Webhook').first().json.body) || {};\n\nif (!doc || !doc.fields || !doc.name) {\n  return [{ json: { found: false, reason: 'lead_not_found', leadId: payload.leadId || '' } }];\n}\n\nconst nameParts = doc.name.split('/');\nconst leadId = nameParts[nameParts.length - 1];\nconst lead = { id: leadId };\nfor (const [k, v] of Object.entries(doc.fields)) lead[k] = fsVal(v);\n\n// email_links[] is append-only (every writer in this project only ever\n// appends -- same assumption workflow 33's \"Build lead patch\" and workflow\n// 11 rely on), so the LAST entry with a non-empty graphMessageId is the\n// newest real message we can reply into. Walk backward so a later chip\n// that's missing graphMessageId (e.g. a manually resolve-thread-only link)\n// doesn't block an earlier one that has it.\nconst links = Array.isArray(lead.email_links) ? lead.email_links : [];\nlet target = null;\nfor (let i = links.length - 1; i >= 0; i--) {\n  if (links[i] && links[i].graphMessageId) { target = links[i]; break; }\n}\n\nreturn [{ json: {\n  found: !!target,\n  reason: target ? '' : 'no_graph_message_id',\n  graphMessageId: target ? target.graphMessageId : '',\n  lead,\n  leadId,\n  payloadSubject: payload.subject || '',\n  payloadBody: payload.body || '',\n  label: payload.label || '',\n  followupNum: (payload.followupNum !== undefined && payload.followupNum !== null) ? payload.followupNum : null\n} }];"
+      },
+      "id": "a1b1c1d1-0001-4000-8000-000000000004",
+      "name": "Pick reply target",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4592,
+        1424
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-target",
+              "leftValue": "={{ $json.found }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b1c1d1-0001-4000-8000-000000000005",
+      "name": "Has target?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -4368,
+        1424
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.microsoft.com/v1.0/users/justin.cho@cubework.com/messages/{{ $json.graphMessageId }}/createReply",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({}) }}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "IdType=\"ImmutableId\""
+            }
+          ]
+        }
+      },
+      "id": "a1b1c1d1-0001-4000-8000-000000000006",
+      "name": "Create reply draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -4144,
+        1312
+      ],
+      "credentials": {
+        "oAuth2Api": {
+          "id": "fg9qH0vT1CbMbZzU",
+          "name": "outlook_send"
+        }
+      },
+      "continueOnFail": true,
+      "notes": "Graph's createReply creates a DRAFT reply (pre-addressed to the original sender, subject auto-set to 'RE: ...', quoted original body already included) and returns the full message resource -- including id/conversationId/webLink, same reason workflow 33 creates-then-sends instead of calling /sendMail directly. Deliberately NOT setting the app's own subject here -- letting Graph's auto 'RE:' subject stand is safer for thread grouping than overriding it. continueOnFail so a bad/stale graphMessageId (e.g. it really did go stale across a folder move despite the ImmutableId header) surfaces as an error body instead of killing the run; 'Draft created OK?' checks for it below.\n\nREAL RISK, still unverified as of this build: whether a /createReply + edited body actually threads into the same Outlook conversation the way a manual Reply does. Workflows 33/11 only proved the graphMessageId survives capture (and, for 33, the send/folder-move) -- this is the first workflow that actually calls /createReply against one of those captured ids. Needs a real live send against Bot Fake to confirm either way."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-draft-id",
+              "leftValue": "={{ $json.id ? 1 : 0 }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b1c1d1-0001-4000-8000-000000000007",
+      "name": "Draft created OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -3920,
+        1312
+      ],
+      "notes": "Same $json.id ? 1 : 0 > 0 shape as workflow 33's 'Draft created OK?' -- continueOnFail replaces $json with {error:...} on failure, so $json.id is undefined and this coerces to 0/false either way."
+    },
+    {
+      "parameters": {
+        "jsCode": "const draft = $json; // response from \"Create reply draft\"\nconst picked = $('Pick reply target').item.json;\n\nfunction esc(s) {\n  return String(s == null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n\n// Graph HTML bodies don't auto-render raw newlines the way mailto: (and the\n// app's own plain-text follow-up drafts) do -- a bare \"\\n\\n\" just sits there\n// as literal whitespace once contentType is 'HTML' instead of becoming a\n// paragraph break. Split on blank-line paragraph breaks, escape each\n// paragraph, then turn any remaining single '\\n' inside a paragraph into\n// <br> -- matches how the app's plain-text drafts already use '\\n' for a\n// soft line break within a paragraph and '\\n\\n' between paragraphs.\nfunction textToHtml(text) {\n  const paragraphs = String(text || '').split(/\\n\\n+/).filter(p => p.trim() !== '');\n  const parasHtml = paragraphs\n    .map(p => '<div>' + esc(p).replace(/\\n/g, '<br>') + '</div>')\n    .join('<div>&nbsp;</div>');\n  return parasHtml;\n}\n\n// FIX (2026-08-20, found on the first live test): Graph's createReply\n// addresses the draft back to the SENDER of the message being replied to,\n// not to the other party -- when that message is one Justin sent himself\n// (which is what email_links[].graphMessageId always points at: the last\n// outbound message, qualifying email or a prior follow-up), the draft's\n// toRecipients comes back as Justin's own address. Confirmed live: a real\n// test send landed in Justin's own inbox instead of the lead's. So this\n// can't rely on Graph's default recipient at all -- the PATCH step below\n// now explicitly overwrites toRecipients with the lead's real email,\n// every time, regardless of what createReply defaulted to.\nconst toEmail = (picked.lead && picked.lead.email) || '';\n\n// FIX (2026-08-20, found on the second live test): no signature. Same gap\n// workflow 33 already hit and solved -- this is an automated Graph send,\n// not something going out through Justin's actual Outlook client, so there\n// is no client-side signature to fall back on the way there is for the\n// app's manual mailto: follow-ups (see project memory\n// no-signature-block-in-drafts.md -- that note is specifically about the\n// mailto: path, where Outlook auto-signs; it does not apply here). Reusing\n// the exact same signature block workflow 33's \"Render qualifying email\"\n// node already uses, verbatim, so every automated send looks consistent.\nconst signatureHtml = [\n  '<div>&nbsp;</div>',\n  '<div style=\"color:#1155CC;font-weight:bold;\">Justin Cho | Business Development Executive</div>',\n  '<div>218 Machlin Ct. | Walnut | California | 91789 | United States of America</div>',\n  '<div style=\"font-size:9pt;\">Cell: +1 (657) -620-7016</div>',\n  '<div style=\"margin-top:6px;\"><img src=\"https://www.cubework.com/logo/cubework-logo.svg\" alt=\"Cubework\" style=\"height:26px;display:block;\"></div>',\n  '<div style=\"font-size:9pt;font-style:italic;margin-top:6px;\">NOTICE: This message, and any attachments, contain(s) information that may be confidential or protected by privilege from disclosure and is intended only for the individual or entity named above. No one else may disclose copy, distribute, or use the contents of this message for any purpose. Its unauthorized use, dissemination, or duplication is strictly prohibited and may be unlawful. If you receive this message in error or are not an authorized recipient, please immediately delete the message and any attachments and notify the sender.</div>'\n].join('');\n\nconst bodyHtml = '<div style=\"font-family:Aptos,Calibri,Helvetica,sans-serif;font-size:12pt;color:rgb(0,0,0)\">' + textToHtml(picked.payloadBody) + signatureHtml + '</div>';\n\nreturn [{ json: {\n  ...picked,\n  draftId: draft.id,\n  draftConversationId: draft.conversationId || '',\n  draftWebLink: draft.webLink || '',\n  bodyHtml,\n  toEmail\n} }];"
+      },
+      "id": "a1b1c1d1-0001-4000-8000-000000000008",
+      "name": "Convert body to HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3696,
+        1312
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://graph.microsoft.com/v1.0/users/justin.cho@cubework.com/messages/{{ $json.draftId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: { contentType: 'HTML', content: $json.bodyHtml }, toRecipients: ($json.toEmail ? [{ emailAddress: { address: $json.toEmail } }] : undefined) }) }}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "IdType=\"ImmutableId\""
+            }
+          ]
+        }
+      },
+      "id": "a1b1c1d1-0001-4000-8000-000000000009",
+      "name": "PATCH reply draft body",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3472,
+        1312
+      ],
+      "credentials": {
+        "oAuth2Api": {
+          "id": "fg9qH0vT1CbMbZzU",
+          "name": "outlook_send"
+        }
+      },
+      "notes": "Replaces the draft's body entirely with our HTML (the app's follow-up text), which also drops the quoted-original-message content Graph auto-included on createReply. Deliberate for now to keep this simple and match what the app's own manual mailto: follow-ups look like -- revisit if Justin wants the quoted history kept."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.microsoft.com/v1.0/users/justin.cho@cubework.com/messages/{{ $('Convert body to HTML').item.json.draftId }}/send",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "IdType=\"ImmutableId\""
+            }
+          ]
+        }
+      },
+      "id": "a1b1c1d1-0001-4000-8000-00000000000a",
+      "name": "Send reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3248,
+        1312
+      ],
+      "credentials": {
+        "oAuth2Api": {
+          "id": "fg9qH0vT1CbMbZzU",
+          "name": "outlook_send"
+        }
+      },
+      "notes": "Graph's /send takes no request body, same as workflow 33's 'Send draft message'. Referencing 'Convert body to HTML'.item.json.draftId directly (not $json.draftId) since the PATCH node's own response may not carry it."
+    },
+    {
+      "parameters": {
+        "jsCode": "const picked = $('Convert body to HTML').item.json;\nconst lead = picked.lead;\n\n// Same webLink fixup workflows 33/11 already use -- see those files for the\n// full \"This message might have been moved or deleted\" backstory.\nfunction fixThreadUrl(u) {\n  if (!u || typeof u !== 'string') return u;\n  const m = /[?&]ItemID=([^&]+)/i.exec(u);\n  if (!m) return u.replace(/^(https?:\\/\\/)outlook\\.cloud\\.microsoft\\//i, '$1outlook.office365.com/');\n  const itemId = m[1];\n  const pathId = itemId.replace(/%2F/gi, '-').replace(/%2B/gi, '-');\n  return 'https://outlook.office365.com/mail/deeplink/read/' + pathId + '?ItemID=' + itemId + '&exvsurl=1';\n}\n\nconst now = new Date().toISOString();\nconst webLink = fixThreadUrl(picked.draftWebLink || '');\nconst followupNum = picked.followupNum;\n\n// New email_links[] entry captures THIS reply's own graphMessageId --\n// deliberately not the id we replied INTO -- so a later follow-up walks\n// forward onto this message instead of always replying to the original\n// qualifying email. Same shape workflows 33/11 already write, so the app's\n// existing chip rendering and reply-refresh polling need no new UI work.\nconst newLink = {\n  id: 'el' + Date.now(),\n  label: picked.label ? ('Follow-up: ' + picked.label) : 'Follow-up',\n  subject: picked.payloadSubject || '',\n  contact: lead.contact || lead.email || '',\n  url: webLink,\n  conversationId: picked.draftConversationId || '',\n  graphMessageId: picked.draftId || ''\n};\nconst existingLinks = Array.isArray(lead.email_links) ? lead.email_links : [];\n\nconst newEntry = {\n  id: 'e' + Date.now(),\n  text: 'Sent follow-up' + (picked.label ? (' (' + picked.label + ')') : '') + ' as a real Outlook reply' + (followupNum != null ? (', #' + followupNum) : '') + '.',\n  kind: 'email',\n  type: 'wait',\n  dir: 'out',\n  done: false,\n  createdAt: now,\n  ...(followupNum != null ? { followupNum } : {})\n};\nconst existingEntries = Array.isArray(lead.entries) ? lead.entries : [];\n\n// Same minimal JS -> Firestore REST encoder workflows 33/17 already use.\nfunction toFs(v) {\n  if (v === null || v === undefined) return { nullValue: null };\n  if (typeof v === 'boolean') return { booleanValue: v };\n  if (typeof v === 'number') return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };\n  if (Array.isArray(v)) return { arrayValue: { values: v.map(toFs) } };\n  if (typeof v === 'object') {\n    const fields = {};\n    for (const [k, val] of Object.entries(v)) fields[k] = toFs(val);\n    return { mapValue: { fields } };\n  }\n  return { stringValue: String(v) };\n}\n\n// last_followup_* glance fields (round 6 of the 2026-08-19 escalation work,\n// see project memory followup-auto-escalation.md) -- this workflow is now\n// the thing responsible for keeping them current, since it replaces the\n// app's own logFollowupSent() for this send path.\nconst patchFields = {\n  updatedAt: toFs(now),\n  email_links: toFs([...existingLinks, newLink]),\n  entries: toFs([...existingEntries, newEntry]),\n  last_followup_label: toFs(picked.label || ''),\n  last_followup_num: toFs(followupNum != null ? followupNum : null),\n  last_followup_sent_at: toFs(now)\n};\n\nreturn [{ json: {\n  leadId: picked.leadId,\n  patchBody: { fields: patchFields },\n  updateMask: Object.keys(patchFields).join('&updateMask.fieldPaths='),\n  contact: lead.contact || lead.company || '',\n  company: lead.company || '',\n  label: picked.label || ''\n} }];"
+      },
+      "id": "a1b1c1d1-0001-4000-8000-00000000000b",
+      "name": "Build lead patch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3024,
+        1312
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/leads/{{ $json.leadId }}?updateMask.fieldPaths={{ $json.updateMask }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.patchBody) }}",
+        "options": {}
+      },
+      "id": "a1b1c1d1-0001-4000-8000-00000000000c",
+      "name": "Update lead in Firestore",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2800,
+        1312
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "7IVvQuErxEJPoaMY",
+          "name": "Firebase_SDK_do_or_wait"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://default091ba9e63b95480c82d790e84ab87a.eb.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/22/workflows/03323e8fee6544199cb855987e85d5df/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=-7VK5Ox4jpxIc1mymO0XFeHnUTUBO9LKIFQFA1hxpM4",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: \"\", attachments: [ { contentType: \"application/vnd.microsoft.card.adaptive\", content: { type: \"AdaptiveCard\", $schema: \"http://adaptivecards.io/schemas/adaptive-card.json\", version: \"1.4\", body: [ { type: \"TextBlock\", text: \"\u2709\ufe0f Follow-up Sent (reply)\", weight: \"Bolder\", size: \"Medium\", color: \"Accent\" }, { type: \"TextBlock\", text: $('Build lead patch').item.json.company, weight: \"Bolder\", size: \"Large\", wrap: true }, { type: \"FactSet\", facts: [ { title: \"Contact\", value: $('Build lead patch').item.json.contact }, { title: \"Follow-up\", value: $('Build lead patch').item.json.label } ] } ] } } ] }) }}",
+        "options": {}
+      },
+      "id": "a1b1c1d1-0001-4000-8000-00000000000d",
+      "name": "Notify Teams - Follow-up Sent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2576,
+        1312
+      ],
+      "continueOnFail": true,
+      "notes": "Same Power Automate/Teams webhook workflows 32/33 already post to -- reused as-is. continueOnFail so a Teams hiccup never blocks the webhook response (Firestore's already updated by this point)."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, leadId: $('Build lead patch').item.json.leadId, graphMessageId: $('Convert body to HTML').item.json.draftId }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "id": "a1b1c1d1-0001-4000-8000-00000000000e",
+      "name": "Respond - success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -2352,
+        1312
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: 'blocked_not_test_lead' }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "id": "a1b1c1d1-0001-4000-8000-00000000000f",
+      "name": "Respond - blocked (test lead only)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -5040,
+        1712
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: $json.reason || 'no_thread_found', leadId: $json.leadId }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "id": "a1b1c1d1-0001-4000-8000-000000000010",
+      "name": "Respond - no thread found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -4368,
+        1600
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: 'draft_create_failed', detail: ($json.error || null) }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "id": "a1b1c1d1-0001-4000-8000-000000000011",
+      "name": "Respond - draft create failed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -3920,
+        1488
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Test lead only?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test lead only?": {
+      "main": [
+        [
+          {
+            "node": "Get lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond - blocked (test lead only)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get lead": {
+      "main": [
+        [
+          {
+            "node": "Pick reply target",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick reply target": {
+      "main": [
+        [
+          {
+            "node": "Has target?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has target?": {
+      "main": [
+        [
+          {
+            "node": "Create reply draft",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond - no thread found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create reply draft": {
+      "main": [
+        [
+          {
+            "node": "Draft created OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft created OK?": {
+      "main": [
+        [
+          {
+            "node": "Convert body to HTML",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond - draft create failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert body to HTML": {
+      "main": [
+        [
+          {
+            "node": "PATCH reply draft body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PATCH reply draft body": {
+      "main": [
+        [
+          {
+            "node": "Send reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send reply": {
+      "main": [
+        [
+          {
+            "node": "Build lead patch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build lead patch": {
+      "main": [
+        [
+          {
+            "node": "Update lead in Firestore",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update lead in Firestore": {
+      "main": [
+        [
+          {
+            "node": "Notify Teams - Follow-up Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Teams - Follow-up Sent": {
+      "main": [
+        [
+          {
+            "node": "Respond - success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "0a1b2c3d-0000-4000-8000-000000000034",
+  "meta": {
+    "instanceId": "576f1552f658e6ccbe293a5c310c12c03fc3f516211957ae27ecb76646f5be19"
+  },
+  "id": "cwSendFollowupReply34",
+  "tags": []
+}

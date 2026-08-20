@@ -890,6 +890,7 @@
       <button class="lf-btn"        data-stage="proposal"    onclick="setLeadFilter('proposal')">Proposal</button>
       <button class="lf-btn"        data-stage="negotiation" onclick="setLeadFilter('negotiation')">Negotiation</button>
       <button class="lf-btn"        data-stage="followup"    id="followup-filter-btn" onclick="setLeadFilter('followup')">🔔 Follow-ups</button>
+      <button class="lf-btn"        onclick="openBatchApprove()">📋 Batch Approve</button>
       <button class="lf-btn"        data-stage="waitlist"    onclick="setLeadFilter('waitlist')">⏳ Waitlist</button>
       <button class="lf-btn" id="hide-wl-btn" style="margin-left:auto" onclick="toggleHideWaitlist()">Hide ⏳</button>
     </div>
@@ -1658,6 +1659,25 @@
         <button class="btn dark" id="fuq-send-btn" onclick="fuqSend()">✉️ Send</button>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- Batch Approve — review + send multiple due follow-ups as real Outlook
+     replies (n8n workflow 34), grouped by which follow-up # each is about to
+     get, added 2026-08-20 per Justin's ask ("categorized by the followup
+     number... I want to be able to clearly see the history"). Separate from
+     the single-card daily queue above (fuqueue-overlay) — that one still
+     drives the manual mailto: path; this one is the batch/automated-send
+     path, gated server-side to the Bot Fake test lead only until Justin
+     widens workflow 34's safety gate. -->
+<div class="overlay" id="batch-overlay">
+  <div class="modal" style="max-width:640px;max-height:88vh;overflow-y:auto;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+      <h3 style="margin-bottom:0;">📋 Batch Approve</h3>
+      <button class="btn" onclick="closeBatchApprove()">Close</button>
+    </div>
+    <div class="modal-sub">Review each draft, edit if needed, then send. Grouped by which follow-up # this would be for that lead.</div>
+    <div id="batch-body"></div>
   </div>
 </div>
 
@@ -4540,6 +4560,298 @@ function logFollowupSent(lead, { subject, body, label }) {
   persistItem(lead, 'leads');   // mailto: doesn't unload the page, so this write completes
 }
 
+// \u2550\u2550\u2550 BATCH APPROVE (added 2026-08-20) \u2550\u2550\u2550
+// Sends follow-ups as REAL Outlook replies via n8n workflow 34, reviewed in
+// bulk instead of one lead at a time (Justin: "review + send ~30 due leads
+// in ~2 minutes"). Grouped by nextFollowupNum(lead) \u2014 already-computed
+// elsewhere in this file \u2014 so "5 going out as #1, 7 as #2" is free, no
+// new field needed.
+//
+// Deliberately built ONCE per open from a snapshot of `leads`, and does NOT
+// re-render on every live Firestore tick the way the single-card daily queue
+// (fuQueue/renderFuqCard) does. That queue is one draft at a time, safe to
+// rebuild wholesale on every snapshot; this view can have a dozen+ editable
+// text fields open simultaneously, and workflow 34's own sends trigger
+// exactly the kind of snapshot update that would otherwise wipe whatever
+// Justin is mid-editing in a different row. A short staleness window (a lead
+// that stops being due mid-session just sits there until the view is closed
+// and reopened) is the accepted tradeoff \u2014 a successful Send instead
+// removes just that one row directly from the DOM, and Skip is local/
+// session-only, same semantics as the existing single-card queue's Skip.
+//
+// Still gated to Bot Fake only, server-side, in workflow 34 itself \u2014
+// this view will list every real due lead, but Send comes back
+// blocked_not_test_lead for anything that isn't Bot Fake until Justin
+// explicitly says to widen that gate. Do not add a client-side lead-id check
+// here to "fix" that \u2014 the gate belongs in n8n, not duplicated here.
+let batchMeta = new Map(); // leadId -> { followupNum, label }
+
+function openBatchApprove() {
+  const active = leads.filter(l => !l.archived && !['executed', 'dead'].includes(l.stage || 'lead'));
+  // Post-tour follow-ups excluded on purpose (Justin's call, 2026-08-20) — a
+  // lead at stage 'tour' whose tour date has passed needs a follow-up that
+  // actually references what happened on the tour, not a generic batch
+  // template. Keep handling those one at a time in the existing single-card
+  // queue / lead detail panel instead of blasting the Post-tour template here.
+  const due = active.filter(l => isFollowupDue(l) && l.stage !== 'tour');
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const rows = due.map(lead => {
+    const draft = (lead.followup_draft && lead.followup_draft.body) ? lead.followup_draft : followupMsgFor(lead);
+    return {
+      leadId: lead.id,
+      lead, // full lead object, needed for the history panel below
+      company: lead.company || lead.contact || 'Lead',
+      contact: lead.contact || '',
+      followupNum: nextFollowupNum(lead),
+      label: draft.label || '',
+      subject: draft.subject || '',
+      body: draft.body || '',
+      days: contactInfo(lead).days,
+      // workflow 34 can only reply into a thread it already knows about — most
+      // due leads today (found live, 2026-08-20) have never had one linked at
+      // all. hasThread drives whether Send or "Find thread" shows; hasEmail
+      // distinguishes the low-risk auto-resolvable case (search Graph by a
+      // real participants: email) from the handful with only a name on file
+      // (free-text search, meaningfully less precise — flagged, not auto-run).
+      hasThread: (lead.email_links || []).some(x => x && x.graphMessageId),
+      hasEmail: !!(lead.email && EMAIL_RE.test(lead.email)),
+    };
+  });
+  document.getElementById('batch-overlay').classList.add('open');
+  renderBatchApprove(rows);
+}
+
+function closeBatchApprove() {
+  document.getElementById('batch-overlay').classList.remove('open');
+}
+
+// Per-lead context so a batch row is an actual decision, not a blind send —
+// same idea as renderFuqStory() in the single-card queue, but collapsed by
+// default here (many rows on screen at once, unlike that one-at-a-time view)
+// and toggled via plain show/hide rather than a re-render, so opening one
+// lead's history never disturbs an edit in progress on another row.
+function batchHistoryHtml(lead) {
+  const entries = (lead.entries || []).slice()
+    .sort((a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0));
+  const entriesHtml = entries.length ? entries.map(e => {
+    const when = `${fmtDate(e.createdAt)}${e.kind ? ' \u00b7 ' + esc(e.kind) : ''}`;
+    return `<div style="padding:6px 0;border-bottom:1px solid var(--border);">
+      <div style="font-size:11px;color:var(--text2);font-weight:600;">${when}</div>
+      <div style="font-size:12px;color:var(--text);white-space:pre-wrap;">${esc(e.text || '')}</div>
+    </div>`;
+  }).join('') : `<div style="font-size:12px;color:var(--text2);padding:6px 0;">No updates logged on this lead yet.</div>`;
+  return `
+    ${renderLeadDetails(lead)}
+    ${renderFuqSourceLine(lead)}
+    <div style="max-height:200px;overflow-y:auto;border:1.5px solid var(--border);border-radius:8px;padding:0 10px;margin-top:6px;">${entriesHtml}</div>
+  `;
+}
+
+function toggleBatchHistory(leadId) {
+  const el = document.getElementById(`batch-history-${leadId}`);
+  const arrow = document.getElementById(`batch-history-arrow-${leadId}`);
+  if (!el) return;
+  const isOpen = el.style.display !== 'none';
+  el.style.display = isOpen ? 'none' : 'block';
+  if (arrow) arrow.textContent = isOpen ? '\u25b2 hide' : '\u25bc show';
+}
+
+function renderBatchApprove(rows) {
+  const wrap = document.getElementById('batch-body');
+  batchMeta.clear();
+  if (!rows.length) {
+    wrap.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text2);font-size:14px;">Nothing due right now.</div>`;
+    return;
+  }
+  const groups = new Map();
+  rows.forEach(r => {
+    batchMeta.set(r.leadId, { followupNum: r.followupNum, label: r.label });
+    if (!groups.has(r.followupNum)) groups.set(r.followupNum, []);
+    groups.get(r.followupNum).push(r);
+  });
+  const groupNums = Array.from(groups.keys()).sort((a, b) => a - b);
+  const resolvableCount = rows.filter(r => !r.hasThread && r.hasEmail).length;
+  const findAllBanner = resolvableCount ? `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;border:1.5px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:14px;background:var(--bg);">
+      <div style="font-size:12px;color:var(--text2);">\ud83d\udd17 ${resolvableCount} lead${resolvableCount !== 1 ? 's' : ''} below have no linked thread yet \u2014 Send is disabled for them until one's found.</div>
+      <button class="btn dark" id="batch-resolve-all-btn" onclick="batchResolveAll()">Find all threads</button>
+    </div>` : '';
+  wrap.innerHTML = findAllBanner + groupNums.map(num => {
+    // longest-quiet-first within each group, same urgency convention as leadAttentionSort
+    const groupRows = groups.get(num).slice().sort((a, b) => (b.days ?? -1) - (a.days ?? -1));
+    const rowsHtml = groupRows.map(r => `
+      <div class="batch-row" id="batch-row-${r.leadId}" style="border:1.5px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;gap:8px;">
+          <div style="font-weight:700;font-size:14px;">${esc(r.company)}${r.contact ? ` \u2014 ${esc(r.contact)}` : ''}</div>
+          <div style="font-size:11px;color:var(--text2);white-space:nowrap;">${r.days != null ? r.days + 'd quiet' : ''}${r.label ? ' \u00b7 ' + esc(r.label) : ''}</div>
+        </div>
+        <div style="cursor:pointer;font-size:12px;color:var(--text2);margin-bottom:6px;" onclick="toggleBatchHistory('${r.leadId}')">
+          <span id="batch-history-arrow-${r.leadId}">\u25bc show</span> \ud83d\udcd6 History (${(r.lead.entries || []).length} update${(r.lead.entries || []).length !== 1 ? 's' : ''})
+        </div>
+        <div id="batch-history-${r.leadId}" style="display:none;margin-bottom:8px;">${batchHistoryHtml(r.lead)}</div>
+        <input id="batch-subject-${r.leadId}" value="${esc(r.subject)}"
+          style="width:100%;box-sizing:border-box;padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px;background:var(--surface);color:var(--text);" />
+        <textarea id="batch-body-${r.leadId}"
+          style="width:100%;box-sizing:border-box;padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;min-height:90px;background:var(--surface);color:var(--text);">${esc(r.body)}</textarea>
+        <div id="batch-status-${r.leadId}" style="font-size:11px;margin-top:4px;"></div>
+        <div id="batch-actions-${r.leadId}" style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;">
+          ${batchActionsHtml(r)}
+        </div>
+      </div>`).join('');
+    return `<div style="margin-bottom:18px;">
+      <div style="font-weight:700;font-size:13px;color:var(--text2);margin-bottom:8px;">Follow-up #${num} (${groupRows.length})</div>
+      ${rowsHtml}
+    </div>`;
+  }).join('');
+}
+
+// Per-row action set — Send/Skip once a real thread is known, "Find thread"
+// (low-risk, has a real email to search on) or a manual-review flag
+// (name-only contact, no email) otherwise. batchMeta still needs the row's
+// followupNum/label even in the no-thread states so a later resolve+send
+// has what it needs without re-deriving anything.
+function batchActionsHtml(r) {
+  if (r.hasThread) {
+    return `<button class="btn" onclick="batchSkip('${r.leadId}')">Skip</button>
+            <button class="btn dark" id="batch-send-btn-${r.leadId}" onclick="batchSend('${r.leadId}')">\u2709\ufe0f Send</button>`;
+  }
+  if (r.hasEmail) {
+    return `<button class="btn" onclick="batchSkip('${r.leadId}')">Skip</button>
+            <button class="btn dark" id="batch-resolve-btn-${r.leadId}" onclick="batchResolveThread('${r.leadId}')">\ud83d\udd17 Find thread</button>`;
+  }
+  return `<div style="font-size:11px;color:#9a3412;text-align:right;flex:1;">\u26a0\ufe0f No email on file \u2014 link this lead's thread manually (Leads tab \u2192 \ufe0f\ud83d\udd17 Link email thread) before sending here.</div>
+          <button class="btn" onclick="batchSkip('${r.leadId}')">Skip</button>`;
+}
+
+function batchSkip(leadId) {
+  batchMeta.delete(leadId);
+  const row = document.getElementById(`batch-row-${leadId}`);
+  if (row) row.remove();
+}
+
+async function batchSend(leadId) {
+  const meta = batchMeta.get(leadId);
+  const subjectEl = document.getElementById(`batch-subject-${leadId}`);
+  const bodyEl = document.getElementById(`batch-body-${leadId}`);
+  const statusEl = document.getElementById(`batch-status-${leadId}`);
+  const btn = document.getElementById(`batch-send-btn-${leadId}`);
+  if (!meta || !subjectEl || !bodyEl) return;
+  const subject = subjectEl.value;
+  const body = bodyEl.value;
+  btn.disabled = true;
+  btn.textContent = 'Sending\u2026';
+  statusEl.textContent = '';
+  try {
+    const res = await fetch(SEND_FOLLOWUP_REPLY_WEBHOOK, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ leadId, subject, body, label: meta.label, followupNum: meta.followupNum }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (data && data.ok) {
+      batchMeta.delete(leadId);
+      const row = document.getElementById(`batch-row-${leadId}`);
+      if (row) row.remove();
+    } else {
+      const err = (data && data.error) || 'unknown_error';
+      statusEl.textContent = err === 'blocked_not_test_lead'
+        ? '\u26d4 Blocked \u2014 workflow 34\'s safety gate only allows the test lead right now.'
+        : `\u26a0\ufe0f ${err}`;
+      statusEl.style.color = '#b91c1c';
+      btn.disabled = false;
+      btn.textContent = '\u2709\ufe0f Send';
+    }
+  } catch (e) {
+    statusEl.textContent = '\u26a0\ufe0f Could not reach the send-followup-reply webhook.';
+    statusEl.style.color = '#b91c1c';
+    btn.disabled = false;
+    btn.textContent = '\u2709\ufe0f Send';
+  }
+}
+
+// Backfill a missing graphMessageId by asking workflow 11's resolve-thread
+// webhook to search Graph by the lead's real email alone (no subject needed
+// \u2014 Graph's participants: filter is precise on its own). Reuses the exact
+// same webhook/response-tolerance pattern resolveThreadLink() already uses
+// for the manual per-lead link flow (2026-08-20: found live that 62 of 64
+// due leads had never had a thread linked at all, only 2 could actually be
+// sent to via workflow 34). On a match, appends a real email_links[] entry
+// and persists it \u2014 same write the manual flow already makes, just
+// triggered in bulk instead of one click at a time. Swaps this row straight
+// to the normal Send/Skip actions on success, no full re-render.
+async function batchResolveThread(leadId) {
+  const lead = leads.find(l => l.id === leadId);
+  const statusEl = document.getElementById(`batch-status-${leadId}`);
+  const btn = document.getElementById(`batch-resolve-btn-${leadId}`);
+  if (!lead || !statusEl) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Searching\u2026'; }
+  statusEl.textContent = '';
+  statusEl.style.color = '';
+  try {
+    const res = await fetch(RESOLVE_THREAD_WEBHOOK, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subject: '', contact: lead.email || '' }),
+    });
+    const text = await res.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch (_) {}
+    if (Array.isArray(data)) data = data[0];
+    if (typeof data === 'string') { try { data = JSON.parse(data); } catch (_) {} }
+    if (res.ok && data && data.found && data.webLink) {
+      const newLink = {
+        id: 'el' + Date.now(),
+        label: data.subject || 'Auto-linked thread',
+        subject: data.subject || '',
+        contact: lead.email || lead.contact || '',
+        url: data.webLink,
+        conversationId: data.conversationId || '',
+        graphMessageId: data.graphMessageId || '',
+        lastMsgDate: data.date || '',
+      };
+      if (!Array.isArray(lead.email_links)) lead.email_links = [];
+      lead.email_links.push(newLink);
+      lead.updatedAt = new Date().toISOString();
+      await persistItem(lead, 'leads');
+      const actionsWrap = document.getElementById(`batch-actions-${leadId}`);
+      if (actionsWrap) {
+        actionsWrap.innerHTML = batchActionsHtml({ leadId, hasThread: true, hasEmail: true });
+      }
+      statusEl.style.color = '#15803d';
+      statusEl.textContent = `\u2705 Linked: "${data.subject || '(no subject)'}"${data.date ? ' \u00b7 ' + fmtDate(data.date) : ''} \u2014 check this looks right before sending.`;
+    } else {
+      statusEl.style.color = '#b91c1c';
+      statusEl.textContent = '\u26a0\ufe0f No matching thread found in your mailbox for this contact.';
+      if (btn) { btn.disabled = false; btn.textContent = '\ud83d\udd17 Find thread'; }
+    }
+  } catch (e) {
+    statusEl.style.color = '#b91c1c';
+    statusEl.textContent = '\u26a0\ufe0f Could not reach the resolve-thread webhook.';
+    if (btn) { btn.disabled = false; btn.textContent = '\ud83d\udd17 Find thread'; }
+  }
+}
+
+// Runs batchResolveThread across every row currently showing "Find thread"
+// (hasEmail && !hasThread), staggered a bit so 50+ leads don't all hit Graph
+// simultaneously. Deliberately skips the name-only (no-email) rows entirely
+// \u2014 those stay flagged for a manual link, per Justin's call that a
+// free-text name-only search is too imprecise to run unattended.
+let batchResolveAllRunning = false;
+async function batchResolveAll() {
+  if (batchResolveAllRunning) return;
+  const btn = document.getElementById('batch-resolve-all-btn');
+  const targets = Array.from(document.querySelectorAll('[id^="batch-resolve-btn-"]'))
+    .map(el => el.id.replace('batch-resolve-btn-', ''));
+  if (!targets.length) return;
+  batchResolveAllRunning = true;
+  if (btn) btn.disabled = true;
+  for (let i = 0; i < targets.length; i++) {
+    if (btn) btn.textContent = `Finding threads\u2026 (${i + 1}/${targets.length})`;
+    await batchResolveThread(targets[i]);
+    await new Promise(r => setTimeout(r, 400)); // stagger — avoid hammering Graph
+  }
+  batchResolveAllRunning = false;
+  if (btn) btn.remove(); // nothing left for it to do once this pass is done
+}
+
 function openFollowupEmail(leadId, e) {
   if (e) e.stopPropagation();
   const lead = leads.find(l => l.id === leadId);
@@ -5212,6 +5524,7 @@ const ASSISTANT_CHAT_WEBHOOK = `${PROXY}/webhook/assistant-chat`; // 🤖 Assist
 const OUTREACH_REPLY_SCAN_WEBHOOK = `${PROXY}/webhook/outreach-reply-scan`; // manual "⟳ Check now" on Outreach + Prop Outreach — runs the next reply scan immediately (n8n workflow 23)
 const SITE_OUTREACH_DISCOVER_WEBHOOK = `${PROXY}/webhook/site-outreach-discover-zoominfo`; // 📍 Nearby Prospects "🔎 Discover" button: {propId,address} → ZoomInfo free Search Companies per category → site_outreach/{cid} (n8n workflow 30; CoreClaw/workflow 25 retired 2026-08-03)
 const NP_RESEARCH_WEBHOOK = `${PROXY}/webhook/nearby-prospect-research`; // 📍 Nearby Prospects "🔎 Research & draft" — business name/website/category → Claude web research + 4-hook draft, same engine as Outreach's workflow 13 (n8n workflow 26)
+const SEND_FOLLOWUP_REPLY_WEBHOOK = `${PROXY}/webhook/send-followup-reply`; // leadId+subject+body+label+followupNum → real Outlook reply via Graph (n8n workflow 34); server-side safety gate currently allows only the Bot Fake test lead
 
 // Listen to ALL availability docs (scales to multiple locations)
 unsubAvail = liveSnapshot(collection(db, 'availability'), snap => {
@@ -8715,6 +9028,20 @@ window.generateFollowup    = generateFollowup;
 window.openGeneratedFollowupEmail = openGeneratedFollowupEmail;
 window.copyGeneratedFollowupMsg   = copyGeneratedFollowupMsg;
 window.dismissFollowupDraft       = dismissFollowupDraft;
+window.openBatchApprove    = openBatchApprove;
+window.closeBatchApprove   = closeBatchApprove;
+window.batchSend           = batchSend;
+window.batchSkip           = batchSkip;
+window.toggleBatchHistory  = toggleBatchHistory;
+window.batchResolveThread  = batchResolveThread;
+window.batchResolveAll     = batchResolveAll;
+// Debug helpers only — not called anywhere in the UI. `leads` and functions
+// like isFollowupDue live in this module's scope, invisible to the browser
+// console (global scope) otherwise. Lets Justin (or a future debugging
+// session) run quick console checks against live app state.
+window.getLeads = function() { return leads; };
+window.isFollowupDue = isFollowupDue;
+window.nextFollowupNum = nextFollowupNum;
 </script>
 </body>
 </html>
