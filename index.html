@@ -4678,9 +4678,19 @@ function batchHistoryHtml(lead) {
     .sort((a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0));
   const entriesHtml = entries.length ? entries.map(e => {
     const when = `${fmtDate(e.createdAt)}${e.kind ? ' \u00b7 ' + esc(e.kind) : ''}`;
+    // A follow-up-sent entry's own text is just a one-line summary ("\u2709\ufe0f
+    // Follow-up #2 sent \u2014 Nudge") \u2014 the actual subject/body that went out
+    // lives in entry.notes[] (same place a manual note goes), which this
+    // panel previously never rendered at all (2026-08-21, Justin's ask: "I
+    // need to see the whole email content, not just the followup #"). Show
+    // every note's full text here, not just a count.
+    const notesHtml = (e.notes || []).filter(n => n.text).map(n =>
+      `<div style="margin-top:4px;padding:6px 8px;border-left:2px solid var(--border);font-size:11px;color:var(--text2);white-space:pre-wrap;">${esc(n.text)}</div>`
+    ).join('');
     return `<div style="padding:6px 0;border-bottom:1px solid var(--border);">
       <div style="font-size:11px;color:var(--text2);font-weight:600;">${when}</div>
       <div style="font-size:12px;color:var(--text);white-space:pre-wrap;">${esc(e.text || '')}</div>
+      ${notesHtml}
     </div>`;
   }).join('') : `<div style="font-size:12px;color:var(--text2);padding:6px 0;">No updates logged on this lead yet.</div>`;
   return `
