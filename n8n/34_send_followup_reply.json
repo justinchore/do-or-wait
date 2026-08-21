@@ -1,5 +1,5 @@
 {
-  "name": "CW \u2014 34. Send Follow-up Reply",
+  "name": "CW — 34. Send Follow-up Reply",
   "nodes": [
     {
       "parameters": {
@@ -30,12 +30,12 @@
           },
           "conditions": [
             {
-              "id": "test-lead-only",
+              "id": "has-lead-id",
               "leftValue": "={{ $json.body.leadId }}",
-              "rightValue": "le178725127597794851",
+              "rightValue": "",
               "operator": {
                 "type": "string",
-                "operation": "equals"
+                "operation": "notEquals"
               }
             }
           ],
@@ -44,14 +44,14 @@
         "options": {}
       },
       "id": "a1b1c1d1-0001-4000-8000-000000000002",
-      "name": "Test lead only?",
+      "name": "Has leadId?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
         -5040,
         1536
       ],
-      "notes": "TEMPORARY SAFETY GATE (Justin's explicit call, 2026-08-20): while this workflow is still unproven, it may only send against the Bot Fake dummy lead (le178725127597794851, contact jchoustin91@gmail.com) -- everything else gets blocked with no Graph calls made at all. Remove or replace this gate with the real batch-approve safety design once workflow 34 has been live-tested and Justin explicitly signs off on widening it. Hardcoding the id here (rather than e.g. checking a lead flag) is deliberate -- it's the simplest thing that can't accidentally match a real lead."
+      "notes": "GATE WIDENED 2026-08-20 per Justin explicit sign-off: the hardcoded Bot-Fake-only restriction is removed. This now only checks that a leadId was actually passed in the request body -- a basic sanity guard, not a lead allowlist. Real safety now lives where Justin actually reviews before sending: Batch Approve's per-row UI (Send is only shown once a real graphMessageId thread is resolved) and the downstream \"Has target?\" node, which still refuses to send if no resolved email thread exists on the lead. Leads with no email on file are expected and fine -- they simply never get a Send button in Batch Approve (no_graph_message_id / no thread to resolve)."
     },
     {
       "parameters": {
@@ -320,7 +320,7 @@
         "url": "https://default091ba9e63b95480c82d790e84ab87a.eb.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/22/workflows/03323e8fee6544199cb855987e85d5df/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=-7VK5Ox4jpxIc1mymO0XFeHnUTUBO9LKIFQFA1hxpM4",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ text: \"\", attachments: [ { contentType: \"application/vnd.microsoft.card.adaptive\", content: { type: \"AdaptiveCard\", $schema: \"http://adaptivecards.io/schemas/adaptive-card.json\", version: \"1.4\", body: [ { type: \"TextBlock\", text: \"\u2709\ufe0f Follow-up Sent (reply)\", weight: \"Bolder\", size: \"Medium\", color: \"Accent\" }, { type: \"TextBlock\", text: $('Build lead patch').item.json.company, weight: \"Bolder\", size: \"Large\", wrap: true }, { type: \"FactSet\", facts: [ { title: \"Contact\", value: $('Build lead patch').item.json.contact }, { title: \"Follow-up\", value: $('Build lead patch').item.json.label } ] } ] } } ] }) }}",
+        "jsonBody": "={{ JSON.stringify({ text: \"\", attachments: [ { contentType: \"application/vnd.microsoft.card.adaptive\", content: { type: \"AdaptiveCard\", $schema: \"http://adaptivecards.io/schemas/adaptive-card.json\", version: \"1.4\", body: [ { type: \"TextBlock\", text: \"✉️ Follow-up Sent (reply)\", weight: \"Bolder\", size: \"Medium\", color: \"Accent\" }, { type: \"TextBlock\", text: $('Build lead patch').item.json.company, weight: \"Bolder\", size: \"Large\", wrap: true }, { type: \"FactSet\", facts: [ { title: \"Contact\", value: $('Build lead patch').item.json.contact }, { title: \"Follow-up\", value: $('Build lead patch').item.json.label } ] } ] } } ] }) }}",
         "options": {}
       },
       "id": "a1b1c1d1-0001-4000-8000-00000000000d",
@@ -362,7 +362,7 @@
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ ok: false, error: 'blocked_not_test_lead' }) }}",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: 'missing_lead_id' }) }}",
         "options": {
           "responseCode": 200,
           "responseHeaders": {
@@ -376,7 +376,7 @@
         }
       },
       "id": "a1b1c1d1-0001-4000-8000-00000000000f",
-      "name": "Respond - blocked (test lead only)",
+      "name": "Respond - missing leadId",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
@@ -441,14 +441,14 @@
       "main": [
         [
           {
-            "node": "Test lead only?",
+            "node": "Has leadId?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Test lead only?": {
+    "Has leadId?": {
       "main": [
         [
           {
@@ -459,7 +459,7 @@
         ],
         [
           {
-            "node": "Respond - blocked (test lead only)",
+            "node": "Respond - missing leadId",
             "type": "main",
             "index": 0
           }

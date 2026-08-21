@@ -2852,6 +2852,7 @@ function isFollowupDue(lead) {
   if (['executed', 'dead'].includes(lead.stage || 'lead')) return false;
   if (FOLLOWUP_STOP_MILESTONES.includes(lead.yardi_milestone)) return false;
   if (lead.seq_status === 'replied') return false;
+  if (lead.followup_paused) return false;   // indefinite pause — see batchPause/batchResume; distinct from timed Snooze above
   if (isFollowupSnoozed(lead)) return false;
   if (isTourPending(lead)) return false;   // NOT a full stop — conditional only, see isTourPending
   const { bizDays, dir } = contactInfo(lead);
@@ -4586,6 +4587,8 @@ function logFollowupSent(lead, { subject, body, label }) {
 // here to "fix" that \u2014 the gate belongs in n8n, not duplicated here.
 let batchMeta = new Map(); // leadId -> { followupNum, label }
 
+const BATCH_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 function openBatchApprove() {
   const active = leads.filter(l => !l.archived && !['executed', 'dead'].includes(l.stage || 'lead'));
   // Post-tour follow-ups excluded on purpose (Justin's call, 2026-08-20) — a
@@ -4593,8 +4596,13 @@ function openBatchApprove() {
   // actually references what happened on the tour, not a generic batch
   // template. Keep handling those one at a time in the existing single-card
   // queue / lead detail panel instead of blasting the Post-tour template here.
-  const due = active.filter(l => isFollowupDue(l) && l.stage !== 'tour');
-  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  //
+  // Paused leads (followup_paused, added 2026-08-21) are included here even
+  // though isFollowupDue() now returns false for them elsewhere in the app
+  // (badge, single-card queue, sort) — Justin's ask was specifically to keep
+  // seeing a paused lead in Batch Approve, marked paused with a timestamp,
+  // rather than having it silently vanish once paused.
+  const due = active.filter(l => (isFollowupDue(l) || l.followup_paused) && l.stage !== 'tour');
   const rows = due.map(lead => {
     const draft = (lead.followup_draft && lead.followup_draft.body) ? lead.followup_draft : followupMsgFor(lead);
     return {
@@ -4614,7 +4622,9 @@ function openBatchApprove() {
       // real participants: email) from the handful with only a name on file
       // (free-text search, meaningfully less precise — flagged, not auto-run).
       hasThread: (lead.email_links || []).some(x => x && x.graphMessageId),
-      hasEmail: !!(lead.email && EMAIL_RE.test(lead.email)),
+      hasEmail: !!(lead.email && BATCH_EMAIL_RE.test(lead.email)),
+      paused: !!lead.followup_paused,
+      pausedAt: lead.followup_paused_at || '',
     };
   });
   document.getElementById('batch-overlay').classList.add('open');
@@ -4665,7 +4675,7 @@ function renderBatchApprove(rows) {
   }
   const groups = new Map();
   rows.forEach(r => {
-    batchMeta.set(r.leadId, { followupNum: r.followupNum, label: r.label });
+    batchMeta.set(r.leadId, { followupNum: r.followupNum, label: r.label, paused: r.paused, pausedAt: r.pausedAt });
     if (!groups.has(r.followupNum)) groups.set(r.followupNum, []);
     groups.get(r.followupNum).push(r);
   });
@@ -4682,7 +4692,7 @@ function renderBatchApprove(rows) {
     const rowsHtml = groupRows.map(r => `
       <div class="batch-row" id="batch-row-${r.leadId}" style="border:1.5px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;">
         <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;gap:8px;">
-          <div style="font-weight:700;font-size:14px;">${esc(r.company)}${r.contact ? ` \u2014 ${esc(r.contact)}` : ''}</div>
+          <div style="font-weight:700;font-size:14px;">${esc(r.company)}${r.contact ? ` \u2014 ${esc(r.contact)}` : ''}${r.paused ? ' <span style="font-weight:600;font-size:11px;color:#9a3412;background:#fef3c7;border-radius:10px;padding:1px 8px;">\u23f8\ufe0f Paused</span>' : ''}</div>
           <div style="font-size:11px;color:var(--text2);white-space:nowrap;">${r.days != null ? r.days + 'd quiet' : ''}${r.label ? ' \u00b7 ' + esc(r.label) : ''}</div>
         </div>
         <div style="cursor:pointer;font-size:12px;color:var(--text2);margin-bottom:6px;" onclick="toggleBatchHistory('${r.leadId}')">
@@ -4711,15 +4721,23 @@ function renderBatchApprove(rows) {
 // followupNum/label even in the no-thread states so a later resolve+send
 // has what it needs without re-deriving anything.
 function batchActionsHtml(r) {
+  if (r.paused) {
+    const when = r.pausedAt ? fmtDate(r.pausedAt) : '';
+    return `<div style="font-size:11px;color:#9a3412;text-align:right;flex:1;">\u23f8\ufe0f Paused${when ? ' \u00b7 ' + esc(when) : ''} \u2014 follow-ups on hold for this lead.</div>
+            <button class="btn dark" onclick="batchResume('${r.leadId}')">\u25b6\ufe0f Resume</button>`;
+  }
   if (r.hasThread) {
-    return `<button class="btn" onclick="batchSkip('${r.leadId}')">Skip</button>
+    return `<button class="btn" onclick="batchPause('${r.leadId}')">\u23f8\ufe0f Pause</button>
+            <button class="btn" onclick="batchSkip('${r.leadId}')">Skip</button>
             <button class="btn dark" id="batch-send-btn-${r.leadId}" onclick="batchSend('${r.leadId}')">\u2709\ufe0f Send</button>`;
   }
   if (r.hasEmail) {
-    return `<button class="btn" onclick="batchSkip('${r.leadId}')">Skip</button>
+    return `<button class="btn" onclick="batchPause('${r.leadId}')">\u23f8\ufe0f Pause</button>
+            <button class="btn" onclick="batchSkip('${r.leadId}')">Skip</button>
             <button class="btn dark" id="batch-resolve-btn-${r.leadId}" onclick="batchResolveThread('${r.leadId}')">\ud83d\udd17 Find thread</button>`;
   }
   return `<div style="font-size:11px;color:#9a3412;text-align:right;flex:1;">\u26a0\ufe0f No email on file \u2014 link this lead's thread manually (Leads tab \u2192 \ufe0f\ud83d\udd17 Link email thread) before sending here.</div>
+          <button class="btn" onclick="batchPause('${r.leadId}')">\u23f8\ufe0f Pause</button>
           <button class="btn" onclick="batchSkip('${r.leadId}')">Skip</button>`;
 }
 
@@ -4727,6 +4745,56 @@ function batchSkip(leadId) {
   batchMeta.delete(leadId);
   const row = document.getElementById(`batch-row-${leadId}`);
   if (row) row.remove();
+}
+
+// Indefinite pause (2026-08-21, Justin's ask) — distinct from the existing
+// timed Snooze elsewhere in the app. Sets followup_paused + a timestamp so
+// isFollowupDue() stops nagging about this lead everywhere else (badge,
+// single-card queue, sort), but — per Justin's explicit ask — the lead
+// still shows up here in Batch Approve, marked paused with when it was
+// paused, rather than just disappearing. Updates just this row's action
+// area and header badge in place, same targeted-DOM-update pattern as
+// batchResolveThread, so other open rows mid-edit aren't disturbed.
+async function batchPause(leadId) {
+  const lead = leads.find(l => l.id === leadId);
+  if (!lead) return;
+  const now = new Date().toISOString();
+  lead.followup_paused = true;
+  lead.followup_paused_at = now;
+  lead.updatedAt = now;
+  await persistItem(lead, 'leads');
+  const meta = batchMeta.get(leadId) || {};
+  batchMeta.set(leadId, { ...meta, paused: true, pausedAt: now });
+  const actionsWrap = document.getElementById(`batch-actions-${leadId}`);
+  if (actionsWrap) actionsWrap.innerHTML = batchActionsHtml({ leadId, paused: true, pausedAt: now });
+  const badgeHost = document.querySelector(`#batch-row-${leadId} > div:first-child > div:first-child`);
+  if (badgeHost && !badgeHost.innerHTML.includes('Paused')) {
+    badgeHost.innerHTML += ' <span style="font-weight:600;font-size:11px;color:#9a3412;background:#fef3c7;border-radius:10px;padding:1px 8px;">⏸️ Paused</span>';
+  }
+}
+
+// Resume — re-derives hasThread/hasEmail fresh (rather than trusting
+// whatever was true when the row was first rendered, since time may have
+// passed while paused) so Resume always lands on the correct Send/Find-
+// thread/no-email state, not a stale one.
+async function batchResume(leadId) {
+  const lead = leads.find(l => l.id === leadId);
+  if (!lead) return;
+  const now = new Date().toISOString();
+  lead.followup_paused = false;
+  lead.updatedAt = now;
+  await persistItem(lead, 'leads');
+  const r = {
+    leadId,
+    paused: false,
+    hasThread: (lead.email_links || []).some(x => x && x.graphMessageId),
+    hasEmail: !!(lead.email && BATCH_EMAIL_RE.test(lead.email)),
+  };
+  batchMeta.set(leadId, { ...(batchMeta.get(leadId) || {}), paused: false, pausedAt: '' });
+  const actionsWrap = document.getElementById(`batch-actions-${leadId}`);
+  if (actionsWrap) actionsWrap.innerHTML = batchActionsHtml(r);
+  const badgeHost = document.querySelector(`#batch-row-${leadId} > div:first-child > div:first-child`);
+  if (badgeHost) badgeHost.innerHTML = badgeHost.innerHTML.replace(/\s*<span[^>]*>⏸️ Paused<\/span>/, '');
 }
 
 async function batchSend(leadId) {
@@ -9032,6 +9100,8 @@ window.openBatchApprove    = openBatchApprove;
 window.closeBatchApprove   = closeBatchApprove;
 window.batchSend           = batchSend;
 window.batchSkip           = batchSkip;
+window.batchPause          = batchPause;
+window.batchResume         = batchResume;
 window.toggleBatchHistory  = toggleBatchHistory;
 window.batchResolveThread  = batchResolveThread;
 window.batchResolveAll     = batchResolveAll;
