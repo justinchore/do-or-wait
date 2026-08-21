@@ -4727,16 +4727,19 @@ function batchActionsHtml(r) {
             <button class="btn dark" onclick="batchResume('${r.leadId}')">\u25b6\ufe0f Resume</button>`;
   }
   if (r.hasThread) {
-    return `<button class="btn" onclick="batchPause('${r.leadId}')">\u23f8\ufe0f Pause</button>
+    return `<button class="btn" onclick="openFollowupResolve('${r.leadId}',event)">\u2717 Dead</button>
+            <button class="btn" onclick="batchPause('${r.leadId}')">\u23f8\ufe0f Pause</button>
             <button class="btn" onclick="batchSkip('${r.leadId}')">Skip</button>
             <button class="btn dark" id="batch-send-btn-${r.leadId}" onclick="batchSend('${r.leadId}')">\u2709\ufe0f Send</button>`;
   }
   if (r.hasEmail) {
-    return `<button class="btn" onclick="batchPause('${r.leadId}')">\u23f8\ufe0f Pause</button>
+    return `<button class="btn" onclick="openFollowupResolve('${r.leadId}',event)">\u2717 Dead</button>
+            <button class="btn" onclick="batchPause('${r.leadId}')">\u23f8\ufe0f Pause</button>
             <button class="btn" onclick="batchSkip('${r.leadId}')">Skip</button>
             <button class="btn dark" id="batch-resolve-btn-${r.leadId}" onclick="batchResolveThread('${r.leadId}')">\ud83d\udd17 Find thread</button>`;
   }
   return `<div style="font-size:11px;color:#9a3412;text-align:right;flex:1;">\u26a0\ufe0f No email on file \u2014 link this lead's thread manually (Leads tab \u2192 \ufe0f\ud83d\udd17 Link email thread) before sending here.</div>
+          <button class="btn" onclick="openFollowupResolve('${r.leadId}',event)">\u2717 Dead</button>
           <button class="btn" onclick="batchPause('${r.leadId}')">\u23f8\ufe0f Pause</button>
           <button class="btn" onclick="batchSkip('${r.leadId}')">Skip</button>`;
 }
@@ -5145,6 +5148,15 @@ async function finalizeStageResolve(outcome, reason) {
   // renderFuqCard() re-filters live off `leads`, so a lead that's no longer due just
   // quietly drops out and the queue advances, same self-healing behavior it already has.
   if (document.getElementById('fuqueue-overlay').classList.contains('open')) renderFuqCard();
+  // Same self-healing idea, for Batch Approve (2026-08-21): a lead resolved
+  // as Dead/Executed from in here (via the ✗ Dead button added to each row)
+  // no longer belongs in the batch — drop its row directly rather than
+  // waiting for Batch Approve to be closed and reopened.
+  if (document.getElementById('batch-overlay').classList.contains('open')) {
+    batchMeta.delete(id);
+    const row = document.getElementById(`batch-row-${id}`);
+    if (row) row.remove();
+  }
   await persistItem(lead, 'leads');
 }
 
