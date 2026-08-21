@@ -2399,6 +2399,39 @@ async function persistItem(item, coll) {
 function rerender(coll) {
   if (coll === 'leads') renderLeadsSection(); else render();
   populateAudio();
+  // Batch Approve's history panel now embeds the same renderEmailLinks()
+  // edit/↻ refresh/✖ remove UI the Leads tab uses (2026-08-21, Justin's ask:
+  // "I need to be able to re-search the thread in cases like this" — a bad
+  // resolve-thread match needs to be editable/re-searchable right from
+  // where he found it, not just from the Leads tab). Those functions all
+  // end by calling rerender('leads'), which normally only touches the Leads
+  // tab — Batch Approve keeps its own snapshot (see openBatchApprove's
+  // notes) and won't otherwise see the change. Keep any currently-expanded
+  // batch history panel in sync too, so an edit/re-search/remove made from
+  // inside Batch Approve shows up there immediately.
+  if (coll === 'leads' && document.getElementById('batch-overlay')?.classList.contains('open')) {
+    document.querySelectorAll('[id^="batch-history-"]').forEach(el => {
+      if (el.style.display === 'none') return;   // collapsed — nothing visible to refresh
+      const leadId = el.id.replace('batch-history-', '');
+      const lead = leads.find(l => l.id === leadId);
+      if (!lead) return;
+      el.innerHTML = batchHistoryHtml(lead);
+      // A thread edit/re-search/remove changes hasThread — re-derive it fresh
+      // so Send/Find-thread/no-email swaps immediately instead of waiting for
+      // Batch Approve to be closed and reopened. Leave a paused row alone.
+      const meta = batchMeta.get(leadId);
+      if (meta && !meta.paused) {
+        const actionsWrap = document.getElementById(`batch-actions-${leadId}`);
+        if (actionsWrap) {
+          actionsWrap.innerHTML = batchActionsHtml({
+            leadId,
+            hasThread: (lead.email_links || []).some(x => x && x.graphMessageId),
+            hasEmail: !!(lead.email && BATCH_EMAIL_RE.test(lead.email)),
+          });
+        }
+      }
+    });
+  }
 }
 
 async function toggleEntry(itemId, entryId, coll='topics') {
@@ -4653,8 +4686,46 @@ function batchHistoryHtml(lead) {
   return `
     ${renderLeadDetails(lead)}
     ${renderFuqSourceLine(lead)}
+    ${renderEmailLinks(lead, 'leads')}
     <div style="max-height:200px;overflow-y:auto;border:1.5px solid var(--border);border-radius:8px;padding:0 10px;margin-top:6px;">${entriesHtml}</div>
+    <div style="margin-top:8px;">
+      <textarea id="batch-note-input-${lead.id}" placeholder="Log a new update on this lead\u2026"
+        style="width:100%;box-sizing:border-box;padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:12px;min-height:56px;background:var(--surface);color:var(--text);"></textarea>
+      <div style="display:flex;justify-content:flex-end;margin-top:4px;">
+        <button class="btn dark" onclick="batchAddUpdate('${lead.id}')">+ Log update</button>
+      </div>
+    </div>
   `;
+}
+
+// Lets Justin log a plain note on a lead without leaving Batch Approve
+// (2026-08-21 ask: "make it so I can write a new update on the lead from
+// this"). Reuses the same entries[] shape every other update-logging path
+// in the app already writes (id/type/text/done/notes/createdAt) so it shows
+// up identically in the Leads tab's own history, just tagged kind:'note'
+// dir:'out' the same as a manual note logged from there. `lead` objects
+// inside batch rows are the SAME reference held in the live `leads` array
+// (openBatchApprove maps over `leads` directly, no cloning), so pushing
+// here and re-rendering just this row's history panel is enough \u2014 no need
+// to re-fetch from Firestore first.
+async function batchAddUpdate(leadId) {
+  const lead = leads.find(l => l.id === leadId);
+  const input = document.getElementById(`batch-note-input-${leadId}`);
+  if (!lead || !input) return;
+  const text = input.value.trim();
+  if (!text) { input.focus(); return; }
+  const now = new Date().toISOString();
+  if (!Array.isArray(lead.entries)) lead.entries = [];
+  lead.entries.push({
+    id: 'e' + Date.now(), type: 'wait', kind: 'note', dir: 'out', done: false, notes: [],
+    text, createdAt: now,
+  });
+  lead.updatedAt = now;
+  await persistItem(lead, 'leads');
+  const historyEl = document.getElementById(`batch-history-${leadId}`);
+  if (historyEl) historyEl.innerHTML = batchHistoryHtml(lead);
+  const countEl = document.getElementById(`batch-history-count-${leadId}`);
+  if (countEl) countEl.textContent = `${lead.entries.length} update${lead.entries.length !== 1 ? 's' : ''}`;
 }
 
 function toggleBatchHistory(leadId) {
@@ -4696,7 +4767,7 @@ function renderBatchApprove(rows) {
           <div style="font-size:11px;color:var(--text2);white-space:nowrap;">${r.days != null ? r.days + 'd quiet' : ''}${r.label ? ' \u00b7 ' + esc(r.label) : ''}</div>
         </div>
         <div style="cursor:pointer;font-size:12px;color:var(--text2);margin-bottom:6px;" onclick="toggleBatchHistory('${r.leadId}')">
-          <span id="batch-history-arrow-${r.leadId}">\u25bc show</span> \ud83d\udcd6 History (${(r.lead.entries || []).length} update${(r.lead.entries || []).length !== 1 ? 's' : ''})
+          <span id="batch-history-arrow-${r.leadId}">\u25bc show</span> \ud83d\udcd6 History (<span id="batch-history-count-${r.leadId}">${(r.lead.entries || []).length} update${(r.lead.entries || []).length !== 1 ? 's' : ''}</span>)
         </div>
         <div id="batch-history-${r.leadId}" style="display:none;margin-bottom:8px;">${batchHistoryHtml(r.lead)}</div>
         <input id="batch-subject-${r.leadId}" value="${esc(r.subject)}"
@@ -9114,6 +9185,7 @@ window.batchSend           = batchSend;
 window.batchSkip           = batchSkip;
 window.batchPause          = batchPause;
 window.batchResume         = batchResume;
+window.batchAddUpdate      = batchAddUpdate;
 window.toggleBatchHistory  = toggleBatchHistory;
 window.batchResolveThread  = batchResolveThread;
 window.batchResolveAll     = batchResolveAll;
