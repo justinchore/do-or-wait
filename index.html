@@ -424,6 +424,14 @@
     .tour-info { display:flex; flex-direction:column; gap:1px; overflow:hidden; }
     .tour-info .tour-company { font-weight:600; font-size:13px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:180px; }
     .tour-info .tour-meta { font-size:11px; color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:180px; }
+    /* Upcoming Tours filter tabs (added 2026-08-24) — Today/Tomorrow/All. */
+    .tsf-btn {
+      font-size:11px; font-weight:600; border:1px solid var(--border); background:var(--surface);
+      color:var(--text2); border-radius:14px; padding:3px 11px; cursor:pointer; transition:all .15s;
+    }
+    .tsf-btn:hover { border-color:#9ca3af; color:var(--text); }
+    .tsf-btn.active { background:#7c3aed; border-color:#7c3aed; color:#fff; }
+    .tour-strip-empty { font-size:12px; color:var(--text2); padding:10px 2px; }
 
     /* ── Email approval UI ──────────────────── */
     .email-preview {
@@ -908,7 +916,17 @@
     <!-- Upcoming Tours strip (added 2026-08-17) — tour-stage leads with a tour_date set,
          sorted soonest first. Click a card to jump to & expand that lead. -->
     <div id="upcoming-tours-wrap" style="display:none; max-width:1100px; margin:0 auto; padding:12px 16px 0; width:100%;">
-      <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--text2); margin-bottom:8px;">📅 Upcoming Tours</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+        <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--text2);">📅 Upcoming Tours</div>
+        <!-- Filter tabs (added 2026-08-24, Justin: "today is default, whatever the view is
+             right now is the other option, and i have tomorrow") — Today is the default view;
+             All is the original unfiltered soonest-first behavior; Tomorrow is the new one. -->
+        <div id="tour-strip-filter" style="display:flex;gap:4px;">
+          <button type="button" class="tsf-btn" data-tsf="today"    onclick="setTourStripFilter('today')">Today</button>
+          <button type="button" class="tsf-btn" data-tsf="tomorrow" onclick="setTourStripFilter('tomorrow')">Tomorrow</button>
+          <button type="button" class="tsf-btn" data-tsf="all"      onclick="setTourStripFilter('all')">All</button>
+        </div>
+      </div>
       <div id="upcoming-tours-list" class="tour-strip"></div>
     </div>
 
@@ -3146,16 +3164,41 @@ unsubLeads = liveSnapshot(collection(db, 'leads'), snap => {
 // already overloaded by the (dead) email sequencer's "next send" date and by
 // follow-up scheduling. Shows every non-archived tour-stage lead that has a
 // tour_date set, soonest first; leads without one just don't show up here yet.
+//
+// Filter tabs (added 2026-08-24, Justin: "today is default, whatever the view
+// is right now is the other option, and i have tomorrow"): 'today' is now the
+// default landing view; 'all' is the original unfiltered soonest-first list
+// (including overdue and everything future); 'tomorrow' is the new one.
+// Module-level so the selection survives across re-renders (new leads coming
+// in over the Firestore listener, tab switches, etc.) until the user changes it.
+let tourStripFilter = 'today';
+function setTourStripFilter(f) {
+  tourStripFilter = f;
+  renderUpcomingToursStrip();
+}
 function renderUpcomingToursStrip() {
   const wrap = document.getElementById('upcoming-tours-wrap');
   const list = document.getElementById('upcoming-tours-list');
   if (!wrap || !list) return;
-  const tours = leads
+  const allTours = leads
     .filter(l => !l.archived && (l.stage || 'lead') === 'tour' && l.tour_date)
     .sort((a, b) => `${a.tour_date} ${a.tour_time || '00:00'}`.localeCompare(`${b.tour_date} ${b.tour_time || '00:00'}`));
-  wrap.style.display = tours.length ? 'block' : 'none';
-  if (!tours.length) { list.innerHTML = ''; return; }
+  wrap.style.display = allTours.length ? 'block' : 'none';
+  if (!allTours.length) { list.innerHTML = ''; return; }
+
   const todayStr = new Date().toISOString().slice(0, 10);
+  const tomorrowStr = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  document.querySelectorAll('.tsf-btn').forEach(b => b.classList.toggle('active', b.dataset.tsf === tourStripFilter));
+
+  const tours = tourStripFilter === 'today' ? allTours.filter(l => l.tour_date === todayStr)
+    : tourStripFilter === 'tomorrow' ? allTours.filter(l => l.tour_date === tomorrowStr)
+    : allTours;
+
+  if (!tours.length) {
+    const msg = tourStripFilter === 'today' ? 'No tours today.' : tourStripFilter === 'tomorrow' ? 'No tours tomorrow.' : 'No tours.';
+    list.innerHTML = `<div class="tour-strip-empty">${msg}</div>`;
+    return;
+  }
   list.innerHTML = tours.map(l => {
     const d = new Date(l.tour_date + 'T00:00:00');
     const dow = d.toLocaleDateString('en-US', { weekday: 'short' });
@@ -9190,6 +9233,7 @@ window.saveLeadDetails     = saveLeadDetails;
 window.deleteLead          = deleteLead;
 window.toggleLeadCard      = toggleLeadCard;
 window.jumpToTourLead      = jumpToTourLead;
+window.setTourStripFilter  = setTourStripFilter;
 window.markTourDone        = markTourDone;
 window.markTourNoShow      = markTourNoShow;
 window.openRescheduleTour  = openRescheduleTour;
