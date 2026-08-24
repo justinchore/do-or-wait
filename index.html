@@ -1672,11 +1672,22 @@
      widens workflow 34's safety gate. -->
 <div class="overlay" id="batch-overlay">
   <div class="modal" style="max-width:640px;max-height:88vh;overflow-y:auto;">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-      <h3 style="margin-bottom:0;">📋 Batch Approve</h3>
-      <button class="btn" onclick="closeBatchApprove()">Close</button>
+    <!-- Sticky header (2026-08-21, Justin's ask: "make it so I can exit it
+         without scrolling up") — Batch Approve can run long (many rows,
+         plus each one's expandable history panel), and Close previously
+         lived inside the same scrolling container as everything else, so
+         it scrolled out of view along with the rows. position:sticky keeps
+         it pinned at the top of the modal's own scroll area regardless of
+         how far down the row list you've scrolled; the matching background
+         + bottom border keep it from looking like it's floating over the
+         content once rows scroll up underneath it. -->
+    <div style="position:sticky;top:0;background:var(--surface);z-index:2;padding-bottom:8px;border-bottom:1px solid var(--border);margin-bottom:8px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <h3 style="margin-bottom:0;">📋 Batch Approve</h3>
+        <button class="btn" onclick="closeBatchApprove()">Close</button>
+      </div>
+      <div class="modal-sub" style="margin-bottom:0;">Review each draft, edit if needed, then send. Grouped by which follow-up # this would be for that lead.</div>
     </div>
-    <div class="modal-sub">Review each draft, edit if needed, then send. Grouped by which follow-up # this would be for that lead.</div>
     <div id="batch-body"></div>
   </div>
 </div>
