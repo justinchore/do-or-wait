@@ -4131,7 +4131,18 @@ function emailLinkChips(item, coll) {
   return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:3px;margin-top:5px;">${chips}${extra}</div>`;
 }
 
-function renderEmailLinks(item, coll) {
+// `ctx` (2026-08-21 fix — Justin: "I filled out all the fields and it's still
+// asking for a subject") scopes the add-thread form's DOM ids and its
+// addingLink tracking key to WHERE this got rendered from. Without it, Batch
+// Approve's embedded copy (batchHistoryHtml calls this with the same lead +
+// coll='leads' the normal Leads-tab card already uses) produced duplicate
+// element ids on the page — the Leads tab's card for that lead is still in
+// the DOM even when collapsed (hidden via CSS, not removed), so
+// getElementById grabbed whichever copy came first in document order
+// instead of the one Justin was actually typing into, and submitAddEmailLink
+// read an empty subject from it. Default '' preserves the exact ids the
+// Leads tab already used before this fix.
+function renderEmailLinks(item, coll, ctx = '') {
   const links = Array.isArray(item.email_links) ? item.email_links : [];
   const lblStyle = 'flex:1;min-width:0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
   const rows = links.map(l => {
@@ -4165,25 +4176,25 @@ function renderEmailLinks(item, coll) {
     return `<div style="display:flex;align-items:center;gap:6px;margin:3px 0;">${main}${editRm}</div>`;
   }).join('');
 
-  const adding = addingLink.has(coll + ':' + item.id);
+  const adding = addingLink.has(ctx + coll + ':' + item.id);
   let addUI;
   if (adding) {
-    const dlId = 'el-contacts-' + coll + '-' + item.id;
+    const dlId = 'el-contacts-' + ctx + coll + '-' + item.id;
     const opts = knownContacts().map(c => `<option value="${esc(c)}"></option>`).join('');
     const prefill = (coll === 'leads' && item.email) ? esc(item.email) : '';
     const inS = 'font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);width:100%;box-sizing:border-box;';
     addUI = `<div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;">
-      <input id="eladd-subj-${coll}-${item.id}" placeholder="Email subject (the search anchor)" style="${inS}">
-      <input id="eladd-contact-${coll}-${item.id}" list="${dlId}" value="${prefill}" placeholder="Contact email/name — pick a saved one or type new" style="${inS}">
+      <input id="eladd-subj-${ctx}${coll}-${item.id}" placeholder="Email subject (the search anchor)" style="${inS}">
+      <input id="eladd-contact-${ctx}${coll}-${item.id}" list="${dlId}" value="${prefill}" placeholder="Contact email/name — pick a saved one or type new" style="${inS}">
       <datalist id="${dlId}">${opts}</datalist>
-      <input id="eladd-label-${coll}-${item.id}" placeholder="Label (optional — defaults to the subject)" style="${inS}">
+      <input id="eladd-label-${ctx}${coll}-${item.id}" placeholder="Label (optional — defaults to the subject)" style="${inS}">
       <div style="display:flex;gap:6px;">
-        <button class="btn sm dark" onclick="submitAddEmailLink('${item.id}','${coll}',event)">Save thread</button>
-        <button class="btn sm" onclick="cancelAddEmailLink('${item.id}','${coll}',event)">Cancel</button>
+        <button class="btn sm dark" onclick="submitAddEmailLink('${item.id}','${coll}',event,'${ctx}')">Save thread</button>
+        <button class="btn sm" onclick="cancelAddEmailLink('${item.id}','${coll}',event,'${ctx}')">Cancel</button>
       </div>
     </div>`;
   } else {
-    addUI = `<button onclick="openAddEmailLink('${item.id}','${coll}',event)"
+    addUI = `<button onclick="openAddEmailLink('${item.id}','${coll}',event,'${ctx}')"
             style="font-size:12px;font-weight:600;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:14px;padding:3px 11px;cursor:pointer;margin-top:4px;">＋ Link email thread</button>`;
   }
 
@@ -4195,29 +4206,29 @@ function renderEmailLinks(item, coll) {
   </div>`;
 }
 
-function openAddEmailLink(id, coll, ev) {
+function openAddEmailLink(id, coll, ev, ctx = '') {
   if (ev) ev.stopPropagation();
-  addingLink.add(coll + ':' + id);
+  addingLink.add(ctx + coll + ':' + id);
   rerender(coll);
 }
-function cancelAddEmailLink(id, coll, ev) {
+function cancelAddEmailLink(id, coll, ev, ctx = '') {
   if (ev) ev.stopPropagation();
-  addingLink.delete(coll + ':' + id);
+  addingLink.delete(ctx + coll + ':' + id);
   rerender(coll);
 }
-async function submitAddEmailLink(id, coll, ev) {
+async function submitAddEmailLink(id, coll, ev, ctx = '') {
   if (ev) ev.stopPropagation();
   const g = sel => (document.getElementById(sel)?.value || '').trim();
-  const subject = g('eladd-subj-' + coll + '-' + id);
+  const subject = g('eladd-subj-' + ctx + coll + '-' + id);
   if (!subject) { alert('Add a subject — it’s the search anchor that finds the thread.'); return; }
-  const contact = g('eladd-contact-' + coll + '-' + id);
-  const label   = g('eladd-label-' + coll + '-' + id);
+  const contact = g('eladd-contact-' + ctx + coll + '-' + id);
+  const label   = g('eladd-label-' + ctx + coll + '-' + id);
   const item = findItem(id, coll);
   if (!item) return;
   if (!Array.isArray(item.email_links)) item.email_links = [];
   const linkId = 'el' + Date.now();
   item.email_links.push({ id: linkId, label: label || subject, subject, contact, resolving: true });
-  addingLink.delete(coll + ':' + id);
+  addingLink.delete(ctx + coll + ':' + id);
   rerender(coll);
   await persistItem(item, coll);          // save the pending entry first
   await resolveThreadLink(id, coll, linkId); // then ask Graph for the real webLink
@@ -4707,7 +4718,7 @@ function batchHistoryHtml(lead) {
   return `
     ${renderLeadDetails(lead)}
     ${renderFuqSourceLine(lead)}
-    ${renderEmailLinks(lead, 'leads')}
+    ${renderEmailLinks(lead, 'leads', 'batch-')}
     <div style="max-height:200px;overflow-y:auto;border:1.5px solid var(--border);border-radius:8px;padding:0 10px;margin-top:6px;">${entriesHtml}</div>
     <div style="margin-top:8px;">
       <textarea id="batch-note-input-${lead.id}" placeholder="Log a new update on this lead\u2026"
