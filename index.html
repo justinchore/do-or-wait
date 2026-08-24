@@ -2001,8 +2001,23 @@ function fmtDate(iso) {
 function fmtDur(s) { return `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`; }
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 // "HH:MM" (24h, from an <input type="time">) → "2:30 PM"
+// Defensively also accepts a value that's already 12h-formatted with an
+// AM/PM suffix (e.g. "4:00 PM") — some tour_time values have been hand-set
+// that way instead of 24h "HH:MM", and blindly re-deriving AM/PM from the
+// leading hour number (as if it were 24h) silently flips a real PM time to
+// AM whenever that hour is < 12 (2026-08-24/25, caught on Charles Figueredo's
+// and Beatriz Valenzuela's tour cards). If an AM/PM suffix is already
+// present, trust it and just normalize formatting instead of re-deriving it.
 function fmtTime12(t) {
-  const m = /^(\d{1,2}):(\d{2})/.exec(t || '');
+  const s = String(t || '').trim();
+  const withAmPm = /^(\d{1,2}):(\d{2})\s*(am|pm)$/i.exec(s);
+  if (withAmPm) {
+    let h = Number(withAmPm[1]); const min = withAmPm[2];
+    const ap = withAmPm[3].toUpperCase();
+    h = h % 12; if (h === 0) h = 12;
+    return `${h}:${min} ${ap}`;
+  }
+  const m = /^(\d{1,2}):(\d{2})/.exec(s);
   if (!m) return '';
   let h = Number(m[1]); const min = m[2];
   const ap = h >= 12 ? 'PM' : 'AM';
@@ -3785,10 +3800,17 @@ function renderLeadCard(lead) {
   const rowLast = due
     ? `<span style="color:#b45309;font-weight:700;">🔔 ${ci.contacted ? `${ci.days}d cold` : 'no contact'}</span>`
     : `<span style="color:var(--text2);">last ${fmtDate(last?.createdAt || lead.createdAt)}</span>`;
+  // Row-view badge shows the Yardi substage (e.g. "Credit App Submitted (Sales)")
+  // instead of the coarse main stage when one is set — same stage color, more
+  // specific text, so the collapsed row carries more signal at a glance (2026-08-24,
+  // Justin: "can i see the substage instead? More info that way"). Falls back to
+  // the main stage label when no substage is set yet. Archived/Done still win
+  // over either, same as before.
+  const rowStageLabel = lead.archived ? 'Archived' : allRes ? 'Done' : (lead.yardi_milestone || stage.label);
   const rowLine = `
       <div class="lead-row-line">
         <span class="lr-dot" style="background:${status==='do' ? 'var(--do)' : 'var(--wait)'}" title="${status==='do' ? 'Do' : 'Wait'}"></span>
-        <span class="badge" style="background:#f3f4f6;color:${stage.color};border:1px solid ${stage.color}40">${lead.archived ? 'Archived' : allRes ? 'Done' : stage.label}</span>
+        <span class="badge" style="background:#f3f4f6;color:${stage.color};border:1px solid ${stage.color}40" title="${esc(stage.label)}">${esc(rowStageLabel)}</span>
         <span class="lr-company" title="${esc(lead.company)}">${lead.wl_on ? '⏳ ' : ''}${esc(lead.company)}</span>
         <span class="lr-loc" title="${rowLoc}">${rowLoc}</span>
         <span class="lr-sf">${rowSf}</span>
