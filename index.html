@@ -4747,6 +4747,37 @@ function toggleBatchHistory(leadId) {
   if (arrow) arrow.textContent = isOpen ? '\u25b2 hide' : '\u25bc show';
 }
 
+// One row's full markup \u2014 pulled out of renderBatchApprove (2026-08-21) so
+// both the normal Follow-up #N groups and the separate collapsible Paused
+// section below can share the exact same row template instead of drifting.
+function batchRowHtml(r) {
+  return `
+    <div class="batch-row" id="batch-row-${r.leadId}" style="border:1.5px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;gap:8px;">
+        <div style="font-weight:700;font-size:14px;">${esc(r.company)}${r.contact ? ` \u2014 ${esc(r.contact)}` : ''}${r.paused ? ' <span style="font-weight:600;font-size:11px;color:#9a3412;background:#fef3c7;border-radius:10px;padding:1px 8px;">\u23f8\ufe0f Paused</span>' : ''}</div>
+        <div style="font-size:11px;color:var(--text2);white-space:nowrap;display:flex;align-items:center;gap:6px;">
+          ${r.days != null ? r.days + 'd quiet' : ''}
+          <button onclick="batchCycleTpl('${r.leadId}',event)" title="Try another check-in template \u2014 cycles Nudge/Value/Break-up etc."
+                  style="font-size:11px;border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:1px 8px;cursor:pointer;color:var(--text);">
+            <span id="batch-tpl-label-${r.leadId}">\u21bb ${esc(r.label || 'Template')}</span>
+          </button>
+        </div>
+      </div>
+      <div style="cursor:pointer;font-size:12px;color:var(--text2);margin-bottom:6px;" onclick="toggleBatchHistory('${r.leadId}')">
+        <span id="batch-history-arrow-${r.leadId}">\u25bc show</span> \ud83d\udcd6 History (<span id="batch-history-count-${r.leadId}">${(r.lead.entries || []).length} update${(r.lead.entries || []).length !== 1 ? 's' : ''}</span>)
+      </div>
+      <div id="batch-history-${r.leadId}" style="display:none;margin-bottom:8px;">${batchHistoryHtml(r.lead)}</div>
+      <input id="batch-subject-${r.leadId}" value="${esc(r.subject)}"
+        style="width:100%;box-sizing:border-box;padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px;background:var(--surface);color:var(--text);" />
+      <textarea id="batch-body-${r.leadId}"
+        style="width:100%;box-sizing:border-box;padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;min-height:90px;background:var(--surface);color:var(--text);">${esc(r.body)}</textarea>
+      <div id="batch-status-${r.leadId}" style="font-size:11px;margin-top:4px;"></div>
+      <div id="batch-actions-${r.leadId}" style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;">
+        ${batchActionsHtml(r)}
+      </div>
+    </div>`;
+}
+
 function renderBatchApprove(rows) {
   const wrap = document.getElementById('batch-body');
   batchMeta.clear();
@@ -4754,46 +4785,56 @@ function renderBatchApprove(rows) {
     wrap.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text2);font-size:14px;">Nothing due right now.</div>`;
     return;
   }
-  const groups = new Map();
   rows.forEach(r => {
     batchMeta.set(r.leadId, { followupNum: r.followupNum, label: r.label, paused: r.paused, pausedAt: r.pausedAt });
+  });
+  // Paused leads (2026-08-21, Justin's ask: "collapsible hide all paused
+  // followups") get pulled out of the normal Follow-up #N groups entirely
+  // and rendered in their own collapsed-by-default section instead \u2014 they
+  // still show up in Batch Approve per the earlier ask, but no longer sit
+  // mixed in among the leads actually being worked, one full section you
+  // can collapse instead of a badge on every third row.
+  const pausedRows = rows.filter(r => r.paused);
+  const activeRows = rows.filter(r => !r.paused);
+  const groups = new Map();
+  activeRows.forEach(r => {
     if (!groups.has(r.followupNum)) groups.set(r.followupNum, []);
     groups.get(r.followupNum).push(r);
   });
   const groupNums = Array.from(groups.keys()).sort((a, b) => a - b);
-  const resolvableCount = rows.filter(r => !r.hasThread && r.hasEmail).length;
+  const resolvableCount = activeRows.filter(r => !r.hasThread && r.hasEmail).length;
   const findAllBanner = resolvableCount ? `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;border:1.5px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:14px;background:var(--bg);">
       <div style="font-size:12px;color:var(--text2);">\ud83d\udd17 ${resolvableCount} lead${resolvableCount !== 1 ? 's' : ''} below have no linked thread yet \u2014 Send is disabled for them until one's found.</div>
       <button class="btn dark" id="batch-resolve-all-btn" onclick="batchResolveAll()">Find all threads</button>
     </div>` : '';
-  wrap.innerHTML = findAllBanner + groupNums.map(num => {
+  const groupsHtml = groupNums.map(num => {
     // longest-quiet-first within each group, same urgency convention as leadAttentionSort
     const groupRows = groups.get(num).slice().sort((a, b) => (b.days ?? -1) - (a.days ?? -1));
-    const rowsHtml = groupRows.map(r => `
-      <div class="batch-row" id="batch-row-${r.leadId}" style="border:1.5px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;">
-        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;gap:8px;">
-          <div style="font-weight:700;font-size:14px;">${esc(r.company)}${r.contact ? ` \u2014 ${esc(r.contact)}` : ''}${r.paused ? ' <span style="font-weight:600;font-size:11px;color:#9a3412;background:#fef3c7;border-radius:10px;padding:1px 8px;">\u23f8\ufe0f Paused</span>' : ''}</div>
-          <div style="font-size:11px;color:var(--text2);white-space:nowrap;">${r.days != null ? r.days + 'd quiet' : ''}${r.label ? ' \u00b7 ' + esc(r.label) : ''}</div>
-        </div>
-        <div style="cursor:pointer;font-size:12px;color:var(--text2);margin-bottom:6px;" onclick="toggleBatchHistory('${r.leadId}')">
-          <span id="batch-history-arrow-${r.leadId}">\u25bc show</span> \ud83d\udcd6 History (<span id="batch-history-count-${r.leadId}">${(r.lead.entries || []).length} update${(r.lead.entries || []).length !== 1 ? 's' : ''}</span>)
-        </div>
-        <div id="batch-history-${r.leadId}" style="display:none;margin-bottom:8px;">${batchHistoryHtml(r.lead)}</div>
-        <input id="batch-subject-${r.leadId}" value="${esc(r.subject)}"
-          style="width:100%;box-sizing:border-box;padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px;background:var(--surface);color:var(--text);" />
-        <textarea id="batch-body-${r.leadId}"
-          style="width:100%;box-sizing:border-box;padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;min-height:90px;background:var(--surface);color:var(--text);">${esc(r.body)}</textarea>
-        <div id="batch-status-${r.leadId}" style="font-size:11px;margin-top:4px;"></div>
-        <div id="batch-actions-${r.leadId}" style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;">
-          ${batchActionsHtml(r)}
-        </div>
-      </div>`).join('');
     return `<div style="margin-bottom:18px;">
       <div style="font-weight:700;font-size:13px;color:var(--text2);margin-bottom:8px;">Follow-up #${num} (${groupRows.length})</div>
-      ${rowsHtml}
+      ${groupRows.map(batchRowHtml).join('')}
     </div>`;
   }).join('');
+  const pausedSectionHtml = pausedRows.length ? `
+    <div style="margin-bottom:18px;border-top:1.5px solid var(--border);padding-top:12px;">
+      <div style="cursor:pointer;font-weight:700;font-size:13px;color:var(--text2);margin-bottom:8px;" onclick="toggleBatchPausedSection()">
+        <span id="batch-paused-arrow">\u25b6 show</span> \u23f8\ufe0f Paused (${pausedRows.length})
+      </div>
+      <div id="batch-paused-section" style="display:none;">
+        ${pausedRows.slice().sort((a, b) => (b.pausedAt || '').localeCompare(a.pausedAt || '')).map(batchRowHtml).join('')}
+      </div>
+    </div>` : '';
+  wrap.innerHTML = findAllBanner + groupsHtml + pausedSectionHtml;
+}
+
+function toggleBatchPausedSection() {
+  const el = document.getElementById('batch-paused-section');
+  const arrow = document.getElementById('batch-paused-arrow');
+  if (!el) return;
+  const isOpen = el.style.display !== 'none';
+  el.style.display = isOpen ? 'none' : 'block';
+  if (arrow) arrow.textContent = isOpen ? '\u25b6 show' : '\u25bc hide';
 }
 
 // Per-row action set — Send/Skip once a real thread is known, "Find thread"
@@ -4817,12 +4858,69 @@ function batchActionsHtml(r) {
     return `<button class="btn" onclick="openFollowupResolve('${r.leadId}',event)">\u2717 Dead</button>
             <button class="btn" onclick="batchPause('${r.leadId}')">\u23f8\ufe0f Pause</button>
             <button class="btn" onclick="batchSkip('${r.leadId}')">Skip</button>
+            <button class="btn" onclick="batchSendViaEmail('${r.leadId}')" title="No Graph thread to reply into \u2014 opens this in your own Outlook instead, same as the single-card queue's manual path">\u2709\ufe0f Send via Outlook</button>
             <button class="btn dark" id="batch-resolve-btn-${r.leadId}" onclick="batchResolveThread('${r.leadId}')">\ud83d\udd17 Find thread</button>`;
   }
   return `<div style="font-size:11px;color:#9a3412;text-align:right;flex:1;">\u26a0\ufe0f No email on file \u2014 link this lead's thread manually (Leads tab \u2192 \ufe0f\ud83d\udd17 Link email thread) before sending here.</div>
           <button class="btn" onclick="openFollowupResolve('${r.leadId}',event)">\u2717 Dead</button>
           <button class="btn" onclick="batchPause('${r.leadId}')">\u23f8\ufe0f Pause</button>
           <button class="btn" onclick="batchSkip('${r.leadId}')">Skip</button>`;
+}
+
+// Lets Justin cycle to a different check-in template (Nudge/Value/Break-up/
+// stage-specific) right from Batch Approve (2026-08-21 ask: "I want to be
+// able to cycle through different check-in types" — the app's auto-picked
+// one sometimes matches one already sent). Reuses the SAME followupTplIdx
+// map and followupMsgFor() the Leads tab's own ↻ cycle button (renderFollowupBlock)
+// already uses, so this is genuinely the same rotation, not a parallel one —
+// picking a different template here also sticks if this lead later shows up
+// in the single-card daily queue this session. Overwrites whatever was in
+// the subject/body fields, including a hand-edited draft — same tradeoff
+// the Leads tab's cycle button already makes (Justin can always re-edit
+// after cycling).
+function batchCycleTpl(leadId, e) {
+  if (e) e.stopPropagation();
+  const lead = leads.find(l => l.id === leadId);
+  if (!lead) return;
+  followupTplIdx.set(leadId, (followupTplIdx.get(leadId) || 0) + 1);
+  const msg = followupMsgFor(lead);
+  const subjEl = document.getElementById(`batch-subject-${leadId}`);
+  const bodyEl = document.getElementById(`batch-body-${leadId}`);
+  const labelEl = document.getElementById(`batch-tpl-label-${leadId}`);
+  if (subjEl) subjEl.value = msg.subject;
+  if (bodyEl) bodyEl.value = msg.body;
+  if (labelEl) labelEl.textContent = `↻ ${msg.label}`;
+  const meta = batchMeta.get(leadId);
+  if (meta) batchMeta.set(leadId, { ...meta, label: msg.label });
+}
+
+// Manual fallback for the "has an email but no Graph thread yet" case
+// (2026-08-21, Justin's ask: "I should just be able to send it even if
+// there is no thread") — workflow 34 can only reply into a message it
+// already knows about, so when nothing's resolved yet Send has always been
+// blocked here, forcing a Find-thread search first even when Justin just
+// wants to get the email out now. This opens the SAME manual mailto: path
+// the single-card daily queue's own "✉️ Open in email" already uses
+// (openFollowupEmail) — Outlook opens pre-filled, Justin sends it himself
+// from his own mailbox, no Graph/thread requirement at all. Deliberately
+// pulls subject/body from THIS row's own input fields, not a fresh
+// followupMsgFor() call, so a template cycled via ↻ or a hand-edited body
+// isn't silently discarded the way openFollowupEmail's own fresh lookup
+// would. Logs the send (same shape logFollowupSent already writes) and
+// drops the row — same as after batchSend succeeds.
+function batchSendViaEmail(leadId) {
+  const lead = leads.find(l => l.id === leadId);
+  const subjectEl = document.getElementById(`batch-subject-${leadId}`);
+  const bodyEl = document.getElementById(`batch-body-${leadId}`);
+  if (!lead || !lead.email || !subjectEl || !bodyEl) return;
+  const meta = batchMeta.get(leadId) || {};
+  const subject = subjectEl.value;
+  const body = bodyEl.value;
+  logFollowupSent(lead, { subject, body, label: meta.label || '' });   // already persists — see its own last line
+  window.location.href = `mailto:${encodeURIComponent(lead.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  batchMeta.delete(leadId);
+  const row = document.getElementById(`batch-row-${leadId}`);
+  if (row) row.remove();
 }
 
 function batchSkip(leadId) {
@@ -9196,7 +9294,10 @@ window.batchSkip           = batchSkip;
 window.batchPause          = batchPause;
 window.batchResume         = batchResume;
 window.batchAddUpdate      = batchAddUpdate;
+window.batchCycleTpl       = batchCycleTpl;
+window.batchSendViaEmail   = batchSendViaEmail;
 window.toggleBatchHistory  = toggleBatchHistory;
+window.toggleBatchPausedSection = toggleBatchPausedSection;
 window.batchResolveThread  = batchResolveThread;
 window.batchResolveAll     = batchResolveAll;
 // Debug helpers only — not called anywhere in the UI. `leads` and functions
