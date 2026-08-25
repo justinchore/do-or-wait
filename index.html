@@ -3875,7 +3875,7 @@ function renderLeadCard(lead) {
       </div>`;
 
   return `
-  <div class="topic-card ${lead.archived ? 'archived' : status}${isOpen ? ' open' : ''}${hasNewMail(lead) ? ' has-new-mail' : ''}" id="lc-${lead.id}" style="border-left-color:${stage.color}">
+  <div class="topic-card ${lead.archived ? 'archived' : status}${isOpen ? ' open' : ''}" id="lc-${lead.id}" style="border-left-color:${stage.color}">
     <div class="card-summary" onclick="toggleLeadCard('${lead.id}')">
       ${rowLine}
       <div class="card-summary-body lead-full-body">
