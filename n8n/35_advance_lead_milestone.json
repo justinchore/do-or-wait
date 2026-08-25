@@ -1,0 +1,242 @@
+{
+  "name": "CW \u2014 35. Advance Lead Milestone (generic)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "advance-lead-milestone",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "a5a5a001-0000-4a1a-9a1a-000000000001",
+      "name": "Advance milestone webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "advance-lead-milestone"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/leads/{{ $json.body.leadId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "options": {}
+      },
+      "id": "a5a5a001-0000-4a1a-9a1a-000000000002",
+      "name": "Get current lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "7IVvQuErxEJPoaMY",
+          "name": "Firebase_SDK_do_or_wait"
+        }
+      },
+      "continueOnFail": true,
+      "notes": "continueOnFail so a bad/missing leadId (404) doesn't crash the run -- the Decide node treats a missing doc as a brand-new lead (stage 'lead', no milestone) rather than failing the whole request."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generic milestone advancer -- any workflow can POST {leadId, event} here\n// instead of inventing its own stage/yardi_milestone write. Maps a domain\n// event to the target {stage, yardi_milestone} using the SAME vocabulary as\n// index.html's LEAD_STAGES / YARDI_MILESTONES_BY_STAGE, and only ever moves a\n// lead FORWARD -- never overwrites a later stage/substage with an earlier\n// one, so a delayed/duplicate/out-of-order call can't regress a lead that's\n// already moved on. executed/dead are terminal for this path -- those only\n// change by a human editing the lead by hand in the app.\n// (2026-08-25, built per Justin's ask after workflow 33 was found sending\n// qualifying emails without ever advancing the lead's milestone.)\n\nconst STAGE_RANK = { lead: 0, tour: 1, proposal: 2, negotiation: 3, executed: 4, dead: 99 };\n\n// Only the events actually wired to a caller so far (workflow 33, event\n// \"qualifying_email_sent\"). Add an entry here -- and wire an HTTP node in the\n// relevant workflow -- for each new milestone another workflow should set;\n// the mapping lives in exactly one place instead of every workflow\n// reinventing its own milestone string.\nconst EVENT_MAP = {\n  qualifying_email_sent:    { stage: 'lead',        yardi_milestone: 'Lead Contacted (Sales)' },\n  lead_followup_sent:       { stage: 'lead',         yardi_milestone: 'Lead Follow Up' },\n  tour_scheduled:           { stage: 'tour',         yardi_milestone: 'Tour Scheduled (Sales)' },\n  credit_app_sent:          { stage: 'tour',         yardi_milestone: 'Credit App Sent to Lead' },\n  credit_app_submitted:     { stage: 'tour',         yardi_milestone: 'Credit App Submitted (Sales)' },\n  proposal_submitted:       { stage: 'proposal',     yardi_milestone: 'Proposal Submitted (Sales)' },\n  signed_proposal_uploaded: { stage: 'negotiation',  yardi_milestone: 'Signed Proposal Uploaded (Sales)' },\n};\n\n// Only orders substages WITHIN the 'lead' stage. Waitlist (Sales) / Cold Lead\n// (Sales) are side-branches, not \"further along\" -- deliberately left out so\n// they get the same never-overwrite protection as any unrecognized milestone.\nconst LEAD_SUBSTAGE_RANK = { 'Lead Assigned': 0, 'Lead Contacted (Sales)': 1, 'Lead Follow Up': 2 };\n\nfunction fsVal(field) {\n  if (!field) return null;\n  if (field.stringValue  !== undefined) return field.stringValue;\n  if (field.integerValue !== undefined) return Number(field.integerValue);\n  if (field.doubleValue  !== undefined) return field.doubleValue;\n  if (field.booleanValue !== undefined) return field.booleanValue;\n  if (field.nullValue    !== undefined) return null;\n  if (field.mapValue) { const out = {}; for (const [k, v] of Object.entries(field.mapValue.fields || {})) out[k] = fsVal(v); return out; }\n  if (field.arrayValue) return (field.arrayValue.values || []).map(fsVal);\n  return null;\n}\n\nconst req = $('Advance milestone webhook').item.json.body || {};\nconst { leadId, event } = req;\nif (!leadId) throw new Error('Missing body.leadId');\nif (!event)  throw new Error('Missing body.event');\n\nconst target = EVENT_MAP[event];\nif (!target) {\n  return [{ json: { shouldWrite: false, leadId, event, reason: `Unknown event \"${event}\". Known events: ${Object.keys(EVENT_MAP).join(', ')}` } }];\n}\n\nconst getResp = $('Get current lead').item.json || {};\n// A 404 (bad leadId) comes back from continueOnFail as an error-shaped item,\n// not a Firestore document -- getResp.fields will be undefined either way,\n// so an unknown lead just falls through to the \"treat as brand new\" default.\nconst current = { stage: 'lead', yardi_milestone: '' };\nif (getResp.fields) {\n  const f = getResp.fields;\n  if (f.stage) current.stage = fsVal(f.stage) || 'lead';\n  if (f.yardi_milestone) current.yardi_milestone = fsVal(f.yardi_milestone) || '';\n}\n\nconst curRank = STAGE_RANK[current.stage] ?? 0;\nconst targetRank = STAGE_RANK[target.stage] ?? 0;\n\nlet shouldWrite = false;\nif (targetRank > curRank) {\n  shouldWrite = true; // moving to a stage entirely further along\n} else if (targetRank === curRank && target.stage === 'lead') {\n  // Same stage -- only the 'lead' stage has more than one wired event so\n  // far, so only it needs substage ordering. Add per-stage substage ranks\n  // here if tour/proposal/negotiation ever get a second wired event each.\n  const curSub = LEAD_SUBSTAGE_RANK[current.yardi_milestone] ?? -1; // unrecognized (incl. Waitlist/Cold) = protected\n  const targetSub = LEAD_SUBSTAGE_RANK[target.yardi_milestone] ?? -1;\n  shouldWrite = curSub >= 0 && targetSub > curSub;\n} // targetRank < curRank, or same-stage-non-lead -> never (would regress)\n\nif (!shouldWrite) {\n  return [{ json: { shouldWrite: false, leadId, event, currentStage: current.stage, currentMilestone: current.yardi_milestone, reason: 'Lead is already at or past this milestone -- not overwriting.' } }];\n}\n\nconst now = new Date().toISOString();\nconst patchFields = { stage: target.stage, yardi_milestone: target.yardi_milestone, updatedAt: now };\nfunction toFs(v) { return { stringValue: String(v) }; }\nconst patchBody = { fields: Object.fromEntries(Object.entries(patchFields).map(([k, v]) => [k, toFs(v)])) };\n\nreturn [{ json: {\n  shouldWrite: true, leadId, event,\n  fromStage: current.stage, fromMilestone: current.yardi_milestone,\n  toStage: target.stage, toMilestone: target.yardi_milestone,\n  patchBody, updateMask: Object.keys(patchFields).join('&updateMask.fieldPaths=')\n} }];\n"
+      },
+      "id": "a5a5a001-0000-4a1a-9a1a-000000000003",
+      "name": "Decide milestone update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {},
+          "conditions": [
+            {
+              "id": "should-write",
+              "leftValue": "={{ $json.shouldWrite ? 1 : 0 }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a5a5a001-0000-4a1a-9a1a-000000000004",
+      "name": "Should write?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/leads/{{ $json.leadId }}?updateMask.fieldPaths={{ $json.updateMask }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.patchBody) }}",
+        "options": {}
+      },
+      "id": "a5a5a001-0000-4a1a-9a1a-000000000005",
+      "name": "Write milestone to Firestore",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        -96
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "7IVvQuErxEJPoaMY",
+          "name": "Firebase_SDK_do_or_wait"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, applied: true, leadId: $json.leadId, event: $json.event, fromStage: $json.fromStage, fromMilestone: $json.fromMilestone, toStage: $json.toStage, toMilestone: $json.toMilestone }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "id": "a5a5a001-0000-4a1a-9a1a-000000000006",
+      "name": "Respond - applied",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, applied: false, leadId: $json.leadId, event: $json.event, reason: $json.reason }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "id": "a5a5a001-0000-4a1a-9a1a-000000000007",
+      "name": "Respond - skipped",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        896,
+        96
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Advance milestone webhook": {
+      "main": [
+        [
+          {
+            "node": "Get current lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get current lead": {
+      "main": [
+        [
+          {
+            "node": "Decide milestone update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide milestone update": {
+      "main": [
+        [
+          {
+            "node": "Should write?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should write?": {
+      "main": [
+        [
+          {
+            "node": "Write milestone to Firestore",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond - skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write milestone to Firestore": {
+      "main": [
+        [
+          {
+            "node": "Respond - applied",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "b5b5b001-0000-4a1a-9a1a-000000000001",
+  "meta": {
+    "instanceId": "576f1552f658e6ccbe293a5c310c12c03fc3f516211957ae27ecb76646f5be19"
+  },
+  "id": "",
+  "tags": []
+}

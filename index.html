@@ -2414,8 +2414,22 @@ function renderNote(topicId, entryId, note, coll='topics') {
 function toggleCard(id) {
   // Accordion: clicking a card closes any other open one (clicking the open card collapses it).
   const opening = !expandedIds.has(id);
+  const prevOpen = expandedIds.size ? [...expandedIds][0] : null; // at most one, since this is a single-open accordion
   if (expandedIds.has(id)) expandedIds.delete(id); else { expandedIds.clear(); expandedIds.add(id); }
-  render(); populateAudio();
+  // Perf fix (2026-08-25) — same root cause as the Leads tab's expand/collapse
+  // lag: renderCard's HTML doesn't change with isOpen except for the 'open'
+  // class (the .thread body is always in the DOM, just hidden via CSS — see
+  // `.thread{display:none}` / `.topic-card.open .thread{display:block}`), so a
+  // full render() — which rebuilds every task card in both Do and Wait columns
+  // via innerHTML — was pure waste on every single expand/collapse click. Just
+  // flip the class on the (at most two) affected cards.
+  if (prevOpen && prevOpen !== id) {
+    const prevEl = document.getElementById(`tc-${prevOpen}`);
+    if (prevEl) prevEl.classList.remove('open');
+  }
+  const el = document.getElementById(`tc-${id}`);
+  if (el) el.classList.toggle('open', opening);
+  populateAudio();
   if (opening) refreshCardEmailLinks(id, 'topics');
 }
 

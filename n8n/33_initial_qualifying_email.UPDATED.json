@@ -1,0 +1,487 @@
+{
+  "name": "CW \u2014 33. Send Initial Qualifying Email",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/2 7-18 * * *"
+            }
+          ]
+        }
+      },
+      "id": "e2701933-7e10-4bf2-96f8-98b6d42e0ecc",
+      "name": "Every 2 minutes (7am-7pm PT)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -5696,
+        2480
+      ],
+      "notes": "Switched from a plain 2-min interval + downstream IF gate to a cron expression restricted to hours 7-18 (2026-08-19, per Justin's ask, once he confirmed this workflow's own Settings > Timezone is set to America/Los_Angeles). n8n evaluates a Schedule Trigger's cron against the WORKFLOW's configured timezone (this one, not the n8n instance's global default), so this now correctly means 7am-7pm Pacific without needing an explicit setZone() downstream. */2 7-18 * * * fires every 2 min from 7:00 to 18:58 -- last fire before 7pm, matching the prior IF-gate's `hour < 19` cutoff exactly. IMPORTANT: this only stays correct as long as Settings > Timezone on this workflow stays set to America/Los_Angeles -- if that ever gets cleared or changed, this cron silently starts firing on Pacific-labeled hours in whatever timezone replaces it."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents:runQuery",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"structuredQuery\": {\"from\": [{\"collectionId\": \"leads\"}], \"where\": {\"compositeFilter\": {\"op\": \"AND\", \"filters\": [{\"fieldFilter\": {\"field\": {\"fieldPath\": \"source\"}, \"op\": \"EQUAL\", \"value\": {\"stringValue\": \"yardi\"}}}, {\"fieldFilter\": {\"field\": {\"fieldPath\": \"qualifying_email_status\"}, \"op\": \"EQUAL\", \"value\": {\"stringValue\": \"pending\"}}}]}}, \"limit\": 25}}",
+        "options": {}
+      },
+      "id": "fb3da318-043e-4267-854d-fd9020a5f6ff",
+      "name": "Get pending Yardi leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -5472,
+        2480
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "7IVvQuErxEJPoaMY",
+          "name": "Firebase_SDK_do_or_wait"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "function fsVal(field) {\n  if (!field) return null;\n  if (field.stringValue  !== undefined) return field.stringValue;\n  if (field.integerValue !== undefined) return Number(field.integerValue);\n  if (field.doubleValue  !== undefined) return field.doubleValue;\n  if (field.booleanValue !== undefined) return field.booleanValue;\n  if (field.nullValue    !== undefined) return null;\n  if (field.mapValue) {\n    const out = {};\n    for (const [k, v] of Object.entries(field.mapValue.fields || {})) out[k] = fsVal(v);\n    return out;\n  }\n  if (field.arrayValue) return (field.arrayValue.values || []).map(fsVal);\n  return null;\n}\n\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const body = item.json;\n  if (!body || !body.document) continue;\n  const nameParts = body.document.name.split('/');\n  const id = nameParts[nameParts.length - 1];\n  const fields = body.document.fields || {};\n  const lead = { id };\n  for (const [k, v] of Object.entries(fields)) lead[k] = fsVal(v);\n\n  // Safety guard: skip anything that looks like a test row rather than a\n  // real prospect. yardi_export.py doesn't filter these out upstream (the\n  // \"Jay Test\"/\"Justin Test\" rows Justin already flagged as a loose end\n  // sitting in the export sheet) -- without this, a leftover test row would\n  // get a real email sent to it the moment it synced into Firestore.\n  const hay = [lead.company, lead.contact, lead.first_name, lead.email].join(' ').toLowerCase();\n  if (/\\btest\\b/.test(hay)) continue;\n  if (!lead.email || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(lead.email)) continue;\n\n  results.push({ json: lead });\n}\n\nreturn results;"
+      },
+      "id": "b95746b9-817b-44bb-b904-67d643651bc4",
+      "name": "Parse & filter leads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5264,
+        2480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {},
+          "conditions": [
+            {
+              "id": "has-valid",
+              "leftValue": "={{ $input.all().length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f14bfc76-bc92-470e-957e-b28a6dafd080",
+      "name": "Any valid leads?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -5040,
+        2480
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "8656a665-afa9-43dd-a5f4-44ed4d6c8aac",
+      "name": "Loop pending leads",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -4816,
+        2368
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $json;\n\n// Workflow 32 writes location as \"{property} ({address})\" (or just\n// \"{property}\" if no address was on file) -- split it apart so we can use\n// just the property name. Per Justin's ask (2026-08-18), the qualifying\n// email names the location only, not the street address.\nconst loc = String(lead.location || '').trim();\nconst m = /^(.*?)\\s*\\(([^)]+)\\)\\s*$/.exec(loc);\nconst property = (m ? m[1] : loc).trim();\nconst address = m ? m[2].trim() : '';\n\nconst locationLine = property\n  ? ('I saw you inquired about our ' + property + \" location. To make sure that's the right fit, could you confirm your square footage needs and target move-in timeline?\")\n  : 'To point you to the right place, could you share your location preference, square footage needs, and target move-in timeline?';\n\n// Escape user/lead-sourced text before dropping it into HTML -- this now\n// renders as HTML (needed for the signature below), so it needs the same\n// basic escaping any HTML-emitting template would use.\nfunction escapeHtml(s) {\n  return String(s == null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Justin's real signature, matched to his actual Outlook signature\n// (screenshot confirmed 2026-08-18): name/title in the same blue accent,\n// address, cell, the Cubework logo (hosted on cubework.com -- confirmed via\n// a real 200/binary-image response, not a hosted 404, so it renders for the\n// recipient even though this sandbox's own network can't preview it), and\n// the same italic confidentiality notice used on manual sends. An automated\n// Graph send has no client-side Outlook signature to fall back on, so this\n// has to be in the body itself.\nconst signatureHtml = [\n  '<div>&nbsp;</div>',\n  '<div style=\"color:#1155CC;font-weight:bold;\">Justin Cho | Business Development Executive</div>',\n  '<div>218 Machlin Ct. | Walnut | California | 91789 | United States of America</div>',\n  '<div style=\"font-size:9pt;\">Cell: +1 (657) -620-7016</div>',\n  '<div style=\"margin-top:6px;\"><img src=\"https://www.cubework.com/logo/cubework-logo.svg\" alt=\"Cubework\" style=\"height:26px;display:block;\"></div>',\n  '<div style=\"font-size:9pt;font-style:italic;margin-top:6px;\">NOTICE: This message, and any attachments, contain(s) information that may be confidential or protected by privilege from disclosure and is intended only for the individual or entity named above. No one else may disclose copy, distribute, or use the contents of this message for any purpose. Its unauthorized use, dissemination, or duplication is strictly prohibited and may be unlawful. If you receive this message in error or are not an authorized recipient, please immediately delete the message and any attachments and notify the sender.</div>'\n].join('');\n\n// Body is Sales/Templates/First-Touch Qualifying Email Template.md verbatim\n// (General variant, location-known branch), now as HTML instead of plain\n// text so the signature above can actually render (added 2026-08-18).\nconst body = [\n  '<div style=\"font-family:Aptos,Calibri,Helvetica,sans-serif;font-size:12pt;color:rgb(0,0,0)\">',\n  '<div>Hello,</div>',\n  '<div>&nbsp;</div>',\n  \"<div>Thanks for reaching out. My name is Justin, and I'm a Business Development Executive at Cubework.</div>\",\n  '<div>&nbsp;</div>',\n  '<div>At Cubework, we offer flexible lease terms and a range of full-service amenities designed to support your business:</div>',\n  '<div>&nbsp;</div>',\n  '<div>* Fully furnished, professionally staffed facilities<br>* 24/7 access<br>* Flexible lease terms<br>* Water, coffee, and tea<br>* Basic utilities (electricity, water)<br>* Free Wi-Fi (office areas, breakrooms)<br>* Shared loading docks<br>* CCTV security<br>* Janitorial services<br>* Trash/dumpster service</div>',\n  '<div>&nbsp;</div>',\n  '<div>Additional Services (Not included in pricing):</div>',\n  '<div>&nbsp;</div>',\n  '<div>* Forklift rentals<br>* Secure Wi-Fi (warehouse)<br>* Electrical outlet installation (warehouse)</div>',\n  '<div>&nbsp;</div>',\n  '<div>' + escapeHtml(locationLine) + '</div>',\n  '<div>&nbsp;</div>',\n  '<div>Best,</div>',\n  signatureHtml,\n  '</div>'\n].join('');\n\n// FLAG FOR JUSTIN: the source template has no subject of its own since it's\n// normally used as a manual reply. This is a cold automated send instead, so\n// it needs one -- confirm/adjust before trusting this live.\nconst subject = 'Re: Your inquiry about Cubework' + (property ? (' ' + property) : '');\n\nreturn [{ json: {\n  leadId: lead.id,\n  to: lead.email,\n  subject,\n  body,\n  property,\n  address\n} }];"
+      },
+      "id": "ea9ab15f-6472-490b-bdb3-dc0d6abe838e",
+      "name": "Render qualifying email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4592,
+        2368
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.microsoft.com/v1.0/users/justin.cho@cubework.com/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "IdType=\"ImmutableId\""
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ subject: $json.subject, body: { contentType: 'HTML', content: $json.body }, toRecipients: [ { emailAddress: { address: $json.to } } ] }) }}",
+        "options": {}
+      },
+      "id": "4ca0ecb7-21fe-424f-b17b-f247b96dac07",
+      "name": "Create draft message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -4384,
+        2368
+      ],
+      "credentials": {
+        "oAuth2Api": {
+          "id": "fg9qH0vT1CbMbZzU",
+          "name": "outlook_send"
+        }
+      },
+      "continueOnFail": true,
+      "notes": "Creates the message as a DRAFT rather than calling /sendMail directly. Graph's /sendMail returns 202 with no body, so there's no way to get the message id/conversationId/webLink back from it -- creating the draft first gives us those in the response, then 'Send draft message' actually sends this exact message. continueOnFail is on so one bad address doesn't kill the whole run; 'Draft created OK?' checks whether this actually succeeded."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {},
+          "conditions": [
+            {
+              "id": "has-draft-id",
+              "leftValue": "={{ $json.id ? 1 : 0 }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "048f03a1-7d1e-4357-94b5-32da0c933e32",
+      "name": "Draft created OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -4160,
+        2368
+      ],
+      "notes": "Checks $json.id rather than a string-empty operator -- if 'Create draft message' failed, continueOnFail replaces $json with {error:...} (per the same pattern documented in resolve_thread.nodes.js), so $json.id is undefined and this coerces to 0/false either way. Same gt-0 shape as 'Any valid leads?' above, already proven in workflow 2."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.microsoft.com/v1.0/users/justin.cho@cubework.com/messages/{{ $json.id }}/send",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "IdType=\"ImmutableId\""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "754efb63-45a9-4956-9f72-cba6f535d123",
+      "name": "Send draft message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3936,
+        2288
+      ],
+      "credentials": {
+        "oAuth2Api": {
+          "id": "fg9qH0vT1CbMbZzU",
+          "name": "outlook_send"
+        }
+      },
+      "notes": "If this call fails after the draft was already created (rare -- transient Graph error), the draft is left sitting unsent in the mailbox and qualifying_email_status stays 'pending', so next run tries this lead again and creates a second draft. Mild Drafts-folder clutter on repeated failure, not a duplicate send -- acceptable tradeoff, revisit only if it turns out to happen often."
+    },
+    {
+      "parameters": {},
+      "id": "d5441731-eaea-4e99-a271-0f3a48586352",
+      "name": "Skip - draft failed",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -3936,
+        2512
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rendered = $('Render qualifying email').item.json;\nconst draft = $('Create draft message').item.json || {};\nconst lead  = $('Loop pending leads').first().json;\n\n// Graph's webLink comes back in a form that fails with \"This message might\n// have been moved or deleted\" -- see resolve_thread.nodes.js / index.html's\n// fixThreadUrl() for the full story. Reusing the exact same fix here so a\n// thread we link ourselves opens the same way a manually-resolved one does.\nfunction fixThreadUrl(u) {\n  if (!u || typeof u !== 'string') return u;\n  const m = /[?&]ItemID=([^&]+)/i.exec(u);\n  if (!m) return u.replace(/^(https?:\\/\\/)outlook\\.cloud\\.microsoft\\//i, '$1outlook.office365.com/');\n  const itemId = m[1];\n  const pathId = itemId.replace(/%2F/gi, '-').replace(/%2B/gi, '-');\n  return 'https://outlook.office365.com/mail/deeplink/read/' + pathId + '?ItemID=' + itemId + '&exvsurl=1';\n}\n\nconst now = new Date().toISOString();\nconst webLink = fixThreadUrl(draft.webLink || '');\n\n// Same email_links shape the app already renders (see leadThreadConversationId\n// / renderEmailLinks in index.html) -- pre-resolved at send time instead of\n// going through the workflow-11 subject/contact search, since we already\n// know exactly which message this is.\nconst newLink = {\n  id: 'el' + Date.now(),\n  label: 'Qualifying email',\n  subject: rendered.subject,\n  contact: rendered.to,\n  url: webLink,\n  conversationId: draft.conversationId || '',\n  graphMessageId: draft.id || ''\n};\nconst existingLinks = Array.isArray(lead.email_links) ? lead.email_links : [];\n\nconst newEntry = {\n  id: 'e' + Date.now(),\n  text: 'Sent first-touch qualifying email (auto, General template)' + (rendered.property ? (' re: ' + rendered.property + ' location.') : '.') + ' Asked to confirm sqft needs and move-in timeline.',\n  kind: 'email',\n  type: 'wait',\n  dir: 'out',\n  done: false,\n  createdAt: now\n};\nconst existingEntries = Array.isArray(lead.entries) ? lead.entries : [];\n\n// Minimal JS -> Firestore REST value encoder -- just the shapes this doc\n// actually uses (string / bool / null / array-of-object / object).\nfunction toFs(v) {\n  if (v === null || v === undefined) return { nullValue: null };\n  if (typeof v === 'boolean') return { booleanValue: v };\n  if (typeof v === 'number') return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };\n  if (Array.isArray(v)) return { arrayValue: { values: v.map(toFs) } };\n  if (typeof v === 'object') {\n    const fields = {};\n    for (const [k, val] of Object.entries(v)) fields[k] = toFs(val);\n    return { mapValue: { fields } };\n  }\n  return { stringValue: String(v) };\n}\n\nconst patchFields = {\n  qualifying_email_status: toFs('sent'),\n  qualifying_email_sent_at: toFs(now),\n  updatedAt: toFs(now),\n  email_links: toFs([...existingLinks, newLink]),\n  entries: toFs([...existingEntries, newEntry])\n};\n\nreturn [{ json: {\n  leadId: lead.id,\n  patchBody: { fields: patchFields },\n  updateMask: Object.keys(patchFields).join('&updateMask.fieldPaths='),\n  contact: lead.contact || lead.company || rendered.to,\n  company: lead.company || '',\n  property: rendered.property\n} }];"
+      },
+      "id": "f1504981-63bc-48b4-812e-1c22de9948ce",
+      "name": "Build lead patch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3712,
+        2288
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents/leads/{{ $json.leadId }}?updateMask.fieldPaths={{ $json.updateMask }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.patchBody) }}",
+        "options": {}
+      },
+      "id": "24dbb1d4-9aa7-4a51-bf2c-e657d244a0f3",
+      "name": "Update lead in Firestore",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3488,
+        2288
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "7IVvQuErxEJPoaMY",
+          "name": "Firebase_SDK_do_or_wait"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://default091ba9e63b95480c82d790e84ab87a.eb.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/22/workflows/03323e8fee6544199cb855987e85d5df/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=-7VK5Ox4jpxIc1mymO0XFeHnUTUBO9LKIFQFA1hxpM4",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: \"\", attachments: [ { contentType: \"application/vnd.microsoft.card.adaptive\", content: { type: \"AdaptiveCard\", $schema: \"http://adaptivecards.io/schemas/adaptive-card.json\", version: \"1.4\", body: [ { type: \"TextBlock\", text: \"\ud83d\udce7 Qualifying Email Sent\", weight: \"Bolder\", size: \"Medium\", color: \"Accent\" }, { type: \"TextBlock\", text: $('Build lead patch').item.json.company, weight: \"Bolder\", size: \"Large\", wrap: true }, { type: \"FactSet\", facts: [ { title: \"Contact\", value: $('Build lead patch').item.json.contact }, { title: \"Location\", value: $('Build lead patch').item.json.property } ] } ] } } ] }) }}",
+        "options": {}
+      },
+      "id": "90c4245f-aa3e-453a-be50-a50c75984fb1",
+      "name": "Notify Teams - Qualifying Email Sent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3264,
+        2288
+      ],
+      "continueOnFail": true,
+      "notes": "Same Power Automate/Teams webhook workflow 32 already posts new-lead cards to -- reused as-is, no new credential. continueOnFail so a Teams hiccup never blocks the loop (the Firestore state is already updated by the time we get here)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://plain-credit-5962.jchoustin91.workers.dev/webhook/advance-lead-milestone",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ leadId: $json.leadId, event: 'qualifying_email_sent' }) }}",
+        "options": {}
+      },
+      "id": "c1c1c001-0000-4a1a-9a1a-000000000001",
+      "name": "Advance milestone (qualifying email sent)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3364,
+        2288
+      ],
+      "continueOnFail": true,
+      "notes": "Calls workflow 35's generic advance-lead-milestone webhook to bump the lead to 'Lead Contacted (Sales)' now that the qualifying email actually went out -- this was previously never happening anywhere (2026-08-25, Justin: stages weren't reflecting the real story of the lead). continueOnFail so a hiccup here never blocks the Teams notify or the loop; qualifying_email_status is already written by the previous node either way. Uses the same Cloudflare Worker proxy host index.html's PROXY constant points at -- if server-to-server calls from n8n back through that proxy ever prove unreliable, swap this URL for n8n's own internal webhook host instead."
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Get pending Yardi leads": {
+      "main": [
+        [
+          {
+            "node": "Parse & filter leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & filter leads": {
+      "main": [
+        [
+          {
+            "node": "Any valid leads?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any valid leads?": {
+      "main": [
+        [
+          {
+            "node": "Loop pending leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop pending leads": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Render qualifying email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render qualifying email": {
+      "main": [
+        [
+          {
+            "node": "Create draft message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create draft message": {
+      "main": [
+        [
+          {
+            "node": "Draft created OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft created OK?": {
+      "main": [
+        [
+          {
+            "node": "Send draft message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip - draft failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send draft message": {
+      "main": [
+        [
+          {
+            "node": "Build lead patch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build lead patch": {
+      "main": [
+        [
+          {
+            "node": "Update lead in Firestore",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update lead in Firestore": {
+      "main": [
+        [
+          {
+            "node": "Advance milestone (qualifying email sent)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Teams - Qualifying Email Sent": {
+      "main": [
+        [
+          {
+            "node": "Loop pending leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip - draft failed": {
+      "main": [
+        [
+          {
+            "node": "Loop pending leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 2 minutes (7am-7pm PT)": {
+      "main": [
+        [
+          {
+            "node": "Get pending Yardi leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Advance milestone (qualifying email sent)": {
+      "main": [
+        [
+          {
+            "node": "Notify Teams - Qualifying Email Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "timezone": "America/Los_Angeles",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "7d727cf1-9c86-4dbb-8c54-78fdfe0ee26b",
+  "meta": {
+    "instanceId": "576f1552f658e6ccbe293a5c310c12c03fc3f516211957ae27ecb76646f5be19"
+  },
+  "id": "7kDERbIZv5wadPkg",
+  "tags": []
+}
