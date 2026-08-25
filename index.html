@@ -5578,8 +5578,21 @@ async function claudeAddTaskUpdate(opts) {
 function toggleLeadCard(id) {
   // Accordion: clicking a card closes any other open one (clicking the open card collapses it).
   const opening = !expandedLeadIds.has(id);
+  const prevOpen = expandedLeadIds.size ? [...expandedLeadIds][0] : null; // at most one, since this is a single-open accordion
   if (expandedLeadIds.has(id)) expandedLeadIds.delete(id); else { expandedLeadIds.clear(); expandedLeadIds.add(id); }
-  renderLeadsSection();
+  // Perf fix (2026-08-25, Justin: "laggy... especially when expanding/collapsing a
+  // lead row"): renderLeadCard's HTML is identical whether a card is open or closed
+  // except for the 'open' class — the .thread body is always rendered into the DOM,
+  // just hidden via `.thread { display: none }` / `.topic-card.open .thread { display: block }`
+  // (see CSS). So a full renderLeadsSection() — which re-filters/sorts/re-renders every
+  // lead card's full HTML string via innerHTML — was pure waste on every single
+  // expand/collapse click. Just flip the class on the (at most two) affected cards.
+  if (prevOpen && prevOpen !== id) {
+    const prevEl = document.getElementById(`lc-${prevOpen}`);
+    if (prevEl) prevEl.classList.remove('open');
+  }
+  const el = document.getElementById(`lc-${id}`);
+  if (el) el.classList.toggle('open', opening);
   populateAudio();
   if (opening) refreshCardEmailLinks(id, 'leads');
 }
