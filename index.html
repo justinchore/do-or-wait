@@ -4313,6 +4313,11 @@ async function submitAddEmailLink(id, coll, ev, ctx = '') {
   await resolveThreadLink(id, coll, linkId); // then ask Graph for the real webLink
 }
 
+// The mailbox all these Graph searches run against (n8n's Search messages node
+// hits /me/messages as this account) — used below to tell an outbound message
+// Justin sent himself apart from a real inbound reply from the lead.
+const MAILBOX_OWNER_EMAIL = 'justin.cho@cubework.com';
+
 // Ask the resolve-thread webhook (n8n workflow 11) to turn subject+contact into
 // the message's real Outlook webLink, then store it on the link so it opens the
 // actual thread on click. No match / error -> leave it unresolved with a retry.
@@ -4346,12 +4351,15 @@ async function resolveThreadLink(id, coll, linkId, ev) {
     if (!res.ok) {
       if (!hadUrl) { link.url = ''; link.resolveErr = 'offline'; }  // webhook returned an error/404 (active? imported?)
     } else if (data && data.found && data.webLink) {
-      // Flag 🆕 only when this refresh turns up a message newer than the one we
-      // already had tracked — never on the first-ever resolve (nothing to compare
-      // against yet), so a freshly linked thread doesn't start out flagged.
+      // Flag 🆕 only when this refresh turns up a message that is BOTH newer than
+      // the one we already had tracked AND actually inbound (2026-08-25 fix,
+      // Justin's task: cards were lighting up for Justin's own outbound replies
+      // too, not just replies from the lead). Workflow 11 already returns the
+      // newest message's sender as `data.from` — just wasn't being read before.
       const prevDate = link.lastMsgDate || '';
       const newDate  = data.date || '';
-      if (prevDate && newDate && new Date(newDate) > new Date(prevDate)) link.hasNew = true;
+      const isInbound = !!data.from && data.from.toLowerCase() !== MAILBOX_OWNER_EMAIL;
+      if (prevDate && newDate && new Date(newDate) > new Date(prevDate) && isInbound) link.hasNew = true;
       if (newDate) link.lastMsgDate = newDate;
       link.url = data.webLink;
       link.resolveErr = '';
