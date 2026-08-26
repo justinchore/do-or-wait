@@ -2006,7 +2006,18 @@ function currentStatus(topic) {
 }
 function allDone(topic) { return topic.entries.length > 0 && topic.entries.every(e => e.done); }
 function fmtDate(iso) {
-  const d = new Date(iso), now = new Date();
+  // A bare "YYYY-MM-DD" (no time component, e.g. tour_date/next_due_date)
+  // has no associated instant. new Date(iso) parses it as UTC midnight,
+  // which then gets localized -- in any timezone behind UTC (Pacific
+  // included) that shifts it back a full calendar day, so tomorrow's tour
+  // reads as "today" (confirmed live 2026-08-26 on Charles Figueredo's
+  // card: tour_date "2026-08-27" showed "Tour: today"). Full ISO
+  // timestamps like createdAt (which include a real time + Z) are NOT
+  // affected -- only bare dates. Force local-midnight parsing for those,
+  // matching how the Upcoming Tours strip already parses tour_date
+  // elsewhere (tour_date + 'T00:00:00').
+  const isBareDate = /^\d{4}-\d{2}-\d{2}$/.test(String(iso || ''));
+  const d = new Date(isBareDate ? iso + 'T00:00:00' : iso), now = new Date();
   // Compare by local calendar day, not a rolling 24h window — so an update
   // made yesterday evening reads "yesterday" this morning, not "today".
   const dayStart = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
