@@ -16,7 +16,8 @@
  *
  * Exposed as tools (see TOOLS below):
  *   Tasks:  list_tasks, get_task, create_task, add_task_update, update_task
- *   Leads:  list_leads, get_lead, create_lead, update_lead, add_lead_update
+ *   Leads:  search_leads, list_leads, get_lead, create_lead, update_lead,
+ *           add_lead_update
  *   Notes:  list_notes, create_note, update_note
  *   Read:   get_availability, get_pricing, get_renewals, list_locations
  *   Raw:    get_document, query_collection
@@ -111,6 +112,31 @@ async function fsList(coll) {
     pageToken = j.nextPageToken || "";
   } while (pageToken);
   return docs;
+}
+
+/**
+ * Like fsList, but stops fetching pages as soon as `cap` docs are in hand.
+ * Firestore's REST list API has no server-side substring search, so text
+ * search still has to scan — but callers that only want the first N docs
+ * (query_collection with a limit) no longer page through the whole
+ * collection just to slice it afterwards.
+ */
+async function fsListLimited(coll, cap) {
+  if (!cap || cap <= 0) return fsList(coll);
+  const docs = [];
+  let pageToken = "";
+  do {
+    const pageSize = Math.min(300, cap - docs.length);
+    const url = `${BASE}/${coll}?key=${API_KEY}&pageSize=${pageSize}${
+      pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""
+    }`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`list ${coll}: ${r.status} ${await r.text()}`);
+    const j = await r.json();
+    (j.documents || []).forEach((d) => docs.push(decodeDoc(d)));
+    pageToken = j.nextPageToken || "";
+  } while (pageToken && docs.length < cap);
+  return docs.slice(0, cap);
 }
 
 async function fsGet(coll, id) {
@@ -223,6 +249,37 @@ function leadSummary(l) {
   };
 }
 
+// Fields a text search looks at, in the order a human would guess.
+const LEAD_SEARCH_FIELDS = [
+  "company", "first_name", "contact", "email", "phone",
+  "location", "segment", "stage",
+];
+
+// Case-insensitive substring match across LEAD_SEARCH_FIELDS. Every
+// whitespace-separated term in `q` must match somewhere on the lead, so
+// "acme ontario" narrows instead of widening.
+function leadMatches(lead, q) {
+  const terms = String(q).toLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.length) return true;
+  const hay = LEAD_SEARCH_FIELDS
+    .map((f) => (lead[f] == null ? "" : String(lead[f])))
+    .join(" ")
+    .toLowerCase();
+  return terms.every((t) => hay.includes(t));
+}
+
+// Rank exact/prefix company hits above incidental matches so the lead you
+// meant is first when a search returns several.
+function leadScore(lead, q) {
+  const needle = String(q).toLowerCase().trim();
+  const co = String(lead.company || "").toLowerCase();
+  const nm = String(lead.first_name || "").toLowerCase();
+  if (co === needle || nm === needle) return 0;
+  if (co.startsWith(needle) || nm.startsWith(needle)) return 1;
+  if (co.includes(needle)) return 2;
+  return 3;
+}
+
 const LEAD_KINDS = ["note", "email", "call", "text", "met", "inbound"];
 
 // ───────────────────────── tool registry ─────────────────────────
@@ -239,16 +296,36 @@ const TOOLS = [
           type: "boolean",
           description: "Include archived task threads. Default false.",
         },
+        q: {
+          type: "string",
+          description: "Optional case-insensitive substring filter on the thread title.",
+        },
+        limit: { type: "number", description: "Max threads. Default 50, max 300." },
       },
     },
     handler: async (a) => {
       let tasks = await fsList("topics");
       if (!a.include_archived) tasks = tasks.filter((t) => !t.archived);
+      if (a.q) {
+        const needle = String(a.q).toLowerCase();
+        tasks = tasks.filter((t) =>
+          String(t.title || "").toLowerCase().includes(needle)
+        );
+      }
       tasks.sort(
         (x, y) =>
           Date.parse(y.createdAt || 0) - Date.parse(x.createdAt || 0)
       );
-      return tasks.map(taskSummary);
+      const limit = Math.min(Math.max(1, a.limit || 50), 300);
+      const total = tasks.length;
+      return {
+        total,
+        returned: Math.min(total, limit),
+        results: tasks.slice(0, limit).map(taskSummary),
+        ...(total > limit
+          ? { note: `${total - limit} more not shown — filter with \`q\` or raise \`limit\`.` }
+          : {}),
+      };
     },
   },
   {
@@ -364,9 +441,46 @@ const TOOLS = [
 
   // ---- LEADS (leads/{id}) ----
   {
+    name: "search_leads",
+    description:
+      "FIND A LEAD BY NAME. Use this — not list_leads — whenever the user names a specific company or person (\"pull up Acme's lead\", \"what's going on with Rodriguez\"). Case-insensitive substring match across company, first_name, contact, email, phone, location, segment and stage; every word in `q` must match, so \"acme ontario\" narrows. Returns compact summaries, best match first. If exactly one lead matches you still need get_lead for the thread.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        q: {
+          type: "string",
+          description:
+            "What to look for — company, person, email, phone, or any fragment of them. A few characters is enough.",
+        },
+        limit: { type: "number", description: "Max results. Default 10, max 50." },
+        include_archived: { type: "boolean", description: "Default false." },
+      },
+      required: ["q"],
+    },
+    handler: async (a) => {
+      const limit = Math.min(Math.max(1, a.limit || 10), 50);
+      let leads = (await fsList("leads")).filter((l) => !l._deleted);
+      if (!a.include_archived) leads = leads.filter((l) => !l.archived);
+      const hits = leads.filter((l) => leadMatches(l, a.q));
+      hits.sort((x, y) => leadScore(x, a.q) - leadScore(y, a.q));
+      return {
+        query: a.q,
+        matched: hits.length,
+        returned: Math.min(hits.length, limit),
+        results: hits.slice(0, limit).map(leadSummary),
+        ...(hits.length > limit
+          ? { note: `${hits.length - limit} more match — narrow \`q\` or raise \`limit\`.` }
+          : {}),
+        ...(hits.length === 0
+          ? { note: "No match. Try fewer characters, or a different field (email/phone)." }
+          : {}),
+      };
+    },
+  },
+  {
     name: "list_leads",
     description:
-      "List sales-pipeline leads (leads/{id}). Optional filters by stage, segment, or follow-up-due. Returns compact summaries; use get_lead for full detail.",
+      "Browse the pipeline in bulk — leads by stage, segment, or follow-up-due. Capped at 25 results by default. To find ONE named lead use search_leads instead; use get_lead for a lead's full detail.",
     inputSchema: {
       type: "object",
       properties: {
@@ -380,30 +494,70 @@ const TOOLS = [
           description: "If true, only leads currently flagged followup_due.",
         },
         include_archived: { type: "boolean", description: "Default false." },
+        q: {
+          type: "string",
+          description:
+            "Optional text filter, same matching as search_leads. Combine with stage/segment to narrow a bucket.",
+        },
+        limit: {
+          type: "number",
+          description: "Max leads returned. Default 25, max 200.",
+        },
       },
     },
     handler: async (a) => {
+      const limit = Math.min(Math.max(1, a.limit || 25), 200);
       let leads = await fsList("leads");
       leads = leads.filter((l) => !l._deleted);
       if (!a.include_archived) leads = leads.filter((l) => !l.archived);
       if (a.stage) leads = leads.filter((l) => l.stage === a.stage);
       if (a.segment) leads = leads.filter((l) => l.segment === a.segment);
       if (a.followup_due) leads = leads.filter((l) => l.followup_due);
-      return leads.map(leadSummary);
+      if (a.q) leads = leads.filter((l) => leadMatches(l, a.q));
+      const total = leads.length;
+      return {
+        total,
+        returned: Math.min(total, limit),
+        results: leads.slice(0, limit).map(leadSummary),
+        ...(total > limit
+          ? {
+              note: `${total - limit} more not shown — filter by stage/segment/q, or raise \`limit\`.`,
+            }
+          : {}),
+      };
     },
   },
   {
     name: "get_lead",
-    description: "Get one lead (leads/{id}) in full, including thread entries.",
+    description:
+      "Get one lead (leads/{id}) in full. The activity thread is trimmed to the most recent entries by default (a long-running lead can carry hundreds) — pass entries_limit: 0 for the whole thread.",
     inputSchema: {
       type: "object",
-      properties: { id: { type: "string" } },
+      properties: {
+        id: { type: "string" },
+        entries_limit: {
+          type: "number",
+          description:
+            "How many of the most recent thread entries to include. Default 20. Pass 0 for all.",
+        },
+      },
       required: ["id"],
     },
     handler: async (a) => {
       const l = await fsGet("leads", a.id);
       if (!l) throw new Error(`Lead ${a.id} not found`);
-      return l;
+      const all = Array.isArray(l.entries) ? l.entries : [];
+      const lim = a.entries_limit === 0 ? 0 : a.entries_limit || 20;
+      if (lim && all.length > lim) {
+        return {
+          ...l,
+          entries: all.slice(-lim),
+          entries_total: all.length,
+          entries_truncated: all.length - lim,
+          entries_note: `Showing the ${lim} most recent of ${all.length} entries. Pass entries_limit: 0 for the full thread.`,
+        };
+      }
+      return { ...l, entries_total: all.length };
     },
   },
   {
@@ -751,9 +905,8 @@ const TOOLS = [
       required: ["collection"],
     },
     handler: async (a) => {
-      const docs = await fsList(a.collection);
       const lim = Math.min(Math.max(1, a.limit || 50), 300);
-      return docs.slice(0, lim);
+      return fsListLimited(a.collection, lim);
     },
   },
 ];
@@ -801,6 +954,9 @@ export const __test = {
   encodeFields,
   decodeFields,
   currentStatus,
+  leadMatches,
+  leadScore,
+  leadSummary,
   TOOLS,
 };
 

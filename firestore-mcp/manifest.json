@@ -18,13 +18,14 @@
     }
   },
   "tools": [
-    { "name": "list_tasks", "description": "List task threads (Tasks tab)." },
+    { "name": "list_tasks", "description": "List task threads (Tasks tab), with optional title filter." },
     { "name": "get_task", "description": "Get one task thread in full." },
     { "name": "create_task", "description": "Create a new task thread." },
     { "name": "add_task_update", "description": "Append an update to a task thread." },
     { "name": "update_task", "description": "Rename or archive a task thread." },
-    { "name": "list_leads", "description": "List sales-pipeline leads." },
-    { "name": "get_lead", "description": "Get one lead in full." },
+    { "name": "search_leads", "description": "Find a lead by name, company, email or phone (substring search)." },
+    { "name": "list_leads", "description": "Browse sales-pipeline leads by stage/segment/follow-up-due (capped)." },
+    { "name": "get_lead", "description": "Get one lead in full (activity thread trimmed by default)." },
     { "name": "create_lead", "description": "Create a new lead." },
     { "name": "update_lead", "description": "Update top-level fields on a lead." },
     { "name": "add_lead_update", "description": "Append a classified update to a lead." },
