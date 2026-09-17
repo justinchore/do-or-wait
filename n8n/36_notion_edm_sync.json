@@ -1,0 +1,276 @@
+{
+  "name": "CW \u2014 36. Notion eDM MQL Sync (Do or Wait -> Notion, one-way)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 17 * * *"
+            }
+          ]
+        }
+      },
+      "id": "c36c3601-0000-4a1a-9a1a-000000000001",
+      "name": "Every day at 5pm",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/3a7dce7f4a4480899622e4b1226ee319/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ filter: { property: \"Email\", email: { is_not_empty: true } }, page_size: 100 }) }}",
+        "options": {}
+      },
+      "id": "c36c3601-0000-4a1a-9a1a-000000000002",
+      "name": "Query Notion eDM MQL database",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "REPLACE_ME",
+          "name": "Notion_n8n"
+        }
+      },
+      "notes": "Needs a Notion internal integration credential -- see 36_notion_edm_sync.README.md. Database must also be explicitly shared with that integration inside Notion, or this 404s."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Notion's database-query response comes back as ONE item (the raw\n// {results: [...]} object from the HTTP Request node), not one item per\n// page -- this node fans it out to one item per Notion row, same idea as\n// workflow 32's \"Grid to Records\" step for Sheet rows. Query filter already\n// restricts to rows with a non-empty Email, but the check here is kept as a\n// defensive backstop in case that ever changes.\n\nconst resp = $input.first().json;\nconst results = resp.results || [];\nconst out = [];\nfor (const page of results) {\n  const props = page.properties || {};\n  const email = (props['Email'] && props['Email'].email) || '';\n  if (!email) continue;\n  const nameProp = props['Name'] && props['Name'].title;\n  const name = (nameProp && nameProp[0] && nameProp[0].plain_text) || '';\n  out.push({\n    json: {\n      pageId: page.id,\n      email: email.toLowerCase().trim(),\n      notionName: name,\n    },\n  });\n}\nreturn out;\n"
+      },
+      "id": "c36c3601-0000-4a1a-9a1a-000000000003",
+      "name": "Flatten Notion rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://firestore.googleapis.com/v1/projects/do-or-wait/databases/(default)/documents:runQuery",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ structuredQuery: { from: [{ collectionId: \"leads\" }], where: { fieldFilter: { field: { fieldPath: \"email\" }, op: \"EQUAL\", value: { stringValue: $json.email } } }, limit: 1 } }) }}",
+        "options": {}
+      },
+      "id": "c36c3601-0000-4a1a-9a1a-000000000004",
+      "name": "Query Firestore lead by email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        0
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "7IVvQuErxEJPoaMY",
+          "name": "Firebase_SDK_do_or_wait"
+        }
+      },
+      "notes": "Same credential + runQuery pattern as workflow 32's dedupe lookup and workflow 35's Get current lead. Firestore access, not Notion."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Matches each Notion row (from \"Flatten Notion rows\") against its Firestore\n// runQuery result (from \"Query Firestore lead by email\"), in the SAME order --\n// that node fires one call per input item, so queryResults[i] always\n// corresponds to notionRows[i]. This node runs once for ALL items (n8n Code\n// node default mode) and must return one output item per input item -- see\n// workflow 32's \"Check Match\" node for the exact same pattern and the bug it\n// was written to avoid ($input.first()/$(...).item singular only look at\n// item 0 and silently drop every row after it).\n//\n// Currently only 3 of ~200 Do or Wait leads have a matching row in this\n// Notion database (it's scoped to eDM-sourced MQLs, not every lead) -- a row\n// with no Do or Wait match is expected and just gets skipped, not an error.\n//\n// Design choice (2026-08-26, per Justin): this is a full-overwrite mirror,\n// not an append-only log. Every run recomputes Handoff Status + Outreach\n// History from Do or Wait's current state and replaces both fields outright.\n// No cursor/dedupe field was added to the leads/{id} schema for this --\n// Do or Wait's entries[] is already the source of truth, so re-deriving from\n// it each time is simpler and can't drift out of sync with a stale cursor.\n//\n// NOTE on duplicate leads: a real duplicate-lead bug surfaced here 2026-08-26\n// (Robb Williams / Corporate Storage had a stale archived duplicate that a\n// naive limit:1 query briefly matched instead of the real active lead --\n// see the README's \"Known issue\" section for the full story). Fixed by\n// cleaning up the underlying duplicate data in Do or Wait directly (marked\n// dead + merged_into_lead_id, its one real entry merged into the surviving\n// lead), NOT by adding duplicate-tolerance logic here -- per Justin,\n// \"we shouldn't change the n8n workflow to account for a data mess.\" This\n// query stays a plain limit:1 exact-match lookup on purpose.\n\nfunction fsVal(field) {\n  if (!field) return null;\n  if (field.stringValue !== undefined) return field.stringValue;\n  if (field.integerValue !== undefined) return Number(field.integerValue);\n  if (field.doubleValue !== undefined) return field.doubleValue;\n  if (field.booleanValue !== undefined) return field.booleanValue;\n  if (field.timestampValue !== undefined) return field.timestampValue;\n  if (field.nullValue !== undefined) return null;\n  if (field.mapValue) { const out = {}; for (const [k, v] of Object.entries(field.mapValue.fields || {})) out[k] = fsVal(v); return out; }\n  if (field.arrayValue) return (field.arrayValue.values || []).map(fsVal);\n  return null;\n}\n\nconst STAGE_TO_HANDOFF = {\n  lead: 'BD Following Up',\n  tour: 'BD Following Up',\n  proposal: 'BD Following Up',\n  negotiation: 'BD Following Up',\n  executed: 'Converted to SQL',\n  dead: 'Lost/No Need',\n};\n\nconst MAX_TEXT_LEN = 1900; // Notion rich_text array elements cap at 2000 chars each\n\nconst queryResults = $input.all();\nconst notionRows = $('Flatten Notion rows').all();\n\nconst out = [];\nfor (let i = 0; i < queryResults.length; i++) {\n  const raw = queryResults[i].json;\n  const body = Array.isArray(raw) ? raw : [raw];\n  const doc = body.find((r) => r && r.document);\n  const row = (notionRows[i] && notionRows[i].json) || {};\n\n  if (!doc) {\n    out.push({ json: { ...row, matched: false, reason: 'No Do or Wait lead found for this email' } });\n    continue;\n  }\n\n  const fields = doc.document.fields || {};\n  const stage = fsVal(fields.stage) || 'lead';\n  const entriesRaw = fsVal(fields.entries) || [];\n  const leadId = (doc.document.name || '').split('/').pop();\n\n  const sorted = entriesRaw\n    .filter((e) => e && e.kind !== 'note')\n    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));\n\n  let text = '';\n  for (const e of sorted) {\n    const date = (e.createdAt || '').slice(0, 10);\n    const dirTag = e.dir ? '/' + e.dir : '';\n    const line = `${date} [${e.kind || 'note'}${dirTag}] ${e.text || ''}`;\n    if (text.length + line.length + 1 > MAX_TEXT_LEN) {\n      text += '\\n...(older entries omitted)';\n      break;\n    }\n    text += (text ? '\\n' : '') + line;\n  }\n\n  out.push({\n    json: {\n      ...row,\n      matched: true,\n      leadId,\n      stage,\n      handoffStatus: STAGE_TO_HANDOFF[stage] || 'BD Following Up',\n      outreachText: text || '(no logged activity yet)',\n    },\n  });\n}\nreturn out;\n"
+      },
+      "id": "c36c3601-0000-4a1a-9a1a-000000000005",
+      "name": "Build sync payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {},
+          "conditions": [
+            {
+              "id": "lead-matched",
+              "leftValue": "={{ $json.matched }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c36c3601-0000-4a1a-9a1a-000000000006",
+      "name": "Lead found in Do or Wait?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.notion.com/v1/pages/{{ $json.pageId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ properties: { \"Handoff Status\": { select: { name: $json.handoffStatus } }, \"Outreach History\": { rich_text: [ { text: { content: $json.outreachText } } ] } } }) }}",
+        "options": {}
+      },
+      "id": "c36c3601-0000-4a1a-9a1a-000000000007",
+      "name": "Update Notion page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1344,
+        -96
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "REPLACE_ME",
+          "name": "Notion_n8n"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "c36c3601-0000-4a1a-9a1a-000000000008",
+      "name": "Skip (no Do or Wait match)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1344,
+        96
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Query Notion eDM MQL database": {
+      "main": [
+        [
+          {
+            "node": "Flatten Notion rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flatten Notion rows": {
+      "main": [
+        [
+          {
+            "node": "Query Firestore lead by email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Firestore lead by email": {
+      "main": [
+        [
+          {
+            "node": "Build sync payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build sync payload": {
+      "main": [
+        [
+          {
+            "node": "Lead found in Do or Wait?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead found in Do or Wait?": {
+      "main": [
+        [
+          {
+            "node": "Update Notion page",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip (no Do or Wait match)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every day at 5pm": {
+      "main": [
+        [
+          {
+            "node": "Query Notion eDM MQL database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "d36d3601-0000-4a1a-9a1a-000000000001",
+  "meta": {
+    "instanceId": "576f1552f658e6ccbe293a5c310c12c03fc3f516211957ae27ecb76646f5be19"
+  },
+  "id": "",
+  "tags": []
+}

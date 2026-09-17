@@ -58,6 +58,23 @@ are set *only* by this one node, so an EQUAL filter on both is safe.
 fix ships has neither field, so workflow 33's query structurally can't match historical
 backlog. Nothing to clean up before turning this on.
 
+**2026-09-08 update — manually-added Yardi leads were getting the email too.** Justin
+found qualifying emails going out on leads that had been manually added into Yardi
+already past first assignment (e.g. a broker backfilling a deal that's already been
+toured/proposed), because workflow 32's Create Lead node only checked email presence
+and the self-sourced comment before setting `qualifying_email_status: "pending"` — it
+never looked at the Sheet's `SUB STAGE` column. Fixed in
+`32_yardi_sheet_to_firestore_sync_fixed_v2.json` (not this file's own workflow): a lead
+now only gets `"pending"` if `sub_stage` is blank or exactly `"Lead Assigned"`
+(case-insensitive) — anything else (`"Tour Scheduled (Sales)"`, `"Contract Sent"`,
+etc.) gets `qualifying_email_status: "skipped_not_new_assignment"` instead. Workflow 33
+itself needed **no change** — its query already just filters on
+`qualifying_email_status == "pending"`, so it automatically stops matching these leads
+once workflow 32's fix is imported. **Status: imported by Justin (2026-09-08).** Still needs
+a live verification — check the next Yardi lead that comes in with a non-blank, non-"Lead Assigned"
+sub_stage lands as `skipped_not_new_assignment` (not `pending`) and doesn't get emailed —
+see that file's own Create Lead node notes for the exact logic.
+
 ---
 
 ## What it does

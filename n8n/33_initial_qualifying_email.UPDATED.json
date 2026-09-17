@@ -290,7 +290,7 @@
         "url": "https://plain-credit-5962.jchoustin91.workers.dev/webhook/advance-lead-milestone",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ leadId: $json.leadId, event: 'qualifying_email_sent' }) }}",
+        "jsonBody": "={{ JSON.stringify({ leadId: $('Build lead patch').item.json.leadId, event: 'qualifying_email_sent' }) }}",
         "options": {}
       },
       "id": "c1c1c001-0000-4a1a-9a1a-000000000001",
