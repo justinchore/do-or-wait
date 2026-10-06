@@ -727,7 +727,6 @@
     <button class="tab-btn active" data-tab="avail" onclick="switchTab('avail')">🏭 Avail</button>
     <button class="tab-btn" data-tab="roster" onclick="switchTab('roster')">🗂️ Roster</button>
     <button class="tab-btn" data-tab="sharepoint" onclick="switchTab('sharepoint')">🔗 Links</button>
-    <button class="tab-btn" data-tab="pricing" onclick="switchTab('pricing')">💲 Pricing</button>
     <button class="tab-btn" data-tab="ratebands" onclick="switchTab('ratebands')">📊 Rate Bands</button>
     <button class="tab-btn" data-tab="notes" onclick="switchTab('notes')">💡 Notes</button>
     <button class="tab-btn" data-tab="assistant" onclick="switchTab('assistant')">🤖 Assistant</button>
@@ -1040,21 +1039,7 @@
     </div>
   </div>
 
-  <!-- Pricing view (national rate card) -->
-  <div id="pricing-view" style="display:none">
-    <div style="max-width:1200px;margin:0 auto;padding:16px;width:100%;">
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
-        <input id="pricing-search" oninput="onPricingSearch(this.value)" placeholder="Search city, address, or state…"
-               style="flex:1;min-width:200px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:14px;" />
-        <select id="pricing-state" onchange="setPricingState(this.value)"
-               style="padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-size:13px;"></select>
-        <span id="pricing-meta" style="font-size:12px;color:var(--text2);"></span>
-      </div>
-      <div id="pricing-content"></div>
-    </div>
-  </div>
-
-  <!-- Rate Bands view (internal Sales/BD negotiating bands — staff only, separate from Pricing) -->
+  <!-- Rate Bands view (internal Sales/BD negotiating bands — staff only; the only pricing view since the old Pricing tab was retired 2026-10-06) -->
   <div id="ratebands-view" style="display:none">
     <div style="max-width:1200px;margin:0 auto;padding:16px;width:100%;">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px;">
@@ -1710,7 +1695,6 @@
   </div>
 </div>
 
-<script src="pricing-seed.js"></script>
 <script src="outreach-seed.js"></script>
 <script type="module">
 // ═══════════════════════════════════════════════════════════════
@@ -5805,7 +5789,6 @@ function switchTab(tab) {
   document.getElementById('avail-view').style.display    = tab === 'avail'    ? '' : 'none';
   document.getElementById('roster-view').style.display   = tab === 'roster'   ? '' : 'none';
   document.getElementById('sharepoint-view').style.display = tab === 'sharepoint' ? '' : 'none';
-  document.getElementById('pricing-view').style.display  = tab === 'pricing'  ? '' : 'none';
   document.getElementById('ratebands-view').style.display = tab === 'ratebands' ? '' : 'none';
   document.getElementById('notes-view').style.display    = tab === 'notes'    ? '' : 'none';
   document.getElementById('outreach-view').style.display = tab === 'outreach' ? '' : 'none';
@@ -5818,7 +5801,6 @@ function switchTab(tab) {
   if (tab === 'notes') renderNotes();
   if (tab === 'roster') renderRoster();
   if (tab === 'sharepoint') renderSplinks();
-  if (tab === 'pricing') renderPricing();
   if (tab === 'ratebands') renderRateBands();
   if (tab === 'outreach') renderOutreach();
   if (tab === 'propoutreach') renderPropertyOutreach();
@@ -7214,99 +7196,10 @@ async function deleteSplink(id) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  PRICING — national rate card. Reads Firestore pricing/current
-//  (written by the n8n Pricing Sync); falls back to the bundled
-//  snapshot in pricing-seed.js so the tab works before/without sync.
-// ═══════════════════════════════════════════════════════════════
-let pricingRows   = (window.PRICING_SEED || []).slice();
-let pricingSource = 'snapshot';
-let pricingSearch = '';
-let pricingState  = 'all';
-const expandedPrice = new Set();
-
-const PRICE_PRIMARY = [
-  ['sub2k','<2k sf',true],['r2_5k','2–5k sf',true],['r5k','5k+ sf',true],
-  ['r5k_12mo','5k+ 12mo',true],['office','Office',false],['dock','Dock',false],
-];
-const PRICE_DETAIL = [
-  ['office_mo','Office (monthly min)'],['desk','Desk / Cubicle'],['virtual','Virtual Office'],
-  ['truck','Truck Parking'],['small_veh','Small Vehicle'],['wifi','Whse WiFi'],
-  ['annual','Annual (per SF)'],['deposit','Security Deposit'],['dp_office','Day Pass — Office/Desk'],
-  ['dp_wh','Day Pass — WH (per SF)'],['dp_xdock','Day Pass — Cross Dock'],['studio','Studio Space'],
-  ['conf','Conference Room'],['event','Event Space (per SF)'],['amenities','Amenities'],['special','Special Pricing'],
-];
-const PRICE_LONG = new Set(['amenities','special']);   // long free-text — render full-width with line breaks
-
-function normalizePricing(){ pricingRows.forEach((r,i)=>{ if(!r._id) r._id = 'p' + i; }); }
-normalizePricing();
-
-function priceVal(v, money){
-  if(v === '' || v == null) return '<span style="color:var(--text2)">—</span>';
-  if(money && typeof v === 'number') return '$' + v.toFixed(2);
-  return esc(String(v));
-}
-function onPricingSearch(v){ pricingSearch = (v||'').trim().toLowerCase(); renderPricing(); }
-function setPricingState(v){ pricingState = v; renderPricing(); }
-function togglePriceRow(id, e){ if(e) e.stopPropagation(); if(expandedPrice.has(id)) expandedPrice.delete(id); else expandedPrice.add(id); renderPricing(); }
-
-function renderPricing(){
-  const host = document.getElementById('pricing-content'); if(!host) return;
-  const sel = document.getElementById('pricing-state');
-  if(sel){
-    const states = [...new Set(pricingRows.map(r=>r.state).filter(Boolean))].sort();
-    sel.innerHTML = '<option value="all">All states</option>' +
-      states.map(s=>`<option value="${esc(s)}">${esc(STATE_NAMES[s]||s)}</option>`).join('');
-    sel.value = pricingState;
-  }
-  let rows = pricingRows.filter(r => pricingState === 'all' || r.state === pricingState);
-  if(pricingSearch) rows = rows.filter(r => [r.state,r.city,r.address].some(x => String(x||'').toLowerCase().includes(pricingSearch)));
-  rows = rows.slice().sort((a,b)=> String(a.state||'').localeCompare(String(b.state||'')) || String(a.city||'').localeCompare(String(b.city||'')));
-  const meta = document.getElementById('pricing-meta');
-  if(meta) meta.textContent = `${rows.length} location${rows.length!==1?'s':''} · ${pricingSource==='live'?'live':'snapshot'}`;
-  if(!rows.length){ host.innerHTML = '<div class="empty">No locations match.</div>'; return; }
-  const groups = {}; rows.forEach(r => { (groups[r.state||'Other'] = groups[r.state||'Other'] || []).push(r); });
-  const cols = PRICE_PRIMARY;
-  host.innerHTML = Object.keys(groups).sort().map(st => {
-    const body = groups[st].map(r => {
-      const open = expandedPrice.has(r._id);
-      const tds = cols.map(([k,,money])=>`<td style="text-align:right;white-space:nowrap;padding:5px 6px;">${priceVal(r[k],money)}</td>`).join('');
-      const det = PRICE_DETAIL.filter(([k])=>r[k]!=='' && r[k]!=null)
-        .map(([k,lab])=>{
-          const val = esc(String(r[k]));
-          if(PRICE_LONG.has(k)) return `<div style="padding:5px 0;border-top:1px solid var(--border);font-size:12px;"><div style="color:var(--text2);margin-bottom:2px;">${lab}</div><div style="white-space:pre-wrap;line-height:1.45;">${val}</div></div>`;
-          return `<div style="display:flex;justify-content:space-between;gap:12px;padding:3px 0;border-top:1px solid var(--border);font-size:12px;"><span style="color:var(--text2);">${lab}</span><span style="font-weight:600;text-align:right;">${val}</span></div>`;
-        }).join('');
-      const detRow = open ? `<tr><td colspan="${cols.length+2}" style="background:var(--bg);padding:8px 12px;">${det || '<span style="color:var(--text2)">No additional pricing.</span>'}</td></tr>` : '';
-      return `<tr onclick="togglePriceRow('${r._id}',event)" style="cursor:pointer;border-top:1px solid var(--border);">
-          <td style="font-weight:600;white-space:nowrap;padding:5px 6px;">${esc(r.city||'')}${r.special?' <span title="Has special / negotiation pricing" style="font-size:10px;background:#fef3c7;color:#92400e;border-radius:10px;padding:0 5px;vertical-align:middle;">💬</span>':''} <span style="color:var(--text2);font-weight:400;">${open?'▾':'▸'}</span></td>
-          <td style="color:var(--text2);font-size:12px;padding:5px 6px;">${esc(r.address||'')}</td>${tds}</tr>${detRow}`;
-    }).join('');
-    return `<div style="margin-bottom:18px;">
-        <div style="font-weight:700;font-size:13px;margin:0 0 6px;">${esc(STATE_NAMES[st]||st)} <span style="color:var(--text2);font-weight:400;">(${groups[st].length})</span></div>
-        <div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;">
-          <thead><tr style="color:var(--text2);font-size:11px;text-transform:uppercase;letter-spacing:.04em;text-align:left;">
-            <th style="padding:4px 6px;">City</th><th style="padding:4px 6px;">Address</th>
-            ${cols.map(([,lab])=>`<th style="padding:4px 6px;text-align:right;">${lab}</th>`).join('')}
-          </tr></thead><tbody>${body}</tbody></table></div>
-      </div>`;
-  }).join('');
-}
-
-// Live override from Firestore (written by the n8n Pricing Sync). Falls back to the snapshot if the doc is absent/empty.
-try {
-  liveSnapshot(doc(db,'pricing','current'), snap => {
-    const d = snap.exists() ? snap.data() : null;
-    if(d && Array.isArray(d.rows) && d.rows.length){ pricingRows = d.rows; pricingSource = 'live'; normalizePricing(); renderPricing(); }
-  }, err => console.warn('pricing listener', err));
-} catch(e){ console.warn('pricing listener init', e); }
-renderPricing();
-
-// ═══════════════════════════════════════════════════════════════
 //  RATE BANDS — internal Sales/BD negotiating tool. Reads Firestore
 //  pricing_bd/current (written by the n8n Pricing BD Sync, workflow 18).
-//  Fully separate from pricing/current — the two source sheets carry
-//  different, non-overlapping info (see CLAUDE.md, 2026-07-07 session)
-//  and neither sync touches the other's doc.
+//  Sole pricing view. The old 💲 Pricing tab and pricing/current were
+//  retired 2026-10-06 (both read the same 2026 Sales/BD workbook).
 // ═══════════════════════════════════════════════════════════════
 let rateBandsRows      = [];
 let rateBandsUpdatedAt = '';
@@ -9325,7 +9218,6 @@ window.snoozeEmail         = snoozeEmail;
 window.openSequencerEmail  = openSequencerEmail;
 window.markTouchSent       = markTouchSent;
 window.pickKind            = pickKind;
-window.onPricingSearch     = onPricingSearch;
 window.onOutreachSearch    = onOutreachSearch;
 window.setOutreachFilter   = setOutreachFilter;
 window.setOutreachIndustry = setOutreachIndustry;
@@ -9345,8 +9237,6 @@ window.markOutreachInvalid = markOutreachInvalid;
 window.exportOutreachJson  = exportOutreachJson;
 window.doEmailSignIn       = doEmailSignIn;
 window.doSignOut           = doSignOut;
-window.setPricingState     = setPricingState;
-window.togglePriceRow      = togglePriceRow;
 window.onRateBandsSearch   = onRateBandsSearch;
 window.setRateBandsState   = setRateBandsState;
 window.setRateBandsScope   = setRateBandsScope;

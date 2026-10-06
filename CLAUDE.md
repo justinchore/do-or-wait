@@ -75,10 +75,9 @@ Source: `C:\Users\jcho\Documents\Claude\Projects\do_or_wait\index.html` (+ `tour
 7. **🏭 Avail** — real-time availability dashboard. Has ⬇ Export JSON (syncs-first, then downloads).
 8. **🗂️ Roster** — staff contact directory, read-only, visible to Lucy (Avail-only role).
 9. **🔗 Links** — SharePoint/Google Sheet link directory, full CRUD. NOT visible to Lucy.
-10. **💲 Pricing** — national rate card, read-only, falls back to `pricing-seed.js`.
-11. **📊 Rate Bands** — internal Sales/BD negotiating tool, staff-only (not Lucy).
-12. **💡 Notes** — ideas/issues notebook.
-13. **🤖 Assistant** — in-app Claude chat via Anthropic's native MCP connector against the do-or-wait Cloud Run MCP server. One persisted thread (`assistant_threads/main`).
+10. **📊 Rate Bands** — the single pricing view: internal Sales/BD rate bands + add-ons, staff-only (not Lucy). The separate 💲 Pricing tab was retired 2026-10-06 (both read the same 2026 Sales/BD workbook, so it was redundant).
+11. **💡 Notes** — ideas/issues notebook.
+12. **🤖 Assistant** — in-app Claude chat via Anthropic's native MCP connector against the do-or-wait Cloud Run MCP server. One persisted thread (`assistant_threads/main`).
 
 **n8n import-status caveat:** several workflows' "imported/active in n8n" status has never been explicitly confirmed in a session (see the workflow inventory table below) — this doc can only track what got typed into it, not Justin's actual n8n instance.
 
@@ -160,11 +159,11 @@ Written by n8n after syncing each property's SharePoint file. Fields: `property`
 
 Each `units[]` entry: `unit`, `type` (WH/OFFICE/DOCK/TRAILER), `sf`, `status`, `tenant`, `owner`, `phone`, `email`, `poc`, `notes`, `available` (bool), `hold` (bool).
 
-### `pricing/current`
-National rate card. Written by n8n Pricing Sync (**workflow 7** — auth pattern flagged 2026-07-07 as never verified live, still had a placeholder credential; check if this tab's data ever looks stale). Falls back to `pricing-seed.js`.
+### `pricing/current` — RETIRED 2026-10-06
+Old flat national rate card (💲 Pricing tab, n8n workflow 7, `pricing-seed.js` fallback). The tab and its app code were removed; nothing in the app reads this doc anymore. The doc and the Firestore MCP's `get_pricing` tool still exist but go stale once workflow 7 is deactivated — **use `get_rate_bands` instead**.
 
 ### `pricing_bd/current`
-Internal Sales/BD rate-bands tool (📊 Rate Bands tab). Written by **workflow 18** (not confirmed imported/active). Fully separate sheet/collection from `pricing/current` (complementary, non-overlapping data). Fields per building: bands (RAISE/HOLD/LOWER tiers), occupancy_pct, addons, notes, below_break_even, promo. No snapshot fallback.
+Now the app's only pricing source (📊 Rate Bands tab; MCP tool `get_rate_bands`). Written by **workflow 18** (daily 6:30am, confirmed running 2026-10-06) from `2026_cubework_pricing_by_state__Sales__BD_Copy.xlsx` on the Sales_US SharePoint site. Fields per building: bands (RAISE/HOLD/LOWER tiers), occupancy_pct, addons, notes, below_break_even, promo. No snapshot fallback.
 
 ### `roster/current`
 Staff contact directory (🗂️ Roster tab). Written by **workflow 19**, manual webhook only, no cron (not confirmed imported/active). Plain flat table per location: `local_staff`, `facility_manager`, `status`. Visible to Lucy (Avail-only role) — the one exception besides Avail itself.
@@ -240,7 +239,7 @@ service firebase.storage {
 | 4 | `4_availability_sync.json` | Redundant reference copy, superseded by 5. Deletion candidate. |
 | 5 | `5_add_location.json` | **LIVE** — authoritative combined workflow (availability-sync + add-location + daily 3am cron sync of all locations). Edit in n8n UI or here, then re-export; always update in-place, never import from the workflows list. |
 | 6 | Follow-up Scanner | **LIVE**, daily 7am. Flags leads cold 3+ business days via Outlook/Graph. Never sends. |
-| 7 | Pricing Sync | Presumed running (daily 6am) but **auth pattern never verified live** — still had a placeholder credential as of 2026-07-07. |
+| 7 | Pricing Sync | **RETIRED 2026-10-06** — fed the removed 💲 Pricing tab from the old flat master. Deactivate it in n8n (repo file kept for reference only). |
 | 8 | Prospect Finder (nightly Apollo import/score) | Dead in practice — part of the cancelled Apollo pipeline. |
 | 9 | Floorplan image render | **Abandoned/deprecated**, do not import — floor-plan feature is link-only now (see below). |
 | 10 | Renewals Sync | **LIVE**, daily 7:30am. |
@@ -252,7 +251,7 @@ service firebase.storage {
 | 16a | Apollo Phone Reveal | Dead — Apollo cancelled. |
 | 16b | Apollo Phone Write (poll-based) | **DELETED** — never worked (404s). |
 | 17 | Generate Lead Follow-up | **LIVE**, imported and current. Has been re-imported several times to keep prompt edits live (2026-07-06/07/15/20, and again 2026-07-20 after discovering the live copy had drifted several versions stale) — **always diff/verify the live copy before assuming a past "re-imported" note is still true.** |
-| 18 | Pricing BD Sync | **NOT confirmed imported/active** — flagged repeatedly, never resolved. |
+| 18 | Pricing BD Sync | **LIVE** (confirmed 2026-10-06, `pricing_bd/current` updated that morning). Now the only pricing sync. |
 | 19 | Roster Sync | **NOT confirmed imported/active** — flagged repeatedly, never resolved. |
 | 20 | Firestore Writer (generic) | **LIVE** — the generic `{collection,action,items|fields}` → Firestore batchWrite webhook, used by many other workflows (23, 25, 32) and one-off migrations. Keep active. Only ever writes what the caller's `fields` includes — it does NOT inject `createdAt`/`archived`/`seq_status` defaults itself (see workflow 32's row below for where that gap actually lives). |
 | 21 | Cleanup Ontario Outreach | One-off, done its job — safe to deactivate/delete. |
@@ -345,7 +344,7 @@ A separate file from `index.html`, own auth gate (same Firebase project, same `A
 do_or_wait/
   index.html            ← main app (push to GitHub to deploy)
   tour.html             ← standalone post-tour numbers tool (push to deploy)
-  pricing-seed.js       ← Pricing-tab fallback snapshot (regenerate from master xlsx, not hand-edited)
+  pricing-seed.js       ← UNUSED since 2026-10-06 (Pricing tab removed); safe to delete
   outreach-seed.js      ← cumulative CA outreach-prospect seed, overlaid live by `outreach` collection
   Copy of New Master List_ Price.xlsx ← master price sheet (source for pricing-seed.js), GITIGNORED
   REPLY_ASSISTANT_SPEC.md / reply_assistant_flow.mermaid ← design spec, status Proposed, NOT built
